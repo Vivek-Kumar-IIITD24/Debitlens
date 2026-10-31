@@ -1,0 +1,2941 @@
+# MASTER PROMPT — DEBITLENS
+## Complete Product Research, System Architecture, UI/UX, Backend, Frontend, Implementation, Testing and Deployment
+
+---
+
+# 1. YOUR ROLE AND RESPONSIBILITY
+
+You are acting as a complete senior product engineering team consisting of:
+
+- Senior Product Manager.
+- Fintech Product Research Analyst.
+- Financial Technology Domain Expert.
+- Software Architect.
+- Senior Java Spring Boot Backend Developer.
+- Senior React and TypeScript Frontend Developer.
+- Data Engineering and Algorithm Developer.
+- UI/UX Designer.
+- Database Designer.
+- Software Tester and QA Engineer.
+- Security and Privacy Reviewer.
+- DevOps and Deployment Engineer.
+- Technical Documentation Writer.
+
+Your responsibility is to take the product idea described in this prompt and convert it into a complete, functional, polished and demonstrable software prototype.
+
+You are NOT being asked to write only a product proposal, a development plan, a landing page, a static dashboard, or a collection of disconnected UI components.
+
+**You must actually build the working application.**
+
+You must take responsibility for the complete development lifecycle:
+
+1. Understand the hackathon problem statement.
+2. Study and understand the existing market.
+3. Identify what existing products already solve.
+4. Identify genuine, defensible gaps.
+5. Finalise the product differentiation.
+6. Design the product and its features.
+7. Design the complete system architecture.
+8. Create the complete project folder structure.
+9. Implement the backend.
+10. Implement the frontend.
+11. Create a database and realistic synthetic datasets.
+12. Implement the recurring-payment detection engine.
+13. Implement the merchant identity resolution engine.
+14. Implement the commitment intelligence and explanation engine.
+15. Implement the cancellation workflow engine.
+16. Connect the entire application.
+17. Test the actual application.
+18. Fix implementation and integration errors.
+19. Prepare documentation.
+20. Prepare the application for a working hackathon demonstration.
+
+Do not stop after explaining how the application should be built.
+
+Do not ask me to separately provide the architecture, database design, folder structure, frontend requirements, API specifications, algorithms, sample data or implementation details. All necessary product decisions and default assumptions are included here.
+
+When an unspecified implementation detail arises, choose a sensible, simple and maintainable solution, document the assumption and continue.
+
+If you have access to the project filesystem and terminal, create and modify the files directly, execute commands and run the application.
+
+If you have no filesystem access, provide the complete implementation with exact filenames, file contents and terminal commands instead of pretending that files were created.
+
+---
+
+# 2. PROJECT IDENTITY
+
+**Working product name:** DebitLens
+
+**Tagline:** Find it. Understand it. Stop it.
+
+**Product category:** Fintech / Personal Financial Intelligence / Recurring Payment Management.
+
+**Target market:** Indian consumers.
+
+**Primary target users:**
+
+People who use multiple digital services, payment applications, bank accounts, cards and recurring payment arrangements but do not have a reliable, consolidated understanding of their ongoing financial commitments.
+
+Examples:
+
+- College students paying for multiple online subscriptions.
+- Working professionals paying for OTT, music, cloud storage and productivity services.
+- Families managing insurance premiums, bills and recurring household expenses.
+- People who have forgotten about free trials and annual renewals.
+- People who have changed applications or stopped using services but continue to face recurring debits.
+- Consumers who see unfamiliar merchant descriptions in their bank statements.
+
+**Product mission:**
+
+Build an intelligent, evidence-backed financial commitment management platform that helps users discover recurring payments, understand the actual service behind each debit, recognise unexpected financial changes and follow the correct procedure to stop unwanted commitments.
+
+**Central product promise:**
+
+DebitLens should answer the following questions:
+
+1. What recurring payments am I making?
+2. Which actual merchant or service is receiving my money?
+3. Through which payment mechanism is the money being collected?
+4. How much money will these commitments cost me over a year?
+5. Has any recurring payment increased, restarted or changed?
+6. Am I potentially paying for something I no longer use?
+7. What exactly must I do to stop the service and its associated recurring payment?
+8. How can I verify that the cancellation was completed?
+
+---
+
+# 3. THE OFFICIAL HACKATHON PROBLEM STATEMENT
+
+We are participating in HackFront India under:
+
+**Theme T4 — Fintech**
+
+**Problem Statement PS T4.1 — The Auto Debits Nobody Can Find**
+
+Build a tool that finds every recurring payment a person is committed to, explains what each one is, catches silent price increases, and walks them through the right way to stop it.
+
+The organisers describe the underlying situation as follows:
+
+People agree to recurring payments over time, including subscriptions, insurance premiums, applications they barely use and services whose prices increase.
+
+These payments can be collected through different mechanisms, each with different cancellation procedures.
+
+Bank statements can contain confusing merchant descriptors, while users may not realise that a recurring payment is still active.
+
+## 3.1 Official judging requirements
+
+The prototype must address all five capabilities:
+
+**A. Discovery of recurring commitments**
+
+Identify recurring transactions from transaction statements and payment-notification records, including payments with:
+
+- Monthly intervals.
+- Weekly intervals.
+- Quarterly intervals.
+- Half-yearly intervals.
+- Annual intervals.
+- Irregular payment dates.
+- Variable payment amounts.
+- Payments that resume after a pause.
+
+**B. Merchant interpretation**
+
+Interpret unfamiliar transaction descriptions and connect them with recognisable businesses or services.
+
+**C. Financial change detection**
+
+Detect:
+
+- Increased subscription amounts.
+- Trial-to-paid conversions.
+- Upcoming annual renewals.
+- Charges that continue after a user reports stopping the service.
+- Potentially unused recurring commitments.
+
+**D. Correct cancellation guidance**
+
+Identify the payment mechanism and provide the appropriate cancellation procedure, including what the user should do when the merchant does not respond.
+
+**E. Annual financial overview**
+
+Calculate and explain the total expected annual financial commitment.
+
+## 3.2 Hackathon-specific data restrictions
+
+The original problem statement specifically asks teams to generate synthetic bank statements and notifications.
+
+Therefore:
+
+- Use generated synthetic transaction data.
+- Do not connect to actual bank accounts.
+- Do not request banking credentials.
+- Do not request UPI PINs.
+- Do not access real financial information.
+- Do not require real SMS inbox permissions.
+- Do not perform actual financial transactions.
+- Do not pretend to have access to bank APIs.
+- Do not claim to revoke a real mandate through DebitLens.
+
+The prototype must demonstrate the concept through realistic synthetic data and explainable results.
+
+---
+
+# 4. MARKET RESEARCH AND EXISTING COMPETITORS
+
+Before implementation, understand the competitive landscape.
+
+An important product requirement is that DebitLens must not simply reproduce functionality that established or emerging applications already advertise.
+
+The following findings are based on publicly documented product features reviewed for this project. They are not independent audits of every product's complete implementation.
+
+## 4.1 Direct and adjacent competitors
+
+### 1. Paylert
+
+Reference:
+
+https://play.google.com/store/apps/details?id=com.nishkamaapps.paylert
+
+Publicly advertised capabilities include:
+
+- Automatic subscription detection using SMS.
+- Detection of recurring charges.
+- UPI AutoPay and bank mandate tracking.
+- Upcoming renewal reminders.
+- Trial reminders.
+- Unused subscription identification.
+- Duplicate subscription identification.
+- AI-powered financial insights.
+
+**Implication for DebitLens:**
+
+Automatic SMS detection, renewal reminders, unused-subscription flags and ordinary subscription dashboards cannot individually be claimed as our unique innovation.
+
+Our differentiation must be more substantial.
+
+### 2. Fidaura
+
+References:
+
+https://fidaura.innocorelabs.com/
+
+https://play.google.com/store/apps/details?id=com.innocorelabs.fidaura
+
+Publicly advertised capabilities include:
+
+- Recurring charge detection.
+- Price-change detection.
+- Upcoming renewal information.
+- CSV statement import.
+- Excel statement import.
+- Text-based PDF statement import.
+- Bank SMS processing.
+- Privacy-focused financial-data handling.
+
+**Implication:**
+
+Statement importing, recurring charge detection and price-increase alerts already exist in the market.
+
+We must develop a stronger identity-resolution, cancellation and verification workflow.
+
+### 3. Reccurra
+
+Reference:
+
+https://reccurra.com/features/
+
+Publicly documented capabilities include:
+
+- Email-based transaction capture.
+- Receipt and screenshot processing.
+- Manual recurring-payment entries.
+- Different recurring intervals.
+- Monthly and yearly expense totals.
+- Upcoming renewal calendars.
+- Trial reminders.
+- Price-rise detection.
+
+**Implication:**
+
+Annual calculations, renewal calendars and price-change alerts must be treated as existing capabilities rather than novel claims.
+
+### 4. Fold Money
+
+Reference:
+
+https://help.fold.money/hc/en-us/articles/22030957395858-How-do-I-track-my-recurring-expenses-on-Fold
+
+Publicly documented capabilities include:
+
+- Recurring expense management.
+- Creating recurring expenses from connected transactions.
+- Manual recurring expense creation.
+- Frequency configuration.
+- Payment and cancellation reminders.
+- A recurring calendar showing paid, upcoming and overdue payments.
+
+**Implication:**
+
+A recurring-expense calendar and basic transaction-to-recurring-expense conversion are not sufficient differentiators.
+
+### 5. Essara
+
+Reference:
+
+https://essara.space/
+
+Publicly advertised capabilities include:
+
+- Subscription tracking.
+- UPI AutoPay tracking.
+- Recurring bill management.
+- Upcoming renewal visibility.
+- Annual expense calculation.
+- Manual entry and tracking.
+
+Its published positioning is manual-first rather than automatically connecting to bank accounts or reading SMS.
+
+**Implication:**
+
+Our prototype must reduce manual effort through transaction interpretation and recurring-pattern analysis.
+
+### 6. Google Pay
+
+Reference:
+
+https://support.google.com/pay/india/answer/10840624?hl=en
+
+Google Pay supports UPI AutoPay management, including viewing mandate states and pausing or revoking eligible mandates.
+
+**Implication:**
+
+Do not claim that users cannot see or cancel their UPI mandates through existing payment applications.
+
+### 7. PhonePe
+
+Reference:
+
+https://www.phonepe.com/terms-conditions/autopay/
+
+PhonePe supports recurring mandates and their management, including modification and revocation where applicable.
+
+**Implication:**
+
+Basic mandate management already exists.
+
+Our application should guide users to the appropriate provider rather than pretend to replace their payment application.
+
+### 8. NPCI — Enhanced UPI AutoPay framework
+
+Important official circular:
+
+https://www.npci.org.in/uploads/UPI_OC_No_223_FY_2025_26_Enhancement_of_UPI_Autopay_88b38535cb.pdf
+
+Circular dated October 7, 2025.
+
+It introduced enhancements allowing users to view active UPI AutoPay mandates through their chosen UPI application and port eligible mandates between applications.
+
+It also establishes restrictions on how mandate information obtained through the viewing functionality may be used.
+
+**Design consequence:**
+
+Do not build an application around an unsupported assumption that every UPI application has completely isolated mandates.
+
+Do not scrape or misuse mandate data obtained through UPI applications.
+
+### 9. NPCI — UPI HELP
+
+Important official circular:
+
+https://www.npci.org.in/uploads/UPI_OC_No_227_FY_2025_26_Introduction_of_UPI_HELP_Assistant_a.pdf
+
+Circular dated October 8, 2025.
+
+The UPI HELP pilot describes an assistant capable of:
+
+- Answering digital-payment questions.
+- Helping users with transaction grievance processes.
+- Providing unified visibility of active UPI mandates.
+- Facilitating mandate lifecycle operations through deep links to participating UPI applications.
+
+**Design consequence:**
+
+Do not position basic UPI mandate discovery as something that no existing infrastructure can do.
+
+Our focus must be the wider financial commitment intelligence layer.
+
+### 10. Payment and subscription cancellation systems
+
+Google Play official guidance:
+
+https://support.google.com/googleplay/answer/7018481
+
+An important documented distinction is that uninstalling an application does not cancel its Google Play subscription.
+
+This supports an important design decision: stopping the payment authorisation and cancelling the underlying service are not necessarily the same action.
+
+---
+
+# 5. IDENTIFIED MARKET GAPS AND OUR DIFFERENTIATION
+
+Do not claim that every individual feature listed below is entirely new.
+
+Instead, focus on implementing a cohesive system that connects these features in an evidence-backed manner.
+
+The proposed differentiation is a combination of identity resolution, financial commitment intelligence, cancellation orchestration and verification.
+
+## Gap 1 — Payment-to-service identity resolution
+
+A bank statement may show:
+
+RAZORPAY*XXXXXXXX
+
+UPI/DR/XXXXXXXX/PROCESSOR
+
+SI-XXXXXXXX-MERCHANT
+
+NACH-XXXXXXXX-INS
+
+These descriptions are not necessarily the actual service names familiar to the user.
+
+A payment processor can appear in a transaction description without being the actual service receiving the payment.
+
+**Our proposed solution:**
+
+Create an identity-resolution engine connecting:
+
+Raw transaction descriptor → Descriptor interpretation → Payment processor → Actual merchant → Recognisable service → Recurring commitment.
+
+Example:
+
+Transaction description:
+
+RAZORPAY*STREAMBOX
+
+Resolved service:
+
+StreamBox Premium.
+
+However, if the descriptor only says RAZORPAY and no supporting evidence exists, do not automatically invent the merchant.
+
+Show:
+
+"Payment processor identified. Actual merchant needs verification."
+
+Provide a confidence level and explain the evidence used.
+
+## Gap 2 — Temporal commitment intelligence
+
+Most basic subscription-tracking experiences focus on predictable monthly charges.
+
+DebitLens must handle more difficult patterns.
+
+Examples:
+
+- Annual subscriptions.
+- Quarterly recurring charges.
+- Irregular payment intervals.
+- Variable amounts.
+- Payments that resume after missing cycles.
+- Changes in subscription amounts.
+- Free trials becoming paid subscriptions.
+
+Our engine should explain why it has classified a transaction series as recurring.
+
+## Gap 3 — Two-layer cancellation assistance
+
+Our central product distinction is to separate:
+
+**Layer A: Service cancellation**
+
+The user terminates the actual subscription, membership or service with the merchant.
+
+**Layer B: Payment authorisation cancellation**
+
+Where applicable, the user revokes the recurring payment mandate or standing instruction through the relevant authorised payment institution.
+
+The two actions are not interchangeable.
+
+DebitLens must explain this distinction for every supported cancellation mechanism.
+
+## Gap 4 — Cancellation evidence and post-cancellation verification
+
+A conventional tracker may tell the user that a recurring payment is active.
+
+DebitLens should also maintain an evidence-backed cancellation timeline.
+
+For example:
+
+- Cancellation initiated.
+- Merchant subscription cancellation confirmed.
+- Payment mandate cancellation confirmed.
+- Reference number saved.
+- Expected next debit date calculated.
+- Subsequent imported transactions checked.
+- Unexpected subsequent debit flagged for review.
+
+The system must distinguish:
+
+"User marked the cancellation step complete"
+
+from:
+
+"Cancellation independently verified."
+
+Do not claim independent verification without actual supporting evidence.
+
+## Gap 5 — Financial obligation awareness
+
+Not every recurring payment is a subscription that the user should cancel.
+
+An insurance premium, loan EMI or contractual payment is different from an OTT subscription.
+
+DebitLens must classify financial commitments by type and avoid suggesting that the user simply revoke the payment instruction.
+
+Stopping an insurance premium payment does not necessarily terminate an insurance policy.
+
+Stopping a loan EMI mandate does not erase the loan obligation.
+
+The user must be directed to the relevant institution and contract terms.
+
+## Our intended differentiator
+
+Build an:
+
+**Evidence-Backed Commitment Intelligence and Cancellation System.**
+
+Its central unit of information is not just a transaction or a subscription.
+
+It is a financial commitment with:
+
+- Its supporting payment history.
+- An identified or unidentified merchant.
+- A payment processor, where known.
+- A payment mechanism.
+- A predicted recurrence pattern.
+- A financial impact.
+- An evidence-based confidence level.
+- A cancellation procedure.
+- A cancellation status.
+- A verification history.
+
+Call this concept the **DebitLens Commitment Map**.
+
+Important: This is our proposed product differentiation and a hypothesis to validate against the market. Do not claim that no company worldwide has implemented anything similar.
+
+---
+
+# 6. WHAT EXACTLY ARE WE BUILDING?
+
+Build a web-based application named DebitLens.
+
+It should be an India-first personal financial commitment management platform.
+
+It must be a functional, interactive web application, not merely a static visualisation.
+
+## 6.1 Core product modules
+
+Implement the following modules:
+
+1. Dashboard and financial overview.
+2. Transaction import and data normalisation.
+3. Merchant identity resolution.
+4. Recurring payment discovery.
+5. Commitment intelligence engine.
+6. Price-change detection.
+7. Trial and renewal intelligence.
+8. Potentially-unused commitment tracking.
+9. Annual financial commitment analysis.
+10. Commitment Map.
+11. Payment-mechanism classification.
+12. Cancellation playbook engine.
+13. Cancellation checklist and evidence management.
+14. Post-cancellation transaction monitoring.
+15. Detection-performance and methodology page.
+16. Synthetic demo-data management.
+
+These modules must work together.
+
+---
+
+# 7. EXACT USER JOURNEY AND APPLICATION WORKFLOW
+
+Design the following end-to-end application workflow.
+
+## STEP 1 — User opens DebitLens
+
+The application opens with a professional, clean fintech dashboard.
+
+Show:
+
+- DebitLens logo and tagline.
+- A brief product explanation.
+- A "Explore Demo" option.
+- An "Import Synthetic Data" option.
+- A clearly visible privacy notice.
+
+The first-run experience should have sample data available so the judges do not face an empty dashboard.
+
+## STEP 2 — Data import
+
+Support two data sources:
+
+**A. Synthetic bank statement CSV**
+
+Allow the user to select and upload a CSV file.
+
+**B. Synthetic payment notification JSON**
+
+Allow the application to load mock notification records.
+
+Provide downloadable sample templates.
+
+Show a preview before importing.
+
+Validate:
+
+- Date format.
+- Transaction amount.
+- Currency.
+- Transaction direction.
+- Transaction description.
+- Duplicate IDs.
+- Missing required values.
+- Invalid rows.
+
+Display an import summary:
+
+- Total records.
+- Successfully processed records.
+- Invalid records.
+- Duplicate records.
+- Records requiring review.
+
+Never silently discard invalid rows.
+
+## STEP 3 — Transaction normalisation
+
+Convert different input formats into a single internal transaction structure.
+
+Normalise:
+
+- Transaction dates.
+- Amounts.
+- Currency.
+- Merchant descriptors.
+- Payment rails.
+- Debit and credit direction.
+- Transaction identifiers.
+- Source information.
+
+Preserve the original raw description so that the application can explain how it interpreted the transaction.
+
+## STEP 4 — Merchant resolution
+
+Use a merchant reference database.
+
+Try the following matching methods in order:
+
+1. Exact merchant alias match.
+2. Normalised descriptor match.
+3. Known processor-plus-merchant alias match.
+4. Partial merchant-name match.
+5. Candidate merchant suggestion.
+6. Unidentified merchant classification.
+
+Return:
+
+- Canonical merchant.
+- Recognised service, where supported.
+- Merchant category.
+- Payment processor, if known.
+- Match method.
+- Confidence score.
+- Explanation.
+- Original source transaction.
+
+Never convert an uncertain guess into a confirmed merchant identity.
+
+## STEP 5 — Recurring-payment discovery
+
+Group relevant debit transactions by:
+
+- Resolved merchant.
+- Descriptor similarity.
+- Account alias.
+- Payment reference.
+- Currency.
+- Payment mechanism.
+- Date pattern.
+
+Apply recurrence algorithms.
+
+Identify:
+
+- Weekly payments.
+- Fortnightly payments.
+- Monthly payments.
+- Quarterly payments.
+- Half-yearly payments.
+- Annual payments.
+- Irregular recurring payments.
+- Variable-amount recurring payments.
+- Resumed recurring payments.
+
+Generate a commitment record with evidence linking to its source transactions.
+
+## STEP 6 — Intelligent financial analysis
+
+For each identified commitment, calculate:
+
+- Latest payment.
+- Previous payment.
+- Typical payment amount.
+- Estimated frequency.
+- Next expected debit date.
+- Monthly equivalent.
+- Annualised expense.
+- Price-change percentage.
+- Total historical expenditure.
+- Detection confidence.
+- Supporting transaction count.
+
+Generate alerts for:
+
+- Possible price increase.
+- Upcoming renewal.
+- Annual renewal.
+- Trial conversion.
+- Resumed recurring charge.
+- Potentially unused commitment.
+- Unresolved merchant identity.
+- Unusual or unexpected payment.
+
+## STEP 7 — Commitment Map
+
+When the user clicks on a commitment, display its complete relationship.
+
+For example:
+
+Raw transaction:
+
+RAZORPAY*STREAMBOX
+
+↓
+
+Identity resolution:
+
+StreamBox Premium
+
+↓
+
+Payment processor:
+
+Razorpay, if the supplied synthetic reference data supports this mapping
+
+↓
+
+Payment mechanism:
+
+UPI AutoPay
+
+↓
+
+Financial commitment:
+
+Monthly subscription, ₹799
+
+↓
+
+Cancellation procedure:
+
+Cancel the service and separately revoke the payment authorisation.
+
+Show this relationship graphically as connected nodes or a well-designed structured detail view.
+
+Every relationship should be supported by evidence or explicitly marked as inferred or unverified.
+
+## STEP 8 — Cancellation assistant
+
+The user clicks "How to Stop This Payment?"
+
+DebitLens identifies the relevant payment mechanism and loads the appropriate playbook.
+
+Show two distinct sections:
+
+**A. Cancel the underlying service**
+
+Merchant-specific instructions and official service links.
+
+**B. Stop future payment authorisation**
+
+Payment-mechanism-specific steps and the appropriate official application, bank or provider link.
+
+Include a completion checklist.
+
+Allow the user to:
+
+- Mark a step complete.
+- Record when it was completed.
+- Add a confirmation reference number.
+- Add a confirmation note.
+- Record that the merchant has not responded.
+- View the remaining actions.
+
+Do not actually execute a cancellation.
+
+## STEP 9 — Post-cancellation monitoring
+
+After the user records both cancellation actions, change the cancellation workflow status.
+
+When new synthetic transaction data is imported, compare it against the previously cancelled commitment.
+
+If a potential subsequent debit appears:
+
+- Create an unexpected-post-cancellation-charge alert.
+- Show the transaction.
+- Show the original commitment.
+- Show the cancellation date.
+- Show the debit date.
+- Provide appropriate review and escalation guidance.
+
+Do not automatically conclude that the merchant acted illegally. The debit might be delayed, already authorised or related to another billing period.
+
+---
+
+# 8. COMPLETE SYSTEM ARCHITECTURE
+
+Use a modular monolithic architecture.
+
+Do not create microservices.
+
+The application should have a separate React frontend and Spring Boot backend.
+
+The backend should own all business logic and financial calculations.
+
+The frontend should present backend results and handle user interaction.
+
+## 8.1 Technology stack — mandatory default
+
+### Frontend
+
+- React.
+- TypeScript.
+- Vite.
+- Tailwind CSS.
+- React Router.
+- Recharts.
+- Lucide React icons.
+- Fetch API or Axios.
+
+### Backend
+
+- Java 21.
+- Spring Boot.
+- Spring Web.
+- Spring Data JPA.
+- Spring Validation.
+- H2 Database.
+- Maven.
+- Apache Commons CSV.
+- Jackson.
+- JUnit 5.
+
+Use stable, mutually compatible dependency versions.
+
+### Database
+
+Use H2 in file-backed mode for local development, with an in-memory profile for automated tests.
+
+Do not introduce a complicated database setup merely to support the hackathon demonstration.
+
+### Architecture principle
+
+React handles presentation.
+
+Spring Boot handles application logic.
+
+The database stores structured information.
+
+The detection engine processes transaction history.
+
+The merchant resolver interprets transaction descriptors.
+
+The cancellation engine determines the appropriate guidance.
+
+The analytics engine generates annual financial views.
+
+No module should be implemented as an unrelated mock UI.
+
+---
+
+# 9. COMPLETE PROJECT FOLDER STRUCTURE
+
+Create the following organised project structure.
+
+Use this as the target structure. You may add necessary supporting files, but do not remove or merge essential feature modules without documenting why.
+
+```text
+debitlens/
+│
+├── README.md
+├── .gitignore
+├── .env.example
+├── PROJECT_OVERVIEW.md
+│
+├── docs/
+│   ├── PRODUCT_REQUIREMENTS.md
+│   ├── MARKET_RESEARCH.md
+│   ├── GAP_ANALYSIS.md
+│   ├── SYSTEM_ARCHITECTURE.md
+│   ├── APPLICATION_WORKFLOW.md
+│   ├── DATABASE_DESIGN.md
+│   ├── API_DOCUMENTATION.md
+│   ├── DETECTION_METHODOLOGY.md
+│   ├── CANCELLATION_PLAYBOOKS.md
+│   ├── PRIVACY_AND_SECURITY.md
+│   ├── TESTING_REPORT.md
+│   └── DEMO_SCRIPT.md
+│
+├── frontend/
+│   │
+│   ├── package.json
+│   ├── index.html
+│   ├── vite.config.ts
+│   ├── tsconfig.json
+│   ├── tailwind.config.ts
+│   │
+│   ├── public/
+│   │   ├── favicon.svg
+│   │   ├── logo.svg
+│   │   └── samples/
+│   │       ├── debitlens-transactions.csv
+│   │       └── debitlens-notifications.json
+│   │
+│   └── src/
+│       │
+│       ├── main.tsx
+│       ├── App.tsx
+│       ├── index.css
+│       │
+│       ├── app/
+│       │   ├── AppRouter.tsx
+│       │   ├── AppLayout.tsx
+│       │   └── providers/
+│       │
+│       ├── components/
+│       │   ├── layout/
+│       │   │   ├── Sidebar.tsx
+│       │   │   ├── Topbar.tsx
+│       │   │   ├── PageHeader.tsx
+│       │   │   └── AppShell.tsx
+│       │   │
+│       │   ├── common/
+│       │   │   ├── StatCard.tsx
+│       │   │   ├── StatusBadge.tsx
+│       │   │   ├── ConfidenceBadge.tsx
+│       │   │   ├── LoadingState.tsx
+│       │   │   ├── EmptyState.tsx
+│       │   │   ├── ErrorState.tsx
+│       │   │   ├── ConfirmDialog.tsx
+│       │   │   └── EvidencePanel.tsx
+│       │   │
+│       │   ├── charts/
+│       │   │   ├── MonthlyExpenseChart.tsx
+│       │   │   ├── CategoryDistributionChart.tsx
+│       │   │   └── AnnualCommitmentChart.tsx
+│       │   │
+│       │   └── feedback/
+│       │       ├── Toast.tsx
+│       │       └── ToastProvider.tsx
+│       │
+│       ├── features/
+│       │   │
+│       │   ├── dashboard/
+│       │   │   ├── DashboardPage.tsx
+│       │   │   ├── DashboardSummary.tsx
+│       │   │   ├── RecentTransactions.tsx
+│       │   │   ├── UpcomingRenewals.tsx
+│       │   │   └── FinancialInsights.tsx
+│       │   │
+│       │   ├── imports/
+│       │   │   ├── ImportPage.tsx
+│       │   │   ├── UploadZone.tsx
+│       │   │   ├── ImportPreview.tsx
+│       │   │   ├── ImportResult.tsx
+│       │   │   └── CsvFormatGuide.tsx
+│       │   │
+│       │   ├── transactions/
+│       │   │   ├── TransactionsPage.tsx
+│       │   │   ├── TransactionsTable.tsx
+│       │   │   ├── TransactionFilters.tsx
+│       │   │   └── TransactionDetails.tsx
+│       │   │
+│       │   ├── commitments/
+│       │   │   ├── CommitmentsPage.tsx
+│       │   │   ├── CommitmentCard.tsx
+│       │   │   ├── CommitmentDetailsPage.tsx
+│       │   │   ├── CommitmentMap.tsx
+│       │   │   ├── CommitmentTimeline.tsx
+│       │   │   └── CommitmentEvidence.tsx
+│       │   │
+│       │   ├── alerts/
+│       │   │   ├── AlertsPage.tsx
+│       │   │   ├── AlertCard.tsx
+│       │   │   └── AlertDetails.tsx
+│       │   │
+│       │   ├── cancellation/
+│       │   │   ├── CancellationPage.tsx
+│       │   │   ├── CancellationPlaybook.tsx
+│       │   │   ├── CancellationChecklist.tsx
+│       │   │   ├── CancellationEvidenceForm.tsx
+│       │   │   └── CancellationTimeline.tsx
+│       │   │
+│       │   ├── analytics/
+│       │   │   ├── AnalyticsPage.tsx
+│       │   │   ├── AnnualCommitments.tsx
+│       │   │   └── SavingsInsights.tsx
+│       │   │
+│       │   ├── methodology/
+│       │   │   ├── MethodologyPage.tsx
+│       │   │   ├── DetectionMetrics.tsx
+│       │   │   └── ConfidenceExplanation.tsx
+│       │   │
+│       │   └── settings/
+│       │       ├── SettingsPage.tsx
+│       │       └── DemoDataControls.tsx
+│       │
+│       ├── services/
+│       │   ├── apiClient.ts
+│       │   ├── dashboardService.ts
+│       │   ├── importService.ts
+│       │   ├── transactionService.ts
+│       │   ├── commitmentService.ts
+│       │   ├── alertService.ts
+│       │   └── cancellationService.ts
+│       │
+│       ├── hooks/
+│       │   ├── useDashboard.ts
+│       │   ├── useCommitments.ts
+│       │   └── useAlerts.ts
+│       │
+│       ├── types/
+│       │   ├── transaction.ts
+│       │   ├── merchant.ts
+│       │   ├── commitment.ts
+│       │   ├── alert.ts
+│       │   └── cancellation.ts
+│       │
+│       └── utils/
+│           ├── currency.ts
+│           ├── dates.ts
+│           └── formatting.ts
+│
+├── backend/
+│   │
+│   ├── pom.xml
+│   │
+│   └── src/
+│       │
+│       ├── main/
+│       │   │
+│       │   ├── java/com/debitlens/
+│       │   │   │
+│       │   │   ├── DebitLensApplication.java
+│       │   │   │
+│       │   │   ├── config/
+│       │   │   │   ├── CorsConfig.java
+│       │   │   │   ├── DatabaseConfig.java
+│       │   │   │   └── ApplicationConfig.java
+│       │   │   │
+│       │   │   ├── common/
+│       │   │   │   ├── ApiResponse.java
+│       │   │   │   ├── GlobalExceptionHandler.java
+│       │   │   │   ├── ResourceNotFoundException.java
+│       │   │   │   └── ValidationException.java
+│       │   │   │
+│       │   │   ├── transaction/
+│       │   │   │   ├── controller/
+│       │   │   │   ├── service/
+│       │   │   │   ├── repository/
+│       │   │   │   ├── entity/
+│       │   │   │   ├── dto/
+│       │   │   │   └── mapper/
+│       │   │   │
+│       │   │   ├── merchant/
+│       │   │   │   ├── controller/
+│       │   │   │   ├── service/
+│       │   │   │   ├── resolver/
+│       │   │   │   ├── repository/
+│       │   │   │   ├── entity/
+│       │   │   │   └── dto/
+│       │   │   │
+│       │   │   ├── commitment/
+│       │   │   │   ├── controller/
+│       │   │   │   ├── service/
+│       │   │   │   ├── repository/
+│       │   │   │   ├── entity/
+│       │   │   │   └── dto/
+│       │   │   │
+│       │   │   ├── detection/
+│       │   │   │   ├── engine/
+│       │   │   │   ├── algorithms/
+│       │   │   │   ├── scoring/
+│       │   │   │   ├── service/
+│       │   │   │   ├── dto/
+│       │   │   │   └── evidence/
+│       │   │   │
+│       │   │   ├── cancellation/
+│       │   │   │   ├── controller/
+│       │   │   │   ├── service/
+│       │   │   │   ├── playbook/
+│       │   │   │   ├── workflow/
+│       │   │   │   ├── repository/
+│       │   │   │   ├── entity/
+│       │   │   │   └── dto/
+│       │   │   │
+│       │   │   ├── alert/
+│       │   │   │   ├── controller/
+│       │   │   │   ├── service/
+│       │   │   │   ├── repository/
+│       │   │   │   └── entity/
+│       │   │   │
+│       │   │   ├── analytics/
+│       │   │   │   ├── controller/
+│       │   │   │   └── service/
+│       │   │   │
+│       │   │   ├── dataimport/
+│       │   │   │   ├── controller/
+│       │   │   │   ├── service/
+│       │   │   │   ├── parser/
+│       │   │   │   ├── validator/
+│       │   │   │   └── dto/
+│       │   │   │
+│       │   │   └── demo/
+│       │   │       ├── controller/
+│       │   │       ├── service/
+│       │   │       └── seeder/
+│       │   │
+│       │   └── resources/
+│       │       ├── application.yml
+│       │       ├── application-test.yml
+│       │       ├── merchant-reference.json
+│       │       ├── cancellation-playbooks.json
+│       │       └── sample-data/
+│       │
+│       └── test/
+│           └── java/com/debitlens/
+│               ├── transaction/
+│               ├── merchant/
+│               ├── detection/
+│               ├── commitment/
+│               ├── cancellation/
+│               └── analytics/
+│
+├── data/
+│   ├── synthetic-transactions.csv
+│   ├── synthetic-notifications.json
+│   └── ground-truth.json
+│
+└── scripts/
+    ├── start-backend.ps1
+    ├── start-frontend.ps1
+    ├── start-backend.sh
+    ├── start-frontend.sh
+    └── reset-demo-data.sh
+```
+
+The folder structure is a maintainable guide, not permission to create unnecessary empty classes. Create the files needed for implemented functionality and keep module responsibilities clear.
+
+---
+
+# 10. BACKEND ARCHITECTURE AND RESPONSIBILITIES
+
+Implement the backend as a modular Spring Boot application.
+
+## 10.1 Transaction module
+
+Responsibilities:
+
+- Receive imported transaction data.
+- Store transactions.
+- Validate transaction fields.
+- Normalise descriptors.
+- Distinguish debits from credits.
+- Detect duplicate records.
+- Preserve original imported information.
+- Expose transaction history through REST APIs.
+
+Important:
+
+Credits, refunds and reversals must not accidentally be counted as recurring spending.
+
+## 10.2 Merchant module
+
+Responsibilities:
+
+- Maintain canonical merchant records.
+- Maintain aliases.
+- Identify known payment processors.
+- Resolve merchant names.
+- Return confidence scores.
+- Explain matching decisions.
+- Suggest manual review for uncertain matches.
+
+Use a curated local merchant reference database.
+
+Do not require a third-party AI API.
+
+## 10.3 Detection module
+
+Responsibilities:
+
+- Identify recurring transaction patterns.
+- Recognise irregular intervals.
+- Calculate recurrence confidence.
+- Detect variable recurring amounts.
+- Detect price increases.
+- Detect resumed payment patterns.
+- Interpret explicit trial events.
+- Produce evidence.
+
+Implement each algorithm separately rather than putting everything into one large method.
+
+## 10.4 Commitment module
+
+Responsibilities:
+
+- Create and manage recurring commitment records.
+- Connect commitments with transactions.
+- Store the merchant and payment mechanism.
+- Store the expected next debit date.
+- Store confidence and supporting evidence.
+- Maintain commitment classifications.
+- Maintain user-provided usage information.
+
+## 10.5 Cancellation module
+
+Responsibilities:
+
+- Resolve a suitable cancellation playbook.
+- Separate service cancellation from payment authorisation cancellation.
+- Store checklist progress.
+- Store cancellation notes.
+- Store evidence references.
+- Maintain workflow status.
+- Support subsequent transaction checks.
+
+## 10.6 Analytics module
+
+Responsibilities:
+
+- Monthly recurring expenditure.
+- Annualised expenditure.
+- Monthly equivalent of annual commitments.
+- Historical recurring expenditure.
+- Upcoming financial commitments.
+- Price-increase impact.
+- Potentially avoidable expenditure.
+- Cancellation-related estimated savings.
+
+Keep estimates separate from actual historical spending.
+
+## 10.7 Import module
+
+Responsibilities:
+
+- CSV processing.
+- JSON notification processing.
+- Validation.
+- Duplicate prevention.
+- Import preview.
+- Import reports.
+- Error reporting.
+
+The original imported description and source must remain available for auditability.
+
+---
+
+# 11. COMPLETE DATABASE DESIGN
+
+Use relational tables with appropriate foreign keys and indexes.
+
+The following entities are required.
+
+## 11.1 Transaction
+
+Fields:
+
+- id.
+- transactionId.
+- transactionDate.
+- rawDescription.
+- normalisedDescription.
+- amount.
+- currency.
+- direction.
+- paymentRail.
+- merchantId.
+- sourceType.
+- importBatchId.
+- externalReference.
+- createdAt.
+
+## 11.2 Merchant
+
+Fields:
+
+- id.
+- canonicalName.
+- category.
+- website.
+- description.
+- identityConfidence.
+- createdAt.
+
+## 11.3 MerchantAlias
+
+Fields:
+
+- id.
+- merchantId.
+- alias.
+- normalisedAlias.
+- matchingRule.
+- confidenceWeight.
+
+## 11.4 PaymentProcessor
+
+Fields:
+
+- id.
+- processorName.
+- recognisedAliases.
+- description.
+
+## 11.5 Commitment
+
+Fields:
+
+- id.
+- merchantId.
+- displayName.
+- commitmentType.
+- paymentRail.
+- recurrenceType.
+- recurrenceIntervalDays.
+- typicalAmount.
+- latestAmount.
+- currency.
+- annualisedAmount.
+- monthlyEquivalent.
+- nextExpectedDate.
+- lastPaymentDate.
+- status.
+- confidenceScore.
+- confidenceLabel.
+- detectionExplanation.
+- lastUsedDate.
+- usageStatus.
+- createdAt.
+- updatedAt.
+
+## 11.6 CommitmentTransaction
+
+A linking table connecting multiple transactions to one commitment.
+
+Fields:
+
+- id.
+- commitmentId.
+- transactionId.
+- relationshipType.
+- evidenceWeight.
+
+## 11.7 NotificationEvent
+
+Fields:
+
+- id.
+- eventType.
+- merchantHint.
+- eventDate.
+- trialStartDate.
+- trialEndDate.
+- expectedAmount.
+- currency.
+- relatedCommitmentId.
+- sourceType.
+- description.
+
+## 11.8 DetectionAlert
+
+Fields:
+
+- id.
+- commitmentId.
+- alertType.
+- title.
+- description.
+- severity.
+- detectedValue.
+- previousValue.
+- percentageChange.
+- evidenceReference.
+- createdAt.
+- status.
+
+## 11.9 CancellationPlaybook
+
+Fields:
+
+- id.
+- paymentRail.
+- merchantCategory.
+- serviceInstructions.
+- paymentInstructions.
+- officialSourceUrl.
+- lastVerifiedDate.
+- confidence.
+- warning.
+- supported.
+
+## 11.10 CancellationSession
+
+Fields:
+
+- id.
+- commitmentId.
+- status.
+- initiatedAt.
+- serviceCancelledAt.
+- paymentAuthorisationRevokedAt.
+- lastReviewedAt.
+
+## 11.11 CancellationStep
+
+Fields:
+
+- id.
+- cancellationSessionId.
+- stepType.
+- title.
+- instruction.
+- completed.
+- completedAt.
+- officialUrl.
+
+## 11.12 CancellationEvidence
+
+Fields:
+
+- id.
+- cancellationSessionId.
+- evidenceType.
+- description.
+- referenceNumber.
+- evidenceDate.
+- createdAt.
+
+## 11.13 ImportBatch
+
+Fields:
+
+- id.
+- filename.
+- sourceType.
+- totalRecords.
+- acceptedRecords.
+- rejectedRecords.
+- duplicateRecords.
+- importedAt.
+
+Persist the relationships properly.
+
+Use appropriate enums.
+
+Avoid unnecessarily duplicating transaction records.
+
+---
+
+# 12. RECURRING-PAYMENT INTELLIGENCE ENGINE
+
+This is a core part of the product.
+
+Implement a deterministic, explainable algorithm engine.
+
+Do not simply label transactions as recurring based on similar amounts.
+
+## 12.1 Data preparation
+
+Before detection:
+
+1. Remove or isolate non-debit transactions.
+2. Normalise descriptions.
+3. Resolve merchant identities.
+4. Remove duplicates.
+5. Group transactions by likely merchant identity and reference.
+6. Sort transactions chronologically.
+7. Check whether the history is sufficient.
+
+## 12.2 Supported recurrence categories
+
+Implement:
+
+| Frequency | Expected behaviour |
+|---|---|
+| Weekly | Approximately every 7 days |
+| Fortnightly | Approximately every 14 days |
+| Monthly | Same approximate calendar date each month |
+| Quarterly | Approximately every 3 months |
+| Half-yearly | Approximately every 6 months |
+| Yearly | Approximately once a year |
+| Irregular | Repeat activity without a stable standard cadence |
+
+Handle month-end variations properly. For example, January 31 to February 28 can still represent monthly recurrence.
+
+## 12.3 Minimum evidence requirements
+
+Use conservative rules.
+
+Suggested prototype policy:
+
+- One occurrence: not enough evidence to classify as recurring.
+- Two occurrences: possible recurring candidate; low or medium confidence.
+- Three or more compatible occurrences: stronger recurring evidence.
+- Annual patterns with two matching years: possible annual recurring commitment, clearly marked with limited evidence.
+- Variable amounts: require stronger descriptor and interval evidence.
+
+A candidate with insufficient evidence must remain a candidate.
+
+## 12.4 Irregular recurring detection
+
+This is particularly important for the HackFront judging criteria.
+
+Some recurring payments do not appear every month.
+
+Examples:
+
+- Annual software renewal.
+- Insurance premium.
+- Quarterly membership.
+- Irregular service billing.
+- A charge that resumes after missing cycles.
+
+Use inter-transaction intervals.
+
+Calculate:
+
+- Number of occurrences.
+- Interval between transactions.
+- Average interval.
+- Median interval.
+- Interval variation.
+- Merchant identity consistency.
+- Amount variation.
+
+For a likely irregular commitment, provide a human-readable explanation.
+
+Example:
+
+"We found three payments from the same resolved merchant over seven months. The payment interval is not consistently monthly, but the repeated activity suggests a possible recurring commitment. Please review."
+
+Do not invent an exact renewal date when there is insufficient evidence.
+
+## 12.5 Variable-amount recurring detection
+
+Do not require identical payment amounts.
+
+A recurring payment can vary due to:
+
+- Taxes.
+- Usage charges.
+- Plan changes.
+- Merchant billing adjustments.
+- Insurance premium adjustments.
+
+Use descriptor consistency and time intervals.
+
+Explain amount variability.
+
+## 12.6 Resumed recurring payments
+
+Detect patterns where:
+
+1. A merchant had established recurring activity.
+2. One or more expected cycles were missed.
+3. A later transaction appeared from the same merchant.
+4. The later transaction resembles the historical pattern.
+
+Show:
+
+"Possible recurring payment resumed after a gap."
+
+Do not automatically conclude that a subscription was paused or restarted unless there is explicit supporting evidence.
+
+## 12.7 Price increase detection
+
+Compare:
+
+- Previous known recurring amount.
+- Previous median amount.
+- Latest amount.
+- Absolute difference.
+- Percentage difference.
+
+Formula:
+
+Percentage increase = ((Latest amount - Previous baseline amount) / Previous baseline amount) × 100.
+
+Example:
+
+Previous amount: ₹199.
+
+Latest amount: ₹249.
+
+Difference: ₹50.
+
+Percentage increase: 25%.
+
+Estimated additional annual cost for a monthly commitment: ₹600.
+
+Label the result as a detected amount increase.
+
+Do not automatically claim the merchant silently increased the subscription price, since it could be a tax, usage, currency or plan adjustment.
+
+Use a clear explanation and allow the user to review.
+
+## 12.8 Trial-to-paid detection
+
+Only identify trial conversion when explicit synthetic evidence exists.
+
+For example:
+
+- Trial started notification.
+- Trial end date.
+- Expected paid amount.
+- Subsequent matching debit.
+
+If the bank statement contains only a debit, do not invent a previous free-trial event.
+
+## 12.9 Potentially unused subscriptions
+
+Do not claim to know whether someone uses an application from transaction data.
+
+Provide a user-entered field:
+
+"Last used on."
+
+Use a configurable inactivity period, with 60 days as the default.
+
+Label the result:
+
+"Potentially unused — based on information provided by the user."
+
+Do not automatically declare it unused.
+
+---
+
+# 13. CONFIDENCE AND EXPLAINABILITY ENGINE
+
+Every important detection should have a human-readable explanation.
+
+Use a deterministic heuristic score rather than presenting an arbitrary AI-generated probability.
+
+Suggested score structure:
+
+| Evidence dimension | Maximum points |
+|---|---:|
+| Recurrence interval consistency | 30 |
+| Merchant identity confidence | 25 |
+| Number of supporting occurrences | 20 |
+| Amount-pattern consistency | 15 |
+| Supporting payment or mandate evidence | 10 |
+| Total | 100 |
+
+Suggested labels:
+
+- 80–100: High confidence.
+- 60–79: Medium confidence.
+- Below 60: Low confidence / review required.
+
+These numbers are prototype scoring weights, not statistically calibrated probabilities.
+
+The detail screen must explain why the score was assigned.
+
+Example:
+
+"Medium confidence because the same resolved merchant appears twice approximately one year apart, but only two annual occurrences are available."
+
+Do not show a number without explaining it.
+
+Store:
+
+- Evidence source.
+- Related transactions.
+- Matching method.
+- Detection rule.
+- Score components.
+- Explanation.
+
+---
+
+# 14. CANCELLATION INTELLIGENCE ENGINE
+
+This is one of our most important differentiation areas.
+
+Implement a cancellation system that understands different payment mechanisms.
+
+Do not generate one generic cancellation guide for everything.
+
+## 14.1 Payment mechanisms to support
+
+At minimum, include:
+
+1. UPI AutoPay.
+2. Card recurring e-mandate / standing instruction.
+3. eNACH / NACH.
+4. Google Play subscriptions.
+5. Apple App Store subscriptions, with a verified official reference before presenting instructions.
+6. Direct merchant billing.
+7. Bank standing instructions.
+8. Unknown or unidentified mechanisms.
+
+## 14.2 Two-layer cancellation design
+
+For each applicable commitment, separate:
+
+### Layer A — Service cancellation
+
+Explain how to terminate the actual service or subscription.
+
+### Layer B — Payment authorisation cancellation
+
+Explain how to revoke or manage the corresponding recurring payment authorisation, where applicable.
+
+The interface must explain the status of both independently.
+
+## 14.3 UPI AutoPay example
+
+Use Google Pay official documentation as the reference for its documented interface:
+
+https://support.google.com/pay/india/answer/10840624?hl=en
+
+A Google Pay example guide may explain:
+
+1. Open Google Pay.
+2. Open the profile section.
+3. Select AutoPay.
+4. Open the relevant live mandate.
+5. Select Cancel AutoPay.
+6. Complete the required authentication.
+7. Verify its updated status.
+
+Important:
+
+The application must distinguish between general UPI guidance and Google Pay-specific navigation.
+
+Do not assume that the exact menus are identical across all UPI apps.
+
+Do not collect or request a UPI PIN.
+
+## 14.4 Google Play example
+
+Official documentation:
+
+https://support.google.com/googleplay/answer/7018481
+
+Explain:
+
+- Open the relevant Google Play subscriptions section.
+- Select the applicable subscription.
+- Use the available cancellation process.
+- Follow the displayed confirmation steps.
+
+Explicitly explain that uninstalling the app does not cancel the subscription.
+
+## 14.5 Cards and recurring e-mandates
+
+Do not invent identical navigation steps for every bank.
+
+Explain that users may need to:
+
+- Cancel the actual service.
+- Review the recurring payment authorisation with the merchant or issuing bank.
+- Use the issuer's official mandate-management facility.
+- Retain confirmation.
+- Contact the bank or merchant where the status is unclear.
+
+Always provide an official reference link when available.
+
+## 14.6 eNACH / NACH
+
+Provide cautious guidance.
+
+Depending on the type of debit and agreement, users may need to contact the biller, institution or bank.
+
+Clearly state:
+
+Revoking a payment authorisation is not the same as extinguishing the underlying contractual obligation.
+
+## 14.7 Insurance and loan warning
+
+For loans, EMI payments and insurance premiums, show a prominent warning.
+
+Example:
+
+"Do not stop this debit merely because you no longer want automatic payment. Contact the lender or insurer first and understand the contractual consequences. Cancelling a payment instruction does not automatically end the loan or policy."
+
+Never encourage a user to default on a loan or unintentionally lapse insurance coverage.
+
+## 14.8 Cancellation state machine
+
+Implement these states:
+
+- NOT_STARTED.
+- SERVICE_CANCELLATION_PENDING.
+- SERVICE_CANCELLED_PAYMENT_PENDING.
+- PAYMENT_AUTHORITY_REVOKED_SERVICE_PENDING.
+- BOTH_USER_CONFIRMED.
+- NEEDS_MERCHANT_RESPONSE.
+- NEEDS_BANK_SUPPORT.
+- NEEDS_REVIEW.
+
+Keep separate fields for the user's reported completion and independently verified completion.
+
+Example:
+
+A user checks "Merchant subscription cancelled."
+
+Store that action as user-confirmed, not independently verified.
+
+## 14.9 Cancellation evidence
+
+Allow:
+
+- Confirmation reference.
+- Cancellation date.
+- Merchant response notes.
+- Payment-authority status.
+- Screenshot reference placeholder or optional local attachment.
+- Support-ticket reference.
+
+For the MVP, text notes and reference numbers are sufficient.
+
+## 14.10 Post-cancellation detection
+
+When new imported transactions appear:
+
+- Compare them with cancelled commitments.
+- Check the merchant identity.
+- Check the transaction date.
+- Check the expected billing timeline.
+- Flag possible subsequent debits.
+
+Display:
+
+"Potential debit after reported cancellation. Review the transaction and cancellation evidence."
+
+Never label every matching debit as fraudulent.
+
+---
+
+# 15. COMPLETE FRONTEND REQUIREMENTS
+
+Create a polished and professional fintech dashboard.
+
+The visual design is extremely important because the product will be presented to judges.
+
+## 15.1 Brand direction
+
+Product:
+
+DebitLens.
+
+Tagline:
+
+Find it. Understand it. Stop it.
+
+Visual tone:
+
+- Trustworthy.
+- Financial.
+- Professional.
+- Modern.
+- Clean.
+- Premium.
+- Easy to understand.
+- Evidence-focused.
+
+Use a restrained navy / white / teal visual system with appropriate semantic colours.
+
+Use consistent:
+
+- Typography.
+- Spacing.
+- Border radius.
+- Card styles.
+- Icons.
+- Buttons.
+- Tables.
+- Status badges.
+- Charts.
+
+Avoid a generic template appearance.
+
+Do not overload the interface with gradients, decorative elements or unnecessary animations.
+
+## 15.2 Application layout
+
+Use:
+
+- Left sidebar navigation.
+- Top navigation bar.
+- Main content area.
+- Responsive layouts.
+- Clear page titles.
+- Consistent action placement.
+
+Sidebar menu:
+
+1. Overview.
+2. Discover Payments.
+3. Transactions.
+4. Commitments.
+5. Smart Alerts.
+6. Cancellation Centre.
+7. Financial Insights.
+8. How DebitLens Works.
+9. Settings.
+
+## 15.3 Dashboard
+
+Show the following summary cards:
+
+- Monthly recurring spending.
+- Annual commitment total.
+- Active recurring commitments.
+- Upcoming payments.
+- Price-change alerts.
+- Commitments requiring review.
+
+Show:
+
+- Monthly spending trend.
+- Spending by category.
+- Upcoming payment timeline.
+- Recent transactions.
+- Important insights.
+
+Display Indian currency formatting.
+
+Example:
+
+₹12,450.00
+
+Do not mix USD and INR in the same demonstration dataset.
+
+## 15.4 Discovery page
+
+Show all detected and candidate recurring commitments.
+
+Filters:
+
+- All.
+- High confidence.
+- Medium confidence.
+- Needs review.
+- Monthly.
+- Annual.
+- Irregular.
+- Price increased.
+- Potentially unused.
+
+Each record should display:
+
+- Merchant.
+- Service.
+- Frequency.
+- Typical amount.
+- Next estimated debit.
+- Annualised amount.
+- Confidence.
+- Detection explanation.
+
+## 15.5 Transaction page
+
+Include:
+
+- Search.
+- Date filter.
+- Merchant filter.
+- Payment mechanism filter.
+- Transaction details.
+- Raw descriptor.
+- Resolved merchant.
+- Transaction source.
+
+Allow the user to open a transaction and understand how it was interpreted.
+
+## 15.6 Commitment detail page
+
+Include:
+
+- Merchant identity.
+- Payment history.
+- Recurrence pattern.
+- Annual cost.
+- Next expected payment.
+- Price-change information.
+- Usage details.
+- Supporting evidence.
+- Payment mechanism.
+- Cancellation status.
+
+This page should be one of the most informative screens.
+
+## 15.7 Smart alerts page
+
+Create alert categories:
+
+- Price change.
+- Upcoming renewal.
+- Annual renewal.
+- Trial conversion.
+- Possible resumed payment.
+- Potentially unused.
+- Unknown merchant.
+- Post-cancellation debit.
+
+Each alert should have:
+
+- A clear title.
+- A short explanation.
+- Financial impact.
+- Related commitment.
+- Suggested action.
+- Evidence reference.
+
+## 15.8 Cancellation Centre
+
+Display:
+
+- Cancellation sessions.
+- Pending steps.
+- Completed steps.
+- Merchant confirmation status.
+- Payment mandate status.
+- Outstanding action count.
+- Historical cancellation records.
+
+Use separate service and payment-authorisation progress indicators.
+
+## 15.9 Financial insights page
+
+Display:
+
+- Annual commitments.
+- Monthly equivalent.
+- Discretionary commitments.
+- Essential recurring obligations.
+- Estimated annual increase from changed prices.
+- Estimated savings from user-selected cancellations.
+- Historical spending.
+
+Do not describe all recurring obligations as waste.
+
+## 15.10 Methodology page
+
+Explain:
+
+- How merchants are matched.
+- How recurrence is calculated.
+- How confidence is scored.
+- How price increases are detected.
+- What cannot be inferred.
+- Why synthetic data is being used.
+- How cancellation guidance is sourced.
+
+This page is useful for judging because it demonstrates that the system uses explicit rules and evidence.
+
+---
+
+# 16. SYNTHETIC DATASET DESIGN
+
+Create a realistic and carefully labelled synthetic dataset.
+
+It should contain at least 40–60 transaction records covering a sufficient historical period.
+
+Use synthetic data only.
+
+Include the following scenarios.
+
+### Scenario A — Ordinary monthly subscription
+
+StreamBox:
+
+- January: ₹499.
+- February: ₹499.
+- March: ₹499.
+- April: ₹499.
+
+Expected: Monthly recurring commitment.
+
+### Scenario B — Silent price increase
+
+MusicFlow:
+
+- Previous payments: ₹199.
+- Latest payment: ₹249.
+
+Expected:
+
+- Detect the amount increase.
+- Calculate the difference.
+- Calculate percentage increase.
+- Explain annual impact.
+
+### Scenario C — Annual commitment
+
+CloudNotes:
+
+- Annual payment in 2024.
+- Annual payment in 2025.
+- Annual payment in 2026.
+
+Expected:
+
+Identify a potential annual commitment and provide the next expected date with a confidence explanation.
+
+### Scenario D — Quarterly payment
+
+FitClub:
+
+- Payments approximately every three months.
+
+Expected: Quarterly recurrence.
+
+### Scenario E — Variable amount
+
+UtilityDemo:
+
+- Repeated debit from the same identified biller.
+- Amount differs because of usage.
+
+Expected: Potential variable-amount recurring commitment.
+
+### Scenario F — Irregular recurrence
+
+InsureDemo:
+
+- Repeated annual or non-monthly activity.
+- Different amounts or payment dates.
+
+Expected: Irregular recurring candidate with review required.
+
+### Scenario G — Resumed payment
+
+ReadCloud:
+
+- Several historical recurring charges.
+- One or more missing expected cycles.
+- A later payment.
+
+Expected: Possible resumed payment.
+
+### Scenario H — Trial conversion
+
+LearnPro:
+
+- Trial-start event.
+- Trial-ending event.
+- Subsequent paid transaction.
+
+Expected:
+
+- Trial conversion alert.
+- Paid amount.
+- Relevant dates.
+
+### Scenario I — Payment processor identity
+
+RAZORPAY*STREAMBOX.
+
+Expected: Resolve the service only when the full alias is supported by the synthetic reference data.
+
+### Scenario J — Processor-only descriptor
+
+RAZORPAY.
+
+Expected: Do not automatically associate it with StreamBox or another merchant.
+
+Show an unidentified or processor-only classification.
+
+### Scenario K — One-time payment
+
+Café payment.
+
+Expected: Do not classify it as recurring.
+
+### Scenario L — Refund or credit
+
+Expected: Do not count the refund as a recurring expense.
+
+### Scenario M — Financial obligation
+
+LoanDemo EMI or InsuranceDemo premium.
+
+Expected:
+
+- Classify as a recurring financial obligation.
+- Display the appropriate safety warning.
+- Do not suggest treating it as an ordinary disposable subscription.
+
+## 16.1 Ground-truth dataset
+
+Create a separate ground-truth file identifying:
+
+- True recurring commitments.
+- True one-time transactions.
+- Correct merchants.
+- Expected frequencies.
+- Known price changes.
+- Trial events.
+- Resumed activity.
+- Expected cancellation mechanisms.
+
+Use this file to calculate actual prototype performance.
+
+Do not use the ground-truth file directly as the detection algorithm's input.
+
+---
+
+# 17. API DESIGN
+
+Implement REST APIs with consistent JSON responses.
+
+At minimum, provide:
+
+### Health
+
+GET `/api/health`
+
+### Dashboard
+
+GET `/api/dashboard/summary`
+
+GET `/api/dashboard/monthly-trend`
+
+GET `/api/dashboard/upcoming`
+
+### Import
+
+GET `/api/import/template`
+
+POST `/api/import/transactions`
+
+POST `/api/import/notifications`
+
+GET `/api/import/history`
+
+### Transactions
+
+GET `/api/transactions`
+
+GET `/api/transactions/{id}`
+
+### Merchant
+
+GET `/api/merchants`
+
+GET `/api/merchants/{id}`
+
+POST `/api/merchants/{id}/confirm`
+
+### Commitments
+
+GET `/api/commitments`
+
+GET `/api/commitments/{id}`
+
+PATCH `/api/commitments/{id}/usage`
+
+GET `/api/commitments/{id}/evidence`
+
+### Detection
+
+POST `/api/detection/run`
+
+GET `/api/detection/results`
+
+GET `/api/detection/metrics`
+
+### Alerts
+
+GET `/api/alerts`
+
+GET `/api/alerts/{id}`
+
+PATCH `/api/alerts/{id}/status`
+
+### Cancellation
+
+GET `/api/cancellation/playbooks/{commitmentId}`
+
+POST `/api/cancellation/sessions`
+
+GET `/api/cancellation/sessions/{id}`
+
+PATCH `/api/cancellation/sessions/{id}/steps/{stepId}`
+
+POST `/api/cancellation/sessions/{id}/evidence`
+
+### Analytics
+
+GET `/api/analytics/annual-commitments`
+
+GET `/api/analytics/price-changes`
+
+GET `/api/analytics/potential-savings`
+
+### Demo
+
+GET `/api/demo/summary`
+
+POST `/api/demo/reset`
+
+Every API must have defined request and response models.
+
+Implement appropriate HTTP status codes.
+
+Validate input.
+
+Handle exceptions centrally.
+
+Return clear error messages.
+
+Do not return internal stack traces to the frontend.
+
+---
+
+# 18. PRIVACY, SECURITY AND FINANCIAL SAFETY REQUIREMENTS
+
+This application deals with financial concepts. Even though the prototype uses synthetic data, design it responsibly.
+
+Mandatory rules:
+
+1. Never request UPI PINs.
+2. Never request bank passwords.
+3. Never store real account credentials.
+4. Never pretend to connect to a bank.
+5. Never perform an actual payment.
+6. Never directly revoke a real mandate.
+7. Never automatically contact a merchant.
+8. Never claim a cancellation succeeded without evidence.
+9. Never identify a merchant without sufficient supporting data.
+10. Never infer application usage solely from financial transactions.
+11. Never describe estimates as guaranteed future charges.
+12. Never expose one user's imported data to another user in any future multi-user extension.
+
+For the hackathon:
+
+- Use a demo profile.
+- Use fictional transactions.
+- Keep all generated data visibly marked as synthetic.
+- Do not transmit financial files to external AI providers.
+- Do not send transaction data to analytics services.
+- Do not include real API keys or credentials in source code.
+
+For future expansion, consent-based bank data integrations and device-based notification processing must be investigated through appropriate authorised providers and applicable regulations.
+
+Do not bypass payment infrastructure restrictions.
+
+---
+
+# 19. DEMONSTRATION AND TESTING REQUIREMENTS
+
+A prototype that looks good but fails during a demonstration is not acceptable.
+
+Test all major user journeys.
+
+## 19.1 Backend tests
+
+Write unit tests for:
+
+- Transaction normalisation.
+- Descriptor matching.
+- Processor-only descriptor handling.
+- Monthly recurrence.
+- Annual recurrence.
+- Quarterly recurrence.
+- Irregular recurrence.
+- Variable amounts.
+- Resumed payments.
+- Price-change calculations.
+- Trial conversion.
+- Refund exclusion.
+- Duplicate exclusion.
+- Cancellation status changes.
+- Post-cancellation transaction detection.
+- Annual commitment calculations.
+- Financial obligation safety rules.
+
+## 19.2 Frontend tests
+
+Verify:
+
+- Routes open correctly.
+- Navigation works.
+- CSV upload works.
+- Import preview works.
+- Invalid files show useful errors.
+- Dashboard values update after import.
+- Filters work.
+- Commitment details open.
+- Evidence is visible.
+- Alerts open the correct commitment.
+- Cancellation checklists work.
+- Confirmation notes are saved.
+- Demo reset works.
+- Responsive layouts work.
+
+No button should be decorative or nonfunctional.
+
+## 19.3 Detection metrics
+
+Calculate actual:
+
+Precision = True positives / (True positives + False positives).
+
+Recall = True positives / (True positives + False negatives).
+
+F1 score = 2 × Precision × Recall / (Precision + Recall).
+
+Also calculate:
+
+- Merchant resolution accuracy.
+- Merchant resolution coverage.
+- Annual commitment detection accuracy.
+- Price-change detection accuracy.
+- Trial-event detection accuracy.
+
+Keep metrics separated by test category.
+
+A low merchant-resolution coverage with high matching accuracy is different from high coverage with many incorrect matches.
+
+Display actual measured results.
+
+Never invent successful performance percentages.
+
+---
+
+# 20. REQUIRED WORKING DEMO SCENARIO
+
+The application must support the following story from beginning to end.
+
+A user opens DebitLens.
+
+The user uploads a synthetic bank statement covering approximately two years.
+
+DebitLens imports the transactions and explains how many records were successfully processed.
+
+The merchant resolver identifies several merchants and leaves uncertain descriptors for manual review.
+
+The detection engine discovers:
+
+- Monthly subscriptions.
+- Annual subscriptions.
+- Quarterly payments.
+- A variable-amount commitment.
+- An annual price increase.
+- A trial converting into a paid subscription.
+- A possible resumed recurring payment.
+
+The dashboard displays:
+
+- Total monthly equivalent.
+- Total annual commitment.
+- Upcoming renewals.
+- Amount increase alerts.
+- Commitments requiring review.
+
+The user selects a mysterious payment descriptor.
+
+DebitLens shows the original description, the resolved merchant, its confidence and the supporting transaction evidence.
+
+The user opens the Commitment Map.
+
+The application displays the payment processor, actual service, recurring pattern and payment mechanism.
+
+The user opens the cancellation assistant.
+
+DebitLens gives separate merchant cancellation and payment authorisation cancellation instructions.
+
+The user checks off the relevant actions and saves a confirmation reference.
+
+The commitment's cancellation timeline updates.
+
+A subsequent synthetic debit is imported.
+
+DebitLens identifies it as a potential debit after reported cancellation and displays the evidence.
+
+The entire experience must be possible within the running application.
+
+---
+
+# 21. NON-FUNCTIONAL REQUIREMENTS
+
+The prototype must be:
+
+**Reliable:** No broken navigation, unhandled errors or missing screens.
+
+**Maintainable:** Use sensible classes, modules and reusable components.
+
+**Explainable:** Every major detection should have a reason.
+
+**Responsive:** Desktop-first, with functional tablet and mobile layouts.
+
+**Accessible:** Legible fonts, adequate colour contrast, semantic components and keyboard-friendly controls.
+
+**Consistent:** All screens should use the same design language.
+
+**Fast:** Sample data and dashboard screens should load without unnecessary delays.
+
+**Reproducible:** The demonstration must use fixed sample data and repeatable rules.
+
+**Honest:** Do not misrepresent synthetic data, confidence levels or integration capabilities.
+
+---
+
+# 22. FEATURES THAT MUST BE COMPLETED FIRST
+
+Use the following implementation priority.
+
+## P0 — Essential working product
+
+These features are mandatory.
+
+- React frontend.
+- Spring Boot backend.
+- Database connection.
+- Synthetic transaction import.
+- Merchant alias database.
+- Transaction normalisation.
+- Monthly recurrence detection.
+- Annual recurrence detection.
+- Irregular recurring candidate detection.
+- Price-increase detection.
+- Annual commitment calculation.
+- Dashboard.
+- Commitment details.
+- Cancellation playbooks for supported mechanisms.
+- Separate service and mandate cancellation checklists.
+- Synthetic demo dataset.
+- Actual end-to-end integration.
+
+## P1 — Important differentiators
+
+Implement after P0 works.
+
+- Commitment Map.
+- Variable-amount recurring detection.
+- Resumed payment detection.
+- Trial conversion.
+- Confidence explanation.
+- Cancellation evidence timeline.
+- Post-cancellation debit alerts.
+- Potentially unused commitments.
+- Detection metrics.
+
+## P2 — Additional polish
+
+Implement only after the core system is stable.
+
+- More merchant aliases.
+- Additional cancellation playbooks.
+- Better analytics.
+- CSV export.
+- More detailed charts.
+- Animations and micro-interactions.
+- Improved demo storytelling.
+
+Do not spend the entire development period polishing charts before the detection and cancellation workflows work.
+
+---
+
+# 23. DEVELOPMENT RULES — HOW YOU MUST WORK
+
+Follow these instructions strictly.
+
+### Rule 1 — Inspect before implementation
+
+Inspect the current working directory.
+
+Understand whether a project already exists.
+
+Do not overwrite existing work unnecessarily.
+
+### Rule 2 — Establish the project foundation
+
+Create or update the folder structure.
+
+Set up the backend and frontend.
+
+Make sure both start independently.
+
+### Rule 3 — Build a vertical slice
+
+First complete one end-to-end flow:
+
+Synthetic CSV → Transaction import → Merchant matching → Monthly recurrence detection → Commitment record → Frontend display.
+
+Test this before adding more features.
+
+### Rule 4 — Implement the remaining intelligence
+
+Add annual, irregular, variable-amount and resumed payment handling.
+
+Then add price changes, trials and potential unused alerts.
+
+### Rule 5 — Implement cancellation workflows
+
+Add payment-mechanism classification, playbook selection and separate cancellation states.
+
+### Rule 6 — Connect everything
+
+The dashboard, alerts, transaction history and cancellation centre must use real backend results.
+
+Do not maintain unrelated hardcoded frontend lists.
+
+### Rule 7 — Test after each major module
+
+When a test fails, fix the actual problem.
+
+Do not hide errors or disable important tests just to report success.
+
+### Rule 8 — Build a polished UI
+
+Once the main application is connected, finish the visual details and responsive layouts.
+
+### Rule 9 — Verify the complete user journey
+
+Run the full demonstration scenario described in Section 20.
+
+### Rule 10 — Do not ask unnecessary clarification questions
+
+The product's essential decisions are already specified.
+
+When a choice remains ambiguous, choose the safest and simplest implementation, record the assumption and continue.
+
+### Rule 11 — Never fabricate functionality
+
+If a feature is simulated, label it as simulated.
+
+If an integration does not exist, explain that it is not implemented.
+
+If an external action requires the user to visit a provider's official application, provide the link and instructions.
+
+### Rule 12 — Do not stop at code generation
+
+You must execute the project and test it wherever the environment allows.
+
+A list of files is not a working application.
+
+---
+
+# 24. REQUIRED DOCUMENTATION
+
+Create the following documents in the project:
+
+**README.md**
+
+Must include:
+
+- Product overview.
+- Features.
+- Technology stack.
+- Prerequisites.
+- Installation.
+- Configuration.
+- Backend startup.
+- Frontend startup.
+- API summary.
+- Demo-data instructions.
+- Troubleshooting.
+
+**SYSTEM_ARCHITECTURE.md**
+
+Must explain:
+
+- Architecture layers.
+- Module responsibilities.
+- Data movement.
+- Backend/frontend connection.
+- Main dependencies.
+- Database relationships.
+
+**DETECTION_METHODOLOGY.md**
+
+Must explain:
+
+- Recurrence rules.
+- Irregular pattern detection.
+- Merchant matching.
+- Confidence scoring.
+- Price-change detection.
+- Limitations.
+
+**CANCELLATION_PLAYBOOKS.md**
+
+Must explain:
+
+- Payment mechanism categories.
+- Service cancellation.
+- Payment authorisation revocation.
+- Cancellation state machine.
+- Evidence tracking.
+- Safety warnings.
+- Official references.
+
+**TESTING_REPORT.md**
+
+Must contain actual test outcomes.
+
+Do not fill it with invented results.
+
+**DEMO_SCRIPT.md**
+
+Must contain the exact sequence of actions to demonstrate the application to judges.
+
+---
+
+# 25. PROJECT BUSINESS POTENTIAL AND FUTURE DIRECTION
+
+Design the prototype so that it could eventually become a consumer financial product.
+
+Potential future development:
+
+### A. Bank and Account Aggregator ecosystem integration
+
+Explore legitimate, consent-based data access through appropriate regulated providers and partnerships.
+
+Do not assume that ordinary direct access to bank information is permitted.
+
+### B. Android application
+
+A future Android version could explore locally processed transaction notifications with explicit user permission and suitable privacy controls.
+
+### C. Email-based receipt intelligence
+
+Explore consent-based identification of renewals, invoices and subscription confirmation messages.
+
+### D. Merchant knowledge graph
+
+Expand the merchant reference database to connect:
+
+- Merchant.
+- Payment processor.
+- Service.
+- Subscription.
+- Payment method.
+- Cancellation authority.
+- Official instructions.
+
+### E. Cancellation verification
+
+Explore more reliable evidence integrations and merchant-confirmation workflows.
+
+### F. Financial commitment health
+
+Give users a broader understanding of:
+
+- Fixed expenses.
+- Discretionary commitments.
+- Upcoming obligations.
+- Changes in recurring expenditure.
+- Potential savings opportunities.
+
+### G. Potential business model
+
+Possible future models include:
+
+- Free basic consumer subscription tracking.
+- Premium financial commitment analytics.
+- Family-level commitment management.
+- Institutional or bank partnerships.
+- Consent-based integrations.
+
+These are business hypotheses, not confirmed revenue opportunities.
+
+---
+
+# 26. WHAT MAKES DEBITLENS DIFFERENT?
+
+The product must communicate the following positioning:
+
+"Other financial applications may already detect recurring payments, remind users of renewals or alert them when subscription amounts change. DebitLens aims to connect those insights into one evidence-backed commitment workflow."
+
+Our four proposed differentiating pillars are:
+
+### 1. Identity Intelligence
+
+Understand the actual service behind confusing financial transaction descriptions.
+
+### 2. Temporal Intelligence
+
+Understand recurring payment patterns over time, including irregular and resumed commitments.
+
+### 3. Cancellation Intelligence
+
+Understand which service and payment authorisation must be cancelled, and provide the correct steps.
+
+### 4. Verification Intelligence
+
+Track user-reported cancellation evidence and detect potential subsequent debits.
+
+The intended experience is:
+
+**Discover → Identify → Understand → Detect → Decide → Cancel → Verify.**
+
+This entire journey should form the central product story.
+
+---
+
+# 27. FINAL ACCEPTANCE CHECKLIST
+
+Do not declare the prototype complete until you have checked the following.
+
+## Application setup
+
+- [ ] Complete folder structure exists.
+- [ ] Backend builds successfully.
+- [ ] Frontend builds successfully.
+- [ ] Database starts successfully.
+- [ ] Backend API responds.
+- [ ] Frontend connects to backend.
+- [ ] Sample data loads.
+- [ ] README contains correct run commands.
+
+## Product functionality
+
+- [ ] Dashboard works.
+- [ ] Synthetic CSV import works.
+- [ ] Notification JSON import works.
+- [ ] Transaction history works.
+- [ ] Merchant matching works.
+- [ ] Unknown merchant handling works.
+- [ ] Monthly detection works.
+- [ ] Annual detection works.
+- [ ] Irregular detection works.
+- [ ] Price-change detection works.
+- [ ] Trial conversion detection works.
+- [ ] Resumed-payment detection works.
+- [ ] Annual total works.
+- [ ] Commitment Map works.
+- [ ] Cancellation instructions load.
+- [ ] Separate cancellation steps work.
+- [ ] Cancellation evidence can be saved.
+- [ ] Post-cancellation alerts work.
+- [ ] Methodology page works.
+
+## Technical quality
+
+- [ ] No frontend compilation errors.
+- [ ] No backend startup errors.
+- [ ] No broken API endpoints.
+- [ ] No nonfunctional primary buttons.
+- [ ] No fake success messages.
+- [ ] No missing data in major screens.
+- [ ] No unintended duplicate records.
+- [ ] Automated tests pass.
+- [ ] Performance metrics come from the test dataset.
+
+## Demonstration readiness
+
+- [ ] The complete end-to-end story works.
+- [ ] The demo dataset includes all important edge cases.
+- [ ] The sample import can be repeated.
+- [ ] Dashboard numbers are consistent with imported data.
+- [ ] Cancellation guidance can be demonstrated.
+- [ ] The app runs reliably.
+- [ ] A backup recording or screenshots can be prepared.
+
+---
+
+# 28. FINAL RESPONSE REQUIRED FROM YOU AFTER IMPLEMENTATION
+
+After completing development, provide a final implementation report containing:
+
+1. What exactly was built.
+2. Complete folder structure.
+3. Implemented modules.
+4. Technical architecture.
+5. Database entities and relationships.
+6. Backend API endpoints.
+7. Frontend application routes.
+8. Detection algorithms and methodology.
+9. Merchant-resolution logic.
+10. Cancellation workflow implementation.
+11. Synthetic dataset structure.
+12. Test cases and actual test results.
+13. Any remaining bugs or limitations.
+14. Exact commands to start the application.
+15. Exact URL to open the application.
+16. Instructions to run the demonstration.
+17. Features that are fully implemented.
+18. Features that are simulated.
+19. Features that remain future work.
+20. Recommended next improvements.
+
+Do not report a feature as implemented merely because a corresponding UI screen exists.
+
+A feature is implemented only when its intended behaviour actually works.
+
+If you could not execute a command because of an environment limitation, state that clearly.
+
+---
+
+# 29. YOUR FIRST ACTION
+
+Start by inspecting the project workspace and its available development tools.
+
+Then:
+
+1. Confirm the chosen architecture and development assumptions.
+2. Identify the project's existing state.
+3. Finalise a concise implementation sequence.
+4. Create the project structure.
+5. Start building the actual application.
+6. Complete the vertical slice.
+7. Continue through the mandatory features.
+8. Connect and test all modules.
+9. Run the complete demonstration.
+10. Deliver the working prototype and final implementation report.
+
+Do not return only a theoretical solution or ask me what to build next.
+
+**THE FINAL GOAL**
+
+Deliver a complete, connected, functional, polished and demonstrable DebitLens web application that addresses HackFront India's PS T4.1 — The Auto Debits Nobody Can Find.
+
+Remember:
+
+We are not trying to build another subscription-list application.
+
+We are building an evidence-backed financial commitment intelligence and cancellation assistant.
+
+The main product experience must demonstrate that DebitLens can:
+
+- Find recurring commitments.
+- Explain what the transactions actually represent.
+- Understand recurring financial patterns.
+- Detect meaningful changes.
+- Calculate annual financial impact.
+- Identify the appropriate cancellation procedure.
+- Track cancellation evidence.
+- Flag possible debits after reported cancellation.
+
+**Build the product, not just the presentation.**
+
+**Build the complete working prototype.**

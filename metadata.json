@@ -1,0 +1,6 @@
+{
+  "name": "DebitLens — Commitment Graph & Bhasha Intelligence",
+  "description": "Evidence-backed recurring payment intelligence, Neo4j Commitment Graph, Sarvam AI Indian-language financial explanation (DebitLens Bhasha), and two-layer cancellation assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

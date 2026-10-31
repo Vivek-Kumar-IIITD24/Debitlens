@@ -1,0 +1,1608 @@
+# DEBITLENS — MASTER IMPLEMENTATION, CORRECTION, INTEGRATION AND COMPLETION PROMPT
+
+## Project: HackFront India — Fintech PS T4.1
+## Partner Tracks: Sarvam AI + Neo4j AuraDB
+
+You are taking over an existing first-draft software prototype named DebitLens.
+
+Your task is to inspect, improve, repair, complete, integrate, test and prepare the existing application for hackathon submission.
+
+**THIS IS AN EXISTING PROJECT. DO NOT REBUILD IT FROM SCRATCH.**
+
+The project already contains a substantial React/TypeScript frontend, a TypeScript/Express backend, a recurring-payment detection engine, synthetic datasets, a merchant reference database, cancellation workflows, Neo4j integration code, Sarvam integration code and several product screens.
+
+The first draft has also been independently reviewed. That review identified incomplete integrations, misleading integration statuses, incorrect merchant mappings, inaccurate evaluation metrics and unfinished persistence.
+
+Your job is to finish the existing work correctly.
+
+Do not remove features that already work merely because you prefer another architecture.
+
+Do not create an unrelated new application.
+
+Do not replace the existing frontend with a new dashboard.
+
+Do not migrate the project to another backend framework unless a genuine technical blocker makes the existing backend unusable.
+
+Your final deliverable must be the same DebitLens product, but genuinely integrated, reliable, explainable and ready for a judge demonstration.
+
+---
+
+# PART 1 — UNDERSTAND THE EXISTING PROJECT BEFORE EDITING
+
+## 1.1 Inspect the complete workspace
+
+First inspect:
+
+- Root project files.
+- package.json.
+- TypeScript configuration.
+- Vite configuration.
+- Existing frontend source.
+- `server.ts`.
+- `src/engine/debitlensEngine.ts`.
+- `referenceData.ts` and related merchant reference files.
+- Existing Neo4j code.
+- Existing Sarvam code.
+- Existing API routes.
+- Existing tests.
+- Synthetic transaction data.
+- Ground-truth data.
+- Cancellation playbooks.
+- Documentation.
+- The separate `backend/` Spring Boot directory, if present.
+
+Search the entire project for:
+
+- `buildCommitmentGraphResponse`
+- `executionMode`
+- `LIVE_NEO4J_AURADB`
+- `GRAPH_ENGINE_VERIFIED`
+- `sarvamConfigured`
+- `apiReachable`
+- `RZP*`
+- `UPI/DR/`
+- `SI-`
+- `48 hours`
+- `.example.com`
+- `.example.in`
+- Hardcoded `100%` accuracy values.
+- All Neo4j driver initialisation and Cypher execution calls.
+- All Sarvam API requests and fallback functions.
+
+Understand the existing implementation before modifying it.
+
+Create a file named:
+
+`docs/CURRENT_IMPLEMENTATION_AUDIT.md`
+
+Document:
+
+1. What currently works.
+2. What is partially implemented.
+3. What is simulated.
+4. What is incomplete.
+5. What must be fixed.
+6. What can safely be preserved.
+7. Which tests already pass.
+8. Which external services require configuration.
+
+Do not assume that functionality exists just because a corresponding UI screen exists.
+
+## 1.2 Existing architecture decision
+
+The currently working application is primarily based on:
+
+- React.
+- TypeScript.
+- Vite.
+- Node.js.
+- Express.
+- Neo4j JavaScript Driver.
+
+An additional Spring Boot directory exists, but the existing frontend is not connected to a complete Spring Boot application.
+
+**Continue using the currently functioning TypeScript/Express backend as the single active backend.**
+
+Do not maintain two competing backend implementations.
+
+Inspect the Spring Boot directory and document its status. If it is an unused experimental implementation, archive it outside the active build or remove it only after confirming that no active application functionality depends on it.
+
+Do not use H2 as an alternative primary database.
+
+The active backend must be responsible for all actual application APIs.
+
+---
+
+# PART 2 — PRESERVE THE WORKING PRODUCT
+
+Before changing anything, create a backup or Git commit of the current project.
+
+Preserve the following existing work:
+
+1. Dashboard UI and navigation.
+2. Transactions interface.
+3. Commitment discovery interface.
+4. Existing Commitment Map interface.
+5. Existing Bhasha language interface.
+6. Cancellation Centre.
+7. Financial insights.
+8. Methodology and detection metrics interface.
+9. Existing synthetic transaction fixtures.
+10. Existing merchant reference catalogue.
+11. Existing recurring-payment engine.
+
+The first draft includes approximately 45 synthetic transaction records and a ground-truth dataset covering 10 commitment scenarios.
+
+Preserve those fixtures and their useful test cases.
+
+The previously isolated detection engine tests passed, so do not replace the engine without first understanding its implementation and preserving its regression tests.
+
+Improve it incrementally.
+
+The design should remain recognisably the existing DebitLens product.
+
+---
+
+# PART 3 — PRIORITY 0: MAKE NEO4J A REAL INTEGRATION
+
+This is the highest-priority technical task.
+
+## 3.1 The problem in the current implementation
+
+The first draft already initialises the Neo4j driver and creates some initial nodes.
+
+However, the graph displayed by the frontend is partly generated locally using JavaScript graph-building functions.
+
+The existing function:
+
+`buildCommitmentGraphResponse(...)`
+
+constructs graph-like responses from local objects.
+
+It also creates query descriptions and sample query results that are not necessarily results from executed Cypher statements.
+
+The application must no longer present locally generated data as a real AuraDB query result.
+
+**Connecting to Neo4j does not prove that Neo4j is powering the Commitment Map.**
+
+You must implement the real persistence and retrieval layer.
+
+## 3.2 Neo4j as the primary database
+
+Use Neo4j AuraDB as the primary persistent store for the product's central data model.
+
+All the following must be persisted:
+
+- Demo user.
+- Accounts.
+- Import batches.
+- Transactions.
+- Transaction descriptors.
+- Merchant entities.
+- Processor entities.
+- Service entities.
+- Financial commitments.
+- Mandates where supported by evidence.
+- Payment rails.
+- Notification events.
+- Alerts.
+- Cancellation playbooks.
+- Cancellation sessions.
+- Cancellation steps.
+- Cancellation evidence.
+
+Use stable IDs and uniqueness constraints.
+
+Repeated imports of the same data must not create duplicate nodes or relationships.
+
+Use `MERGE` and parameterised Cypher queries.
+
+Use `UNWIND` for bulk insertion where appropriate.
+
+Avoid unnecessary individual database calls for every transaction.
+
+## 3.3 Neo4j credentials and environment configuration
+
+Create or update a root-level `.env.example`.
+
+Include:
+
+```env
+# -----------------------------
+# APPLICATION
+# -----------------------------
+
+NODE_ENV=development
+PORT=3000
+CLIENT_ORIGIN=http://localhost:5173
+
+# -----------------------------
+# NEO4J AURADB
+# -----------------------------
+
+NEO4J_ENABLED=true
+NEO4J_URI=<ADD_YOUR_NEO4J_AURA_URI>
+NEO4J_USERNAME=<ADD_YOUR_NEO4J_USERNAME>
+NEO4J_PASSWORD=<ADD_YOUR_NEO4J_PASSWORD>
+NEO4J_DATABASE=neo4j
+
+# -----------------------------
+# SARVAM AI
+# -----------------------------
+
+SARVAM_ENABLED=true
+SARVAM_API_KEY=<ADD_YOUR_SARVAM_API_KEY>
+SARVAM_BASE_URL=https://api.sarvam.ai
+
+SARVAM_CHAT_MODEL=sarvam-105b
+SARVAM_TRANSLATION_MODEL=sarvam-translate:v1
+
+SARVAM_DEFAULT_LANGUAGE=en-IN
+
+# -----------------------------
+# DEMO MODE
+# -----------------------------
+
+DEMO_MODE=true
+ALLOW_LOCAL_PREVIEW=false
+```
+
+These are placeholders.
+
+Never generate fictional credentials.
+
+Never hardcode API keys into JavaScript, TypeScript, HTML or frontend configuration.
+
+Add `.env` to `.gitignore`.
+
+Create `.env.example` with blank or placeholder values.
+
+The actual `.env` must be supplied by the developer locally.
+
+## 3.4 Neo4j node model
+
+Implement the following graph entities:
+
+```text
+User
+Account
+ImportBatch
+Transaction
+Descriptor
+Merchant
+PaymentProcessor
+Service
+Commitment
+Mandate
+PaymentRail
+NotificationEvent
+CancellationPlaybook
+CancellationSession
+CancellationStep
+CancellationEvidence
+DetectionAlert
+```
+
+Create the following important relationships:
+
+```text
+USER_OWNS_ACCOUNT
+
+ACCOUNT_HAS_TRANSACTION
+
+IMPORT_BATCH_CONTAINS_TRANSACTION
+
+TRANSACTION_HAS_DESCRIPTOR
+
+DESCRIPTOR_RESOLVES_TO_MERCHANT
+
+TRANSACTION_PROCESSED_BY
+
+MERCHANT_OFFERS_SERVICE
+
+TRANSACTION_SUPPORTS_COMMITMENT
+
+COMMITMENT_FOR_SERVICE
+
+COMMITMENT_AUTHORISED_BY
+
+MANDATE_USES_RAIL
+
+SERVICE_HAS_CANCELLATION_PLAYBOOK
+
+COMMITMENT_HAS_ALERT
+
+ALERT_SUPPORTED_BY
+
+COMMITMENT_HAS_CANCELLATION_SESSION
+
+SESSION_HAS_STEP
+
+SESSION_HAS_EVIDENCE
+
+NOTIFICATION_SUPPORTS_COMMITMENT
+```
+
+Do not create a relationship that is not supported by evidence.
+
+A transaction may be linked to a processor even when the merchant is unknown.
+
+A transaction must not automatically be linked to a merchant merely because the merchant and transaction share a payment processor.
+
+Store relevant metadata on relationships:
+
+- confidenceScore.
+- evidenceType.
+- matchMethod.
+- relationshipStatus.
+- sourceReference.
+- createdAt.
+
+Distinguish:
+
+- CONFIRMED.
+- INFERRED.
+- USER_CONFIRMED.
+- UNRESOLVED.
+
+## 3.5 Required Neo4j operations
+
+Implement actual Cypher query methods.
+
+### Operation 1: Merchant descriptor connection
+
+Retrieve every descriptor linked to a verified merchant.
+
+### Operation 2: Merchant transaction history
+
+Retrieve connected transactions for a merchant across different descriptions and import batches.
+
+### Operation 3: Commitment evidence
+
+Retrieve the supporting transaction records associated with a commitment.
+
+### Operation 4: Irregular payments
+
+Retrieve all connected transactions belonging to a likely recurring commitment so the Java engine can analyse date intervals and amount changes.
+
+### Operation 5: Resumed commitments
+
+Find previously active commitments with new transactions after an interval gap.
+
+### Operation 6: Cancellation evidence
+
+Traverse from a commitment to its cancellation session, actions, evidence and subsequent related transactions.
+
+### Operation 7: Unknown processor-only transactions
+
+Retrieve transactions connected to a processor but not sufficiently linked to any merchant.
+
+These queries must execute against Neo4j AuraDB.
+
+## 3.6 Implement complete graph seeding
+
+Current graph seeding is incomplete.
+
+Expand it so that the complete synthetic dataset produces the complete expected graph.
+
+The following example must work:
+
+```text
+Transaction A
+     |
+Descriptor: RZP*STREAMBOX
+     |
+Verified alias
+     |
+Merchant: StreamBox
+     |
+Service: StreamBox Premium
+     |
+Commitment: Monthly ₹499
+     |
+Mandate: Synthetic UPI mandate
+     |
+Payment Rail: UPI AutoPay
+```
+
+Other transactions from the same synthetic merchant must connect to the same merchant/service/commitment when evidence supports the connection.
+
+The unknown processor-only transaction:
+
+```text
+Descriptor: RAZORPAY
+```
+
+must not automatically become a StreamBox transaction.
+
+## 3.7 Update the graph API
+
+Refactor the current graph endpoints.
+
+Locate:
+
+`buildCommitmentGraphResponse(...)`
+
+Do not continue using it as the data source for a supposedly live AuraDB response.
+
+Replace the live path with actual Neo4j service methods.
+
+The backend must return:
+
+- Actual nodes.
+- Actual relationships.
+- Actual database identifiers.
+- Relationship status.
+- Confidence.
+- Evidence references.
+- Executed query metadata.
+- Returned result counts.
+
+It is acceptable to retain a separate local graph-preview function, but it must be explicitly labelled `LOCAL_PREVIEW`.
+
+Allowed modes:
+
+```text
+LIVE_NEO4J
+LOCAL_PREVIEW
+NOT_CONFIGURED
+CONNECTION_FAILED
+```
+
+Never set `LIVE_NEO4J` simply because a connection was initialised.
+
+Only label graph data live when it was actually retrieved from Neo4j.
+
+## 3.8 Neo4j Commitment Map improvements
+
+Preserve the existing Commitment Map screen.
+
+Improve it with:
+
+- Actual Neo4j-backed nodes and edges.
+- Selectable nodes.
+- Selectable relationship labels.
+- Node detail panel.
+- Merchant filtering.
+- Transaction filtering.
+- Payment-rail filtering.
+- Unresolved-relationship filter.
+- Evidence inspection.
+- Graph query explanation.
+- Loading and error states.
+- Refresh action.
+
+Reduce graph clutter.
+
+Initially display a selected commitment and its directly related entities.
+
+Allow expansion into supporting transaction histories.
+
+Use the existing graph visualisation library where possible. Do not introduce another library unnecessarily.
+
+## 3.9 Neo4j health
+
+Create an actual backend connectivity check.
+
+Use the driver's official connectivity verification methods.
+
+The health response must distinguish:
+
+```json
+{
+  "configured": true,
+  "connected": true,
+  "database": "neo4j",
+  "lastSuccessfulCheck": "...",
+  "status": "LIVE"
+}
+```
+
+The actual values must be generated by the backend.
+
+Do not hardcode this JSON as the result.
+
+Close sessions after database operations.
+
+Close the driver during application shutdown.
+
+Handle connection timeouts and database failures.
+
+---
+
+# PART 4 — PRIORITY 0: COMPLETE SARVAM INTEGRATION
+
+## 4.1 Existing state
+
+The first draft already contains Sarvam integration code.
+
+It has:
+
+- Chat Completion API calls.
+- Translation API calls.
+- Merchant explanation interfaces.
+- Bhasha language selection.
+- Fallback translation logic.
+
+However, the supplied screenshots show that the API key was not configured and that the visible explanations were generated through fallback templates.
+
+The cancellation translation implementation also does not translate every Layer A and Layer B instruction.
+
+The integration must be completed.
+
+## 4.2 Use the current official Sarvam API documentation
+
+Before making changes, verify the current request and response schemas from:
+
+https://docs.sarvam.ai/
+
+Use the current supported endpoints.
+
+### Sarvam Chat Completion
+
+```text
+POST https://api.sarvam.ai/v1/chat/completions
+```
+
+Model:
+
+```text
+sarvam-105b
+```
+
+Recommended authentication header:
+
+```text
+api-subscription-key: <YOUR_SARVAM_API_KEY>
+```
+
+### Sarvam Translate
+
+```text
+POST https://api.sarvam.ai/translate
+```
+
+Model:
+
+```text
+sarvam-translate:v1
+```
+
+The translation request includes:
+
+- input.
+- source_language_code.
+- target_language_code.
+- model.
+
+Use the official response field `translated_text`.
+
+Do not assume that the response schema is identical to Chat Completion.
+
+## 4.3 Sarvam key configuration
+
+Read the API key only from:
+
+```env
+SARVAM_API_KEY=<ADD_YOUR_SARVAM_API_KEY>
+```
+
+Use the key through the backend environment.
+
+Never expose it through:
+
+- Vite environment variables.
+- React source code.
+- Browser network responses.
+- HTML.
+- GitHub.
+- Committed sample files.
+
+The current Sarvam official documentation recommends `api-subscription-key` authentication.
+
+## 4.4 Complete the merchant explanation feature
+
+When the user opens a transaction, the backend must construct a structured, verified evidence object.
+
+Example:
+
+```json
+{
+  "rawDescriptor": "RAZORPAY*STREAMBOX",
+  "merchant": "StreamBox",
+  "merchantVerified": true,
+  "processor": "Razorpay",
+  "service": "StreamBox Premium",
+  "amount": 499,
+  "currency": "INR",
+  "frequency": "MONTHLY",
+  "confidence": 92,
+  "evidenceSummary": [
+    "Known merchant alias",
+    "Four supporting synthetic transactions",
+    "Consistent monthly intervals"
+  ]
+}
+```
+
+Provide that evidence to Sarvam for natural-language explanation.
+
+The model should explain:
+
+- What the transaction represents.
+- Why the statement description differs from the actual merchant name.
+- Which processor is involved.
+- What payment frequency was detected.
+- Why the user should recognise this payment.
+- What details remain uncertain.
+
+For unknown merchant identities, Sarvam must clearly state:
+
+"The payment processor is recognised, but the underlying merchant could not be confirmed."
+
+It must never invent a merchant identity.
+
+## 4.5 Complete the cancellation translation feature
+
+Currently, not all cancellation steps are translated.
+
+Fix the complete workflow.
+
+Translate every user-facing text field:
+
+Layer A:
+
+- Section title.
+- Description.
+- All step titles.
+- All step instructions.
+- Important warnings.
+
+Layer B:
+
+- Section title.
+- Description.
+- All step titles.
+- All step instructions.
+- Important warnings.
+
+Also translate:
+
+- Escalation guidance.
+- Confirmation explanations.
+- Cancellation status messages.
+- Post-cancellation alerts.
+
+Never translate or change:
+
+- URLs.
+- Confirmation reference numbers.
+- Merchant brand names.
+- Amounts.
+- Dates.
+- Mandate reference values.
+
+Use structured text fields and protected values.
+
+A translated instruction must preserve the same meaning and order as the original.
+
+The complete instructions must be translated, not just the first item.
+
+Respect the API's documented text length limits. For Sarvam Translate, split long content into sentence-aware chunks within the current documented maximum.
+
+## 4.6 Language support
+
+Support:
+
+- English `en-IN`.
+- Hindi `hi-IN`.
+- Bengali `bn-IN`.
+- Tamil `ta-IN`.
+- Telugu `te-IN`.
+- Marathi `mr-IN`.
+- Gujarati `gu-IN`.
+- Kannada `kn-IN`.
+- Malayalam `ml-IN`.
+- Punjabi `pa-IN`.
+- Additional scheduled Indian languages using the currently documented Sarvam language codes.
+
+The Sarvam Translate model supports English and the 22 scheduled Indian languages.
+
+Build a language catalogue.
+
+For the primary demonstration, make English and Hindi fully tested.
+
+Test at least one additional Indian language.
+
+Do not advertise a language as successfully tested merely because it appears in the dropdown.
+
+## 4.7 Fix Sarvam integration status
+
+The current code treats API-key configuration as proof that Sarvam is reachable.
+
+That is incorrect.
+
+Find the current logic around:
+
+```typescript
+apiReachable: sarvamConfigured
+```
+
+Replace it.
+
+Track separate states:
+
+```text
+NOT_CONFIGURED
+CONFIGURED_NOT_TESTED
+LIVE_SUCCESS
+REQUEST_FAILED
+RATE_LIMITED
+FALLBACK
+```
+
+The integration-status screen must distinguish:
+
+- API key present.
+- Last request successful.
+- Last successful call time.
+- Current error, if any.
+- Whether the visible output is live or fallback.
+
+Do not spend API credits every time the dashboard loads just to display integration health.
+
+Update health after genuine API calls or explicit integration tests.
+
+## 4.8 Sarvam fallback behaviour
+
+Retain the existing local fallback.
+
+However:
+
+- Clearly label it as `LOCAL_FALLBACK`.
+- Never call it live Sarvam output.
+- Show a visible message when the API key is missing.
+- Do not silently substitute fallback text after a failed API request.
+- Explain whether the displayed explanation is AI-generated or predefined.
+
+A user or judge must be able to identify which outputs actually came from Sarvam.
+
+## 4.9 Sarvam tests
+
+Implement:
+
+1. Live merchant explanation in English.
+2. Live merchant explanation in Hindi.
+3. Unknown merchant explanation.
+4. Full Layer A translation.
+5. Full Layer B translation.
+6. Financial warning translation.
+7. Language switching.
+8. API timeout.
+9. Invalid API key handling.
+10. Rate-limit handling.
+11. Missing API key handling.
+12. Fallback transparency.
+
+Use mocked API responses for automated unit tests.
+
+Use a separate manual integration test with the actual developer API key.
+
+---
+
+# PART 5 — PRIORITY 0: FIX MERCHANT IDENTIFICATION ERRORS
+
+This is critical to product trust.
+
+## 5.1 Incorrect generic processor aliases
+
+The initial review found the following unsafe mappings in the merchant reference data:
+
+```typescript
+'UPI/DR/' → Razorpay
+```
+
+and:
+
+```typescript
+'SI-' → BillDesk
+```
+
+These are too generic.
+
+A UPI descriptor does not establish that Razorpay processed the transaction.
+
+A standing instruction marker does not establish that BillDesk processed the transaction.
+
+Correct the merchant reference catalogue.
+
+## 5.2 New matching policy
+
+Use the following matching hierarchy:
+
+1. Exact canonical merchant match.
+2. Exact specific merchant alias match.
+3. Verified processor-plus-merchant pattern.
+4. Specific processor match.
+5. Generic payment-mechanism classification.
+6. Unknown/unresolved.
+
+Do not treat a generic processor or payment marker as proof of the merchant.
+
+Maintain separate fields:
+
+```text
+merchantIdentity
+processorIdentity
+paymentMechanism
+```
+
+These must never be combined into a single field.
+
+## 5.3 Confidence and manual correction
+
+The application must:
+
+- Explain the matching rule.
+- Show the original descriptor.
+- Show the resolved descriptor.
+- Show the confidence.
+- Allow a user to correct the proposed merchant.
+- Store user confirmation separately from automated inference.
+
+A user-confirmed mapping should be persisted, with its source recorded.
+
+---
+
+# PART 6 — PRIORITY 0: FIX CANCELLATION GUIDANCE
+
+## 6.1 Fake official URLs
+
+The existing project contains fictional service URLs using:
+
+```text
+.example.com
+.example.in
+```
+
+Some of these are presented as if they are official cancellation pages.
+
+This must be corrected.
+
+Search every cancellation playbook for fake domains.
+
+Replace them with one of two options:
+
+A. A verified current official URL from the actual merchant/provider.
+
+B. A clearly labelled demo-only instruction with no misleading external link.
+
+Never invent an official URL.
+
+## 6.2 Unsupported universal cancellation deadlines
+
+The first draft includes general 48-hour cancellation and response rules.
+
+Remove these universal rules.
+
+Cancellation dates, cut-off periods, processing times and response commitments can differ by merchant and payment mechanism.
+
+Only display a deadline when the specific official source supports it.
+
+Otherwise say:
+
+"Check the merchant's stated cancellation cut-off and renewal terms."
+
+## 6.3 Two-layer cancellation design
+
+Preserve the existing separate cancellation system.
+
+Layer A:
+
+Cancel the actual service or subscription.
+
+Layer B:
+
+Revoke or manage the payment authorisation where applicable.
+
+Keep independent states for:
+
+- Service cancellation.
+- Payment authorisation cancellation.
+- Merchant confirmation.
+- Provider status.
+
+Never declare both completed because only one step was completed.
+
+## 6.4 Financial obligation safety
+
+For insurance, loan repayments and EMIs:
+
+- Show a prominent warning.
+- Direct the user to the institution.
+- Explain that stopping automatic payment does not eliminate the contractual obligation.
+- Never suggest casually cancelling the mandate as a substitute for closing the contract.
+
+## 6.5 Real-service cancellation demonstration
+
+The HackFront brief expects at least one real-service cancellation flow to be tested.
+
+Choose a real service for which the team can examine the existing account or subscription without purchasing a new service solely for the demo.
+
+Google Play subscription cancellation may be used when an existing subscription is billed through Google Play.
+
+Official documentation:
+
+https://support.google.com/googleplay/answer/7018481
+
+Verify the specific service and billing channel.
+
+Document:
+
+- Starting subscription state.
+- Merchant cancellation steps.
+- Payment-authorisation implications.
+- Confirmation state.
+- Official source.
+- Date checked.
+- What was actually tested.
+
+Do not claim that revoking a payment mandate has cancelled the subscription.
+
+---
+
+# PART 7 — PRIORITY 1: REPAIR DETECTION METRICS AND TESTING
+
+The current implementation contains some hardcoded 100% accuracy and performance figures.
+
+This is not acceptable for judging.
+
+Replace all hardcoded metrics with actual calculations.
+
+## 7.1 Ground-truth methodology
+
+Use the existing:
+
+`ground-truth.json`
+
+or the equivalent ground-truth file found in the project.
+
+The ground-truth dataset must be used only by evaluation logic.
+
+It must never be passed into the production detection engine as an input.
+
+Calculate:
+
+```text
+Precision =
+True Positives / (True Positives + False Positives)
+
+Recall =
+True Positives / (True Positives + False Negatives)
+
+F1 Score =
+2 × Precision × Recall / (Precision + Recall)
+```
+
+Also calculate:
+
+- Merchant match accuracy.
+- Merchant match coverage.
+- Irregular payment detection rate.
+- Annual recurrence detection rate.
+- Price-change detection accuracy.
+- Trial conversion detection accuracy.
+- False merchant merge rate.
+- Unknown merchant handling accuracy.
+
+Display the dataset size and test categories.
+
+Do not display any hardcoded success percentage.
+
+## 7.2 Additional adversarial test cases
+
+Add labelled synthetic tests for:
+
+1. Two unrelated merchants with similar names.
+2. Two different merchants using the same processor.
+3. An unknown processor-only descriptor.
+4. One-time purchases repeated several times without a true fixed commitment.
+5. Refunds.
+6. Reversed transactions.
+7. A variable-amount subscription.
+8. A payment at month-end.
+9. An annual renewal with only two occurrences.
+10. A price increase caused by a possible tax or plan change.
+11. A transaction arriving after cancellation.
+12. Two payment accounts associated with the same merchant.
+13. Duplicate imported transactions.
+14. An incomplete notification.
+15. A generic UPI debit with no processor or merchant evidence.
+
+The detection system must demonstrate conservative treatment of uncertainty.
+
+## 7.3 Preserve existing tests
+
+Run all existing engine tests before modifications.
+
+Add new tests without deleting the existing ones.
+
+Ensure every bug fix has a regression test.
+
+---
+
+# PART 8 — PRIORITY 1: PROPER IMPORT AND DATA PERSISTENCE
+
+## 8.1 CSV parser
+
+The current parser manually splits rows and fields by commas.
+
+Replace it with a proper CSV parsing library.
+
+It must support:
+
+- Quoted values.
+- Commas inside descriptions.
+- Escaped quotes.
+- Empty fields.
+- Different line endings.
+- Date validation.
+- Negative numbers where supported.
+- Invalid rows with error reporting.
+
+Do not crash the entire import because of one invalid row.
+
+## 8.2 JSON notification import
+
+The current notification dataset is primarily loaded as seed data.
+
+Add a real user-facing JSON import flow.
+
+Support:
+
+- Upload.
+- Preview.
+- Validation.
+- Deduplication.
+- Import report.
+- Persistence.
+- Processing.
+
+Allow the user to download a sample JSON template.
+
+## 8.3 Persistence
+
+Transactions and user actions must not disappear when the server restarts.
+
+Persist:
+
+- Import batches.
+- Transactions.
+- Merchant corrections.
+- Commitments.
+- Alerts and statuses.
+- Usage notes.
+- Cancellation sessions.
+- Cancellation steps.
+- Cancellation evidence.
+
+Use Neo4j as the persistence layer.
+
+Ensure that the application's primary dashboard retrieves persisted data rather than relying on an in-memory dataset.
+
+The sample/demo dataset should be seeded idempotently.
+
+Provide a demo reset endpoint or action that deletes only the synthetic demo user's data.
+
+Do not accidentally delete unrelated data in AuraDB.
+
+---
+
+# PART 9 — IMPROVE THE COMMITMENT MAP UX
+
+Preserve the existing visual identity.
+
+However, make the graph much easier to understand.
+
+## Required changes
+
+1. Initially show the selected commitment and its directly related nodes.
+2. Support expansion to connected transactions.
+3. Use clear node types.
+4. Use colour/shape distinctions for transaction, merchant, processor, service, mandate and evidence.
+5. Show relationship labels.
+6. Show confidence and relationship status.
+7. Provide a side panel for selected nodes.
+8. Provide a graph legend.
+9. Provide a filter for unknown/unresolved identities.
+10. Prevent excessive line crossing where possible.
+11. Show an explanatory message when no actual Neo4j data is available.
+12. Show the database execution status truthfully.
+
+Do not replace the graph with an attractive static image.
+
+The graph must display actual data returned by the Neo4j APIs.
+
+---
+
+# PART 10 — BACKEND ARCHITECTURE CLEANUP
+
+The currently active backend is TypeScript/Express.
+
+Keep it as the single active backend.
+
+Refactor it into sensible modules where possible, but do not create a large new architecture if that would destabilise the project.
+
+Suggested active structure:
+
+```text
+server/
+├── app.ts
+├── config/
+│   ├── env.ts
+│   ├── neo4j.ts
+│   └── sarvam.ts
+│
+├── routes/
+│   ├── dashboard.routes.ts
+│   ├── import.routes.ts
+│   ├── transaction.routes.ts
+│   ├── merchant.routes.ts
+│   ├── commitment.routes.ts
+│   ├── graph.routes.ts
+│   ├── alert.routes.ts
+│   ├── cancellation.routes.ts
+│   ├── analytics.routes.ts
+│   ├── sarvam.routes.ts
+│   └── integration.routes.ts
+│
+├── services/
+│   ├── neo4jGraph.service.ts
+│   ├── merchantResolver.service.ts
+│   ├── commitmentDetection.service.ts
+│   ├── cancellation.service.ts
+│   ├── analytics.service.ts
+│   ├── sarvamChat.service.ts
+│   └── sarvamTranslation.service.ts
+│
+├── validators/
+├── middleware/
+├── types/
+└── utils/
+```
+
+Use this as a logical structure.
+
+Retain existing modules where they are already clean and functional.
+
+Avoid duplicating the detection engine.
+
+The current `src/engine/debitlensEngine.ts` should remain the central reusable detection component unless there is a strong reason to relocate it.
+
+Create a single source of truth for business rules.
+
+Use central error handling.
+
+Use parameterised queries.
+
+Use appropriate timeouts and retry rules for external service calls.
+
+Avoid retrying payment or cancellation actions because this prototype should not execute them.
+
+---
+
+# PART 11 — API CONTRACTS
+
+Keep existing API routes working where possible.
+
+Update the following routes to use actual service implementations.
+
+## Neo4j
+
+GET `/api/graph/health`
+
+GET `/api/graph/commitments/:id`
+
+GET `/api/graph/merchants/:id/relationships`
+
+GET `/api/graph/commitments/:id/evidence`
+
+GET `/api/graph/commitments/:id/path-explanation`
+
+GET `/api/graph/unresolved-transactions`
+
+POST `/api/graph/rebuild-demo`
+
+## Sarvam
+
+GET `/api/sarvam/status`
+
+POST `/api/sarvam/merchant-explanation`
+
+POST `/api/sarvam/cancellation-explanation`
+
+POST `/api/sarvam/financial-alert`
+
+POST `/api/sarvam/translate`
+
+GET `/api/language/supported`
+
+## Imports
+
+POST `/api/import/transactions`
+
+POST `/api/import/notifications`
+
+GET `/api/import/history`
+
+GET `/api/import/template`
+
+## Evaluation
+
+GET `/api/detection/metrics`
+
+POST `/api/detection/evaluate`
+
+Do not expose the ground-truth file to public production endpoints.
+
+## Integrations
+
+GET `/api/integrations/status`
+
+Its response must be truthful.
+
+Example:
+
+```json
+{
+  "neo4j": {
+    "configured": true,
+    "connected": true,
+    "mode": "LIVE_NEO4J",
+    "lastSuccessfulCheck": "ACTUAL_TIMESTAMP"
+  },
+  "sarvam": {
+    "configured": true,
+    "lastSuccessfulRequest": "ACTUAL_TIMESTAMP",
+    "lastRequestStatus": "LIVE_SUCCESS"
+  }
+}
+```
+
+Use actual values from the application.
+
+---
+
+# PART 12 — SECURITY AND ENVIRONMENT FILES
+
+Create:
+
+`.env.example`
+
+Ensure:
+
+`.env`
+
+is ignored by Git.
+
+Do not modify the user's actual secrets.
+
+The developer must enter credentials locally.
+
+Use the following exact environment placeholders:
+
+```env
+NODE_ENV=development
+PORT=3000
+
+CLIENT_ORIGIN=http://localhost:5173
+
+NEO4J_ENABLED=true
+NEO4J_URI=<PASTE_YOUR_AURA_URI_HERE>
+NEO4J_USERNAME=<PASTE_YOUR_AURA_USERNAME_HERE>
+NEO4J_PASSWORD=<PASTE_YOUR_AURA_PASSWORD_HERE>
+NEO4J_DATABASE=neo4j
+
+SARVAM_ENABLED=true
+SARVAM_API_KEY=<PASTE_YOUR_SARVAM_API_KEY_HERE>
+SARVAM_BASE_URL=https://api.sarvam.ai
+SARVAM_CHAT_MODEL=sarvam-105b
+SARVAM_TRANSLATION_MODEL=sarvam-translate:v1
+
+SARVAM_DEFAULT_LANGUAGE=en-IN
+
+DEMO_MODE=true
+ALLOW_LOCAL_PREVIEW=false
+```
+
+Create appropriate validation on server startup.
+
+If credentials are missing:
+
+- Do not crash the entire app unnecessarily.
+- Show the affected integration as not configured.
+- Allow only the explicitly enabled local preview mode.
+- Never claim the partner track is live.
+
+Never print credentials to console logs.
+
+---
+
+# PART 13 — AUTOMATED TESTING AND FULL END-TO-END VALIDATION
+
+Run the actual application.
+
+Do not rely on static source inspection only.
+
+## 13.1 Build verification
+
+Run:
+
+- Frontend type checking.
+- Frontend production build.
+- Backend TypeScript type checking.
+- Backend unit tests.
+- Integration tests.
+- Linting if available.
+
+Fix real failures.
+
+Do not hide compiler errors.
+
+## 13.2 Neo4j integration test
+
+With actual AuraDB credentials:
+
+1. Connect to the database.
+2. Create schema constraints.
+3. Seed synthetic graph data.
+4. Run a merchant alias query.
+5. Retrieve supporting transaction history.
+6. Retrieve a commitment and its mandate relationship.
+7. Retrieve cancellation evidence.
+8. Confirm the returned result is actual database data.
+9. Restart the application.
+10. Confirm persisted entities are still available.
+
+## 13.3 Sarvam integration test
+
+With an actual Sarvam API key:
+
+1. Test chat completion.
+2. Test English-to-Hindi translation.
+3. Test a second language.
+4. Test an unknown merchant.
+5. Test a full cancellation playbook.
+6. Confirm URLs and amounts remain correct.
+7. Confirm no unsupported merchant claim appears.
+8. Verify errors and quota responses are displayed clearly.
+
+Automated tests may mock Sarvam, but a manual live integration result must be recorded separately.
+
+## 13.4 Complete user journey test
+
+Perform:
+
+```text
+Import Synthetic Data
+        ↓
+Normalise Transactions
+        ↓
+Resolve Merchant Identity
+        ↓
+Persist Graph in Neo4j
+        ↓
+Run Commitment Detection
+        ↓
+Retrieve Actual Graph Evidence
+        ↓
+Generate Financial Alerts
+        ↓
+Explain Through Sarvam
+        ↓
+Translate Cancellation Steps
+        ↓
+Record Cancellation Evidence
+        ↓
+Import New Synthetic Debit
+        ↓
+Detect Possible Post-Cancellation Charge
+```
+
+The actual frontend and backend must complete this journey.
+
+---
+
+# PART 14 — FINAL JUDGE DEMONSTRATION
+
+Prepare a clear 5–7 minute demonstration.
+
+### Part A — Product problem
+
+Explain that users cannot easily understand all their recurring financial commitments.
+
+### Part B — Discovery
+
+Load the existing synthetic dataset.
+
+Show the recurring commitment list and annual cost.
+
+### Part C — Neo4j partner track
+
+Open the Commitment Map.
+
+Show the actual Neo4j relationships.
+
+Execute a real Cypher query that retrieves multiple transaction descriptions connected to the same merchant.
+
+Demonstrate an unresolved processor-only transaction.
+
+Show that the graph is not hardcoded.
+
+### Part D — Sarvam partner track
+
+Open a merchant with a cryptic statement description.
+
+Show a real Sarvam-powered explanation.
+
+Switch to Hindi.
+
+Open the cancellation assistant.
+
+Translate the complete Layer A and Layer B cancellation instructions.
+
+### Part E — Cancellation intelligence
+
+Show separate service and payment-authorisation states.
+
+Record test cancellation evidence.
+
+### Part F — Verification
+
+Import another synthetic transaction.
+
+Show the possible post-cancellation debit alert.
+
+### Part G — Evaluation
+
+Show actual precision, recall, merchant matching coverage and the limitations of the labelled synthetic dataset.
+
+---
+
+# PART 15 — REQUIRED DELIVERABLES
+
+At completion, provide:
+
+1. Updated working codebase.
+2. Updated frontend.
+3. Working backend.
+4. Neo4j AuraDB integration.
+5. Real graph persistence.
+6. Actual Cypher-powered APIs.
+7. Live Sarvam integration.
+8. Full cancellation translation.
+9. Corrected merchant reference catalogue.
+10. Corrected cancellation playbooks.
+11. Proper CSV parser.
+12. JSON notification import.
+13. Persistent user actions.
+14. Genuine evaluation metrics.
+15. Updated test suite.
+16. Updated `.env.example`.
+17. Correct `.gitignore`.
+18. Updated README.
+19. `CURRENT_IMPLEMENTATION_AUDIT.md`.
+20. `NEO4J_IMPLEMENTATION.md`.
+21. `SARVAM_IMPLEMENTATION.md`.
+22. `CANCELLATION_SOURCE_AUDIT.md`.
+23. `TESTING_REPORT.md`.
+24. `DEMO_SCRIPT.md`.
+
+---
+
+# PART 16 — FINAL ACCEPTANCE CHECKLIST
+
+Do not declare completion until the following has been checked.
+
+## Existing application
+
+- [ ] Existing dashboard preserved.
+- [ ] Existing navigation preserved.
+- [ ] Existing detection engine preserved and improved.
+- [ ] Existing sample dataset preserved.
+- [ ] Existing test cases retained.
+- [ ] Main application routes work.
+
+## Neo4j
+
+- [ ] Actual AuraDB connection works.
+- [ ] Complete graph nodes persist.
+- [ ] Required relationships persist.
+- [ ] Real Cypher queries run.
+- [ ] Graph endpoints return actual results.
+- [ ] Commitment Map uses actual returned data.
+- [ ] Graph survives application restart.
+- [ ] Unknown merchants are not incorrectly merged.
+- [ ] Local-preview mode is clearly differentiated.
+
+## Sarvam
+
+- [ ] API key is configured locally.
+- [ ] Live chat completion succeeds.
+- [ ] Live translation succeeds.
+- [ ] English and Hindi work.
+- [ ] Another language is tested.
+- [ ] Merchant explanations are evidence-grounded.
+- [ ] All cancellation steps are translated.
+- [ ] Important warnings are preserved.
+- [ ] API health is reported honestly.
+- [ ] Fallback content is labelled correctly.
+
+## Product quality
+
+- [ ] Generic processor mappings fixed.
+- [ ] Fake official URLs removed.
+- [ ] Unsupported 48-hour rules removed.
+- [ ] Loan and insurance warnings retained.
+- [ ] Metrics calculated from ground truth.
+- [ ] Additional adversarial tests added.
+- [ ] CSV quoted-field support works.
+- [ ] Notification JSON upload works.
+- [ ] User actions persist.
+- [ ] Demo reset works safely.
+
+## Final submission
+
+- [ ] Frontend production build passes.
+- [ ] Backend tests pass.
+- [ ] Neo4j integration tested.
+- [ ] Sarvam integration tested.
+- [ ] Complete end-to-end journey succeeds.
+- [ ] No secrets committed.
+- [ ] README run instructions are correct.
+- [ ] Demo script is ready.
+
+---
+
+# PART 17 — HOW YOU MUST REPORT PROGRESS AND HANDLE BLOCKERS
+
+Do not disappear into a long implementation process without reporting what is happening.
+
+Work in phases.
+
+After each phase, report:
+
+- What you inspected.
+- What you changed.
+- What works now.
+- What tests you executed.
+- What failed.
+- What the remaining blocker is.
+
+If AuraDB credentials are missing, complete all local preparation and give the developer the exact configuration instructions.
+
+If Sarvam credentials are missing, complete the integration code and mocked tests, but do not claim live functionality.
+
+If external connectivity fails, distinguish that from a code failure.
+
+Do not invent test results.
+
+Do not claim production readiness.
+
+Continue with all work that can be completed without the missing credential.
+
+At the end, provide exact startup commands and exact manual verification steps.
+
+**YOUR PRIMARY OBJECTIVE: FINISH THE EXISTING DEBITLENS PROTOTYPE, NOT CREATE ANOTHER ONE.**
+
+The final system must demonstrate:
+
+Neo4j connects and discovers real financial relationships.
+
+Java analyses recurring financial patterns.
+
+Sarvam explains verified results in Indian languages.
+
+DebitLens guides users through the appropriate cancellation process and tracks the evidence.
+
+Build, integrate, run, test and document the application.

@@ -1,0 +1,41 @@
+[
+  {
+    "id": "NOTIF-01",
+    "eventType": "TRIAL_STARTED",
+    "merchantHint": "LearnPro AI",
+    "eventDate": "2026-10-08",
+    "trialStartDate": "2026-10-08",
+    "trialEndDate": "2026-10-22",
+    "expectedAmount": 999.00,
+    "currency": "INR",
+    "relatedCommitmentId": "CMT-LEARNPRO",
+    "sourceType": "EMAIL_NOTIFICATION",
+    "description": "Your 14-day free trial of LearnPro AI Pro started on 08 Oct 2026. Auto-debit of INR 999/month via UPI AutoPay begins on 22 Oct 2026 unless cancelled."
+  },
+  {
+    "id": "NOTIF-02",
+    "eventType": "MANDATE_PRE_DEBIT",
+    "merchantHint": "StreamBox",
+    "eventDate": "2026-10-03",
+    "trialStartDate": null,
+    "trialEndDate": null,
+    "expectedAmount": 499.00,
+    "currency": "INR",
+    "relatedCommitmentId": "CMT-STREAMBOX",
+    "sourceType": "SMS_NOTIFICATION",
+    "description": "Pre-debit notification: INR 499.00 will be debited from HDFC Bank a/c XX4821 towards StreamBox UPI AutoPay mandate UMN-streambox@okhdfc on 05 Oct 2026."
+  },
+  {
+    "id": "NOTIF-03",
+    "eventType": "PRICE_REVISION_NOTICE",
+    "merchantHint": "MusicFlow",
+    "eventDate": "2026-09-28",
+    "trialStartDate": null,
+    "trialEndDate": null,
+    "expectedAmount": 249.00,
+    "currency": "INR",
+    "relatedCommitmentId": "CMT-MUSICFLOW",
+    "sourceType": "EMAIL_NOTIFICATION",
+    "description": "MusicFlow Family plan monthly renewal rate updates from INR 199 to INR 249 starting October 2026 billing cycle on card ending 9012."
+  }
+]

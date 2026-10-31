@@ -1,0 +1,198 @@
+{
+  "datasetVersion": "2026.10.30-SYNTHETIC-HACKFRONT-T4.1",
+  "totalTransactions": 45,
+  "labelledCommitments": [
+    {
+      "commitmentId": "CMT-STREAMBOX",
+      "merchantId": "MERCH-STREAMBOX",
+      "canonicalMerchant": "StreamBox",
+      "serviceName": "StreamBox Premium 4K",
+      "expectedRecurrence": "MONTHLY",
+      "expectedTypicalAmount": 499.00,
+      "expectedPaymentRail": "UPI_AUTOPAY",
+      "supportingTransactionIds": ["TXN-1001", "TXN-1002", "TXN-1003", "TXN-1004", "TXN-1005"],
+      "descriptors": ["RZP*STREAMBOX", "STREAMBOX*BILL", "RAZORPAY*STREAMBOX"],
+      "priceIncrease": false,
+      "trialConversion": false,
+      "resumedActivity": false,
+      "isFinancialObligation": false
+    },
+    {
+      "commitmentId": "CMT-MUSICFLOW",
+      "merchantId": "MERCH-MUSICFLOW",
+      "canonicalMerchant": "MusicFlow",
+      "serviceName": "MusicFlow Family HiFi",
+      "expectedRecurrence": "MONTHLY",
+      "expectedTypicalAmount": 199.00,
+      "expectedLatestAmount": 249.00,
+      "expectedPaymentRail": "CARD_EMANDATE",
+      "supportingTransactionIds": ["TXN-2001", "TXN-2002", "TXN-2003", "TXN-2004", "TXN-2005"],
+      "descriptors": ["SI-MUSICFLOW-IN", "BILLDESK*MUSICFLOW"],
+      "priceIncrease": true,
+      "expectedPriceChangePercent": 25.13,
+      "trialConversion": false,
+      "resumedActivity": false,
+      "isFinancialObligation": false
+    },
+    {
+      "commitmentId": "CMT-CLOUDNOTES",
+      "merchantId": "MERCH-CLOUDNOTES",
+      "canonicalMerchant": "CloudNotes",
+      "serviceName": "CloudNotes Pro Workspace",
+      "expectedRecurrence": "YEARLY",
+      "expectedTypicalAmount": 1499.00,
+      "expectedPaymentRail": "GOOGLE_PLAY",
+      "supportingTransactionIds": ["TXN-3001", "TXN-3002", "TXN-3003"],
+      "descriptors": ["GOOGLE*CLOUDNOTES"],
+      "priceIncrease": false,
+      "trialConversion": false,
+      "resumedActivity": false,
+      "isFinancialObligation": false
+    },
+    {
+      "commitmentId": "CMT-FITCLUB",
+      "merchantId": "MERCH-FITCLUB",
+      "canonicalMerchant": "FitClub Pro",
+      "serviceName": "FitClub All-Access Pass",
+      "expectedRecurrence": "QUARTERLY",
+      "expectedTypicalAmount": 2199.00,
+      "expectedPaymentRail": "CARD_EMANDATE",
+      "supportingTransactionIds": ["TXN-4001", "TXN-4002", "TXN-4003", "TXN-4004"],
+      "descriptors": ["PAYU*FITCLUBPRO", "FITCLUB*QUARTERLY"],
+      "priceIncrease": false,
+      "trialConversion": false,
+      "resumedActivity": false,
+      "isFinancialObligation": false
+    },
+    {
+      "commitmentId": "CMT-BESCOM",
+      "merchantId": "MERCH-BESCOM",
+      "canonicalMerchant": "BESCOM Electricity",
+      "serviceName": "BESCOM Domestic Utility AutoPay",
+      "expectedRecurrence": "MONTHLY",
+      "expectedTypicalAmount": 1510.00,
+      "expectedPaymentRail": "UPI_AUTOPAY",
+      "supportingTransactionIds": ["TXN-5001", "TXN-5002", "TXN-5003", "TXN-5004", "TXN-5005"],
+      "descriptors": ["BBPS*BESCOM-UTIL", "BILLDESK*BESCOM"],
+      "variableAmount": true,
+      "priceIncrease": false,
+      "trialConversion": false,
+      "resumedActivity": false,
+      "isFinancialObligation": true
+    },
+    {
+      "commitmentId": "CMT-MAXLIFE",
+      "merchantId": "MERCH-MAXLIFE",
+      "canonicalMerchant": "MaxLife Insurance",
+      "serviceName": "MaxLife Term Shield Policy #99",
+      "expectedRecurrence": "IRREGULAR",
+      "expectedTypicalAmount": 12500.00,
+      "expectedLatestAmount": 12850.00,
+      "expectedPaymentRail": "ENACH_NACH",
+      "supportingTransactionIds": ["TXN-6001", "TXN-6002", "TXN-6003"],
+      "descriptors": ["NACH-DR-MAXLIFE-POL99"],
+      "priceIncrease": true,
+      "trialConversion": false,
+      "resumedActivity": false,
+      "isFinancialObligation": true
+    },
+    {
+      "commitmentId": "CMT-READCLOUD",
+      "merchantId": "MERCH-READCLOUD",
+      "canonicalMerchant": "ReadCloud",
+      "serviceName": "ReadCloud Unlimited eBooks",
+      "expectedRecurrence": "RESUMED",
+      "expectedTypicalAmount": 299.00,
+      "expectedPaymentRail": "UPI_AUTOPAY",
+      "supportingTransactionIds": ["TXN-7001", "TXN-7002", "TXN-7003", "TXN-7004", "TXN-7005"],
+      "descriptors": ["RZP*READCLOUD", "READCLOUD*SUB"],
+      "priceIncrease": false,
+      "trialConversion": false,
+      "resumedActivity": true,
+      "isFinancialObligation": false
+    },
+    {
+      "commitmentId": "CMT-LEARNPRO",
+      "merchantId": "MERCH-LEARNPRO",
+      "canonicalMerchant": "LearnPro AI",
+      "serviceName": "LearnPro AI Pro Subscription",
+      "expectedRecurrence": "MONTHLY",
+      "expectedTypicalAmount": 999.00,
+      "expectedPaymentRail": "UPI_AUTOPAY",
+      "supportingTransactionIds": ["TXN-8001"],
+      "descriptors": ["RAZORPAY*LEARNPRO-AI"],
+      "priceIncrease": false,
+      "trialConversion": true,
+      "resumedActivity": false,
+      "isFinancialObligation": false
+    },
+    {
+      "commitmentId": "CMT-BAJAJEMI",
+      "merchantId": "MERCH-BAJAJFIN",
+      "canonicalMerchant": "Bajaj Finance",
+      "serviceName": "Bajaj Finance Consumer Loan EMI #44",
+      "expectedRecurrence": "MONTHLY",
+      "expectedTypicalAmount": 8450.00,
+      "expectedPaymentRail": "ENACH_NACH",
+      "supportingTransactionIds": ["TXN-9001", "TXN-9002", "TXN-9003", "TXN-9004"],
+      "descriptors": ["NACH-BAJAJFIN-EMI44"],
+      "priceIncrease": false,
+      "trialConversion": false,
+      "resumedActivity": false,
+      "isFinancialObligation": true
+    },
+    {
+      "commitmentId": "CMT-DESIGNVAULT",
+      "merchantId": "MERCH-DESIGNVAULT",
+      "canonicalMerchant": "DesignVault",
+      "serviceName": "DesignVault Pro Assets",
+      "expectedRecurrence": "MONTHLY",
+      "expectedTypicalAmount": 649.00,
+      "expectedPaymentRail": "CARD_EMANDATE",
+      "supportingTransactionIds": ["TXN-9101", "TXN-9102", "TXN-9103", "TXN-9104"],
+      "descriptors": ["SI-DESIGNVAULT-PRO"],
+      "postCancellationDebit": true,
+      "isFinancialObligation": false
+    }
+  ],
+  "unresolvedProcessorTransactions": [
+    {
+      "transactionId": "TXN-9501",
+      "rawDescription": "UPI/DR/42571190/RAZORPAY",
+      "processor": "Razorpay",
+      "expectedMerchant": null,
+      "reason": "Processor-only descriptor without merchant sub-identifier; must remain unresolved and unmerged."
+    },
+    {
+      "transactionId": "TXN-9502",
+      "rawDescription": "RAZORPAY*99812-MUM",
+      "processor": "Razorpay",
+      "expectedMerchant": null,
+      "reason": "Opaque numeric sub-code under Razorpay; must not be merged with StreamBox or ReadCloud."
+    },
+    {
+      "transactionId": "TXN-9503",
+      "rawDescription": "CASHFREE*MERCH-771",
+      "processor": "Cashfree Payments",
+      "expectedMerchant": null,
+      "reason": "Processor-only opaque merchant token; routed to manual review."
+    }
+  ],
+  "oneTimeOrExcludedTransactions": [
+    {
+      "transactionId": "TXN-9801",
+      "rawDescription": "THIRDWAVE COFFEE ROASTERS",
+      "reason": "Single retail cafe debit"
+    },
+    {
+      "transactionId": "TXN-9802",
+      "rawDescription": "INDIGO AIRLINES PNQ-DEL",
+      "reason": "Single travel booking"
+    },
+    {
+      "transactionId": "TXN-9803",
+      "rawDescription": "REV-RZP*STREAMBOX-REFUND",
+      "reason": "Credit/reversal refund transaction — excluded from recurring spend"
+    }
+  ]
+}
