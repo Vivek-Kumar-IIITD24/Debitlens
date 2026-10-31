@@ -1,0 +1,1545 @@
+# FINAL MASTER PROMPT — DEBITLENS: PRODUCT REFINEMENT, BUG FIXES, RESPONSIVE UI, PROFESSIONAL BRANDING & FINAL SUBMISSION
+
+Act as a senior full-stack fintech engineer, software architect, product designer, UX specialist and QA engineer.
+
+You are working on the existing **DebitLens** application. Your task is to refine, correct, complete and professionally polish the current implementation so that it is ready for a high-quality fintech hackathon demonstration and can credibly be presented as a standalone consumer fintech product.
+
+This is a continuation of an existing codebase. Do not discard the existing work or create an unrelated replacement application.
+
+You must inspect the actual source code, identify existing functionality, understand the current architecture, and make targeted improvements. Do not assume that every feature described below is already implemented correctly.
+
+The most important priorities are:
+
+1. Correct financial logic and reliable reconciliation.
+2. Evidence-backed financial commitment intelligence.
+3. Genuine Neo4j and Sarvam AI integration, represented accurately.
+4. Professional, consistent DebitLens branding.
+5. Fully responsive design across laptops, MacBooks, tablets and mobile devices.
+6. Working end-to-end product flows.
+7. Comprehensive testing and a clean final submission package.
+
+---
+
+# PART 1 — PRODUCT IDENTITY AND POSITIONING
+
+## 1.1 What DebitLens is
+
+DebitLens is a financial commitment intelligence and reconciliation platform.
+
+Its purpose is to help users identify recurring financial commitments that are difficult to recognise from bank transaction descriptions, understand the actual services behind those payments, detect unexpected changes, and manage the cancellation of services and payment authorisations independently.
+
+The product should communicate the following core value:
+
+**DebitLens**
+
+**Find it. Understand it. Stop it.**
+
+The platform should help a user answer:
+
+- What recurring commitments are connected to my financial activity?
+- Which merchant or service is actually charging me?
+- Why does the transaction description look unfamiliar?
+- Has the amount increased?
+- Is the payment genuinely recurring, irregular or resumed?
+- Does a corresponding payment mandate exist?
+- Is the mandate still active and valid?
+- Does the service appear to have been cancelled?
+- Has the payment authorisation also been revoked?
+- Has another debit occurred after cancellation?
+- What evidence supports the conclusion?
+- What should I do next?
+
+The product must feel like a real financial application that could be introduced to consumers, banks and financial institutions.
+
+It must not resemble a generic AI dashboard, a basic transaction tracker, or a temporary hackathon prototype.
+
+## 1.2 Preserve the existing product
+
+Before changing anything:
+
+- Inspect the complete project structure.
+- Understand the existing frontend, backend, database services and integrations.
+- Review the existing documentation and tests.
+- Identify which features are working, partially working or broken.
+- Preserve functional components and established design decisions where possible.
+- Avoid unnecessary rewrites.
+- Do not remove working features simply to simplify implementation.
+- Do not introduce duplicate implementations of existing services.
+- Do not create a second backend architecture unless a genuine technical requirement demands it.
+
+Maintain the established React + TypeScript + Vite frontend and TypeScript/Express backend unless inspection reveals a compelling reason to change them.
+
+Use the existing Neo4j integration and Sarvam AI services. Do not introduce an unrelated replacement.
+
+Do not create or reconnect a separate Spring Boot backend if the actual application is already using the TypeScript/Express backend. There should be one clearly defined application backend.
+
+---
+
+# PART 2 — PROFESSIONAL BRANDING: CRITICAL REQUIREMENT
+
+<Do not treat this as optional.>
+
+## 2.1 DebitLens must be the only prominent product identity
+
+The application must present itself as an independent product called **DebitLens**.
+
+It must not look like a hackathon submission or a technology-partner showcase.
+
+The product name and tagline should be the primary branding elements.
+
+## 2.2 Strictly prohibited in the consumer-facing UI
+
+Do not display the following anywhere in the ordinary application interface:
+
+- HackFront.
+- HackFront Fintech T4.1.
+- HackFront PS T4.1.
+- Neo4j + Sarvam AI.
+- Neo4j Partner Track.
+- Sarvam Partner Track.
+- Hackathon Edition.
+- Hackathon Prototype.
+- Partner Track Integration.
+- Hackathon Submission.
+- Competition or prize announcements.
+- Partner eligibility badges.
+- Promotional Neo4j or Sarvam banners.
+- Unnecessary technology-provider logos.
+- Any competition-related labels that make the application look like a student project.
+
+Search the entire frontend source code for these references and remove inappropriate user-facing occurrences.
+
+Check all of the following:
+
+- Login and welcome screens.
+- Main dashboard.
+- Sidebar and top navigation.
+- Footer.
+- Dashboard cards.
+- Financial Relationship Map.
+- Reconciliation Centre.
+- Evidence Casebook.
+- DebitLens Bhasha.
+- Alerts.
+- Commitment details.
+- Empty states.
+- Loading screens.
+- Error messages.
+- Settings.
+- Mobile navigation.
+- Responsive layouts.
+
+Do not accidentally reintroduce these names in a mobile-only or alternate interface.
+
+## 2.3 How to name the features professionally
+
+Use product terminology rather than implementation terminology.
+
+| Avoid | Use instead |
+|---|---|
+| Hackathon Dashboard | Financial Overview |
+| Neo4j Graph Demo | Financial Relationship Map |
+| Neo4j Commitment Graph | Financial Relationship Map |
+| Neo4j Graph Intelligence | Relationship Intelligence |
+| Neo4j Query Results | Relationship Evidence |
+| Sarvam AI Assistant | DebitLens Bhasha |
+| Partner Track Integration | System Information |
+| Live Neo4j AuraDB Connected | Financial relationship data synchronised |
+| AI Processing | Understanding Your Financial Activity |
+| HackFront Prototype | DebitLens |
+
+Use clear and natural language throughout the application.
+
+## 2.4 Keep technical integrations intact
+
+The branding requirement applies to the normal consumer-facing interface. It does not mean removing Neo4j or Sarvam from the product architecture.
+
+The integrations must continue to perform their real functions.
+
+Create or maintain a discreet technical diagnostics area at:
+
+**Settings → System Information → Technical Integrations**
+
+It may display:
+
+- Database provider.
+- Database connection status.
+- Graph query execution status.
+- AI service provider.
+- Actual active model name.
+- API configuration status.
+- Last successful integration check.
+- Relevant error messages.
+- Synchronisation status.
+
+Only display statuses that are supported by actual checks.
+
+Do not show a green Connected status merely because an environment variable exists.
+
+Do not claim an integration is live when the application is using local fallback logic.
+
+Keep technical implementation details in the README, architecture documentation, integration documentation and hackathon presentation materials.
+
+The distinction is important:
+
+**DebitLens is the product. HackFront is the competition. Neo4j and Sarvam are implementation technologies. Never confuse these identities in the consumer-facing application.**
+
+---
+
+# PART 3 — FINANCIAL COMMITMENT INTELLIGENCE
+
+The central functionality must remain focused on discovering and understanding financial commitments rather than simply grouping transactions.
+
+## 3.1 Financial Commitment model
+
+Maintain the distinction between:
+
+- Raw financial transaction.
+- Recurring transaction candidate.
+- Financial commitment.
+- Payment mandate.
+- Merchant.
+- Underlying service.
+- Supporting evidence.
+- Cancellation event.
+- Post-cancellation debit.
+
+Do not treat these concepts as interchangeable.
+
+A recurring transaction candidate is not automatically a confirmed financial commitment.
+
+A payment mandate does not automatically prove that a service is active.
+
+A service cancellation does not automatically prove that its payment mandate has been revoked.
+
+A mandate does not prove that the underlying service terms, billing frequency or amount are correct.
+
+The system must preserve these distinctions throughout its UI, backend and reconciliation logic.
+
+## 3.2 Transaction discovery and merchant resolution
+
+Improve the existing detection and reconciliation engine so that it can identify:
+
+- Recurring debits.
+- Subscription-like payments.
+- Repeated merchant payments.
+- Variable-amount recurring payments.
+- Price increases.
+- Unexpected payment amounts.
+- Irregular recurring activity.
+- Resumed payments after a gap.
+- Duplicate-looking payments.
+- Payments continuing after a reported cancellation.
+- Mandates without corresponding recent transactions.
+- Transactions without a known mandate.
+- Cryptic payment descriptors.
+
+The engine should use the evidence actually available.
+
+Do not invent merchant identities from weak evidence.
+
+When a descriptor cannot be resolved reliably, display:
+
+- Original transaction description.
+- Possible merchant or payment intermediary.
+- Confidence level.
+- Reason for the suggested match.
+- Evidence still required.
+- Recommended user action.
+
+Clearly distinguish a confirmed merchant from a possible merchant.
+
+## 3.3 Payment intermediaries versus underlying merchants
+
+Do not automatically identify payment processors as the underlying service provider.
+
+For example, a transaction involving a payment gateway or billing intermediary does not prove that the gateway itself is the subscription provider.
+
+Do not apply simplistic global mappings such as:
+
+- Every UPI/DR transaction is Razorpay.
+- Every SI-prefixed transaction is BillDesk.
+
+Use the available transaction evidence, merchant metadata, mandate information and contextual matching.
+
+When the actual merchant cannot be determined, explicitly say that the identity is unresolved.
+
+## 3.4 Detection confidence and explainability
+
+Every important finding should be explainable.
+
+Where supported, show:
+
+- Evidence used.
+- Transaction count.
+- Observed payment intervals.
+- Amount history.
+- Descriptor similarities.
+- Mandate details.
+- Service terms.
+- Relevant dates.
+- Confidence level.
+- Reason for the finding.
+- What evidence is missing.
+
+Do not show arbitrary confidence percentages.
+
+Do not imply that a confidence score is a statistically validated probability unless the system has actually been calibrated and validated as such.
+
+Distinguish system-inferred conclusions from user-confirmed facts.
+
+---
+
+# PART 4 — THREE-WAY FINANCIAL RECONCILIATION
+
+This is one of the most important parts of the product.
+
+Implement and validate reconciliation across three independent sources.
+
+## 4.1 The three sources
+
+**A. Actual financial transactions**
+
+What was actually debited or credited?
+
+**B. Payment mandate or authorisation**
+
+What payment permission appears to exist, and is it still valid?
+
+**C. Service or subscription terms**
+
+What service, billing frequency, price and cancellation terms are known?
+
+The reconciliation engine must compare these three sources rather than considering any one source sufficient.
+
+## 4.2 Correct reconciliation outcomes
+
+Ensure that all nine supported reconciliation outcomes are correctly implemented, tested and represented in the UI.
+
+Review the existing reconciliation engine and its outcome definitions before changing the names or introducing a new taxonomy.
+
+Preserve the existing terminology where it is already defined in the product.
+
+Every outcome must:
+
+- Have a deterministic definition.
+- Identify the relevant evidence.
+- Identify missing evidence.
+- Produce a clear explanation.
+- Recommend an appropriate next action.
+- Avoid unsupported conclusions.
+
+## 4.3 Critical MATCHED condition
+
+Do not mark a commitment as MATCHED merely because a transaction resembles a mandate.
+
+A commitment must only be treated as properly reconciled when the available evidence supports the relationship between:
+
+- Actual transaction activity.
+- A valid, non-expired mandate.
+- The known service or billing terms.
+
+If a mandate has expired, it must not be treated as an active valid mandate merely because its recorded status says ACTIVE.
+
+Check the mandate's expiry date independently of its status field.
+
+A missing, expired, revoked or otherwise invalid mandate must not silently become a valid match.
+
+## 4.4 Mandate without recent transaction
+
+Review the logic that identifies mandates without recent transactions.
+
+It must exclude expired mandates, even when the stored status remains ACTIVE.
+
+It must handle:
+
+- Expiry date.
+- Revocation date.
+- Effective status.
+- Last known payment.
+- Applicable billing frequency.
+- Expected billing period.
+
+The system must not generate an actionable warning for an expired mandate as though it were still an active payment risk.
+
+---
+
+# PART 5 — FINANCIAL DATA ACCURACY AND PARSING
+
+## 5.1 Missing billing frequency must remain unknown
+
+This is a mandatory correction.
+
+In the invoice or service-term parser, do not automatically assign MONTHLY when the source does not specify a billing frequency.
+
+Incorrect behaviour:
+
+Missing billing frequency → MONTHLY.
+
+Correct behaviour:
+
+Missing billing frequency → UNKNOWN or NOT_SPECIFIED.
+
+The UI should say that the billing frequency is unavailable and allow the user to verify or enter it.
+
+Do not invent a schedule merely to complete a data structure.
+
+Add a regression test for this exact scenario.
+
+## 5.2 Do not invent invoice details
+
+When parsing service or invoice information:
+
+- Do not invent a price.
+- Do not invent a billing frequency.
+- Do not invent a next billing date.
+- Do not invent a merchant name.
+- Do not invent a subscription status.
+- Do not infer user confirmation.
+- Do not convert an absent value into a verified fact.
+
+For example, if the invoice does not contain an amount, do not display an inferred ₹499 as though it was extracted from the document.
+
+Keep unavailable fields explicitly unavailable.
+
+Use a `userVerified` or equivalent field accurately. A value should not become user-verified unless the user explicitly confirms it.
+
+## 5.3 Evidence-aware data quality
+
+Differentiate:
+
+- Extracted from source.
+- Inferred by the system.
+- Imported from a financial record.
+- Entered by the user.
+- Verified by the user.
+- Unavailable.
+- Conflicting.
+
+Show these distinctions when they affect the user's decision.
+
+Do not allow unsupported inferred details to become the basis for financial risk alerts or definitive reconciliation outcomes.
+
+## 5.4 Duplicate debits and reversals
+
+Review duplicate transaction detection.
+
+Ensure that a debit which has already been reversed or credited back is not incorrectly flagged as an unresolved duplicate financial loss.
+
+Implement and test appropriate reversal matching.
+
+A reversal should be linked to the relevant original transaction when the evidence supports that relationship.
+
+Do not delete the original transaction or erase the financial history.
+
+---
+
+# PART 6 — CANCELLATION: TWO INDEPENDENT LIFECYCLES
+
+This feature is a core differentiator of DebitLens and must be especially clear.
+
+A user needs to understand that cancelling a service and revoking payment permission are different actions.
+
+## 6.1 Layer A — Service cancellation
+
+This concerns the actual relationship with the merchant or service provider.
+
+Examples:
+
+- Cancelling a streaming subscription.
+- Cancelling a cloud storage plan.
+- Cancelling a membership.
+- Cancelling a recurring app subscription.
+
+Show, where known:
+
+- Merchant or service name.
+- Official cancellation method.
+- Relevant account or subscription information.
+- Cancellation instructions.
+- Supporting source.
+- User action status.
+- Cancellation evidence.
+- Confirmation date, if actually verified.
+
+Do not invent official cancellation URLs.
+
+Do not use fabricated `.example.com` or `.example.in` destinations as real cancellation links.
+
+When an official URL is not known or verified, say so and give the user a safe next step instead.
+
+Do not claim that a merchant cancellation has succeeded merely because the user opened a link or read instructions.
+
+## 6.2 Layer B — Payment authorisation or mandate revocation
+
+This concerns the financial permission that may allow future debits.
+
+Show the appropriate instructions for the supported payment rail or mandate type.
+
+Where supported, explain that the user may need to revoke the payment authorisation separately through the relevant bank, UPI application, card issuer or payment provider.
+
+Do not imply that every subscription can be cancelled through the same interface.
+
+Do not falsely claim that DebitLens has directly revoked a mandate unless the application has actually completed and verified that operation.
+
+## 6.3 Independent state tracking
+
+Maintain independent states for:
+
+**Service lifecycle**
+- Active.
+- Cancellation requested.
+- Cancellation pending.
+- Cancelled.
+- Cancellation unverified.
+- Unable to determine.
+
+**Payment authorisation lifecycle**
+- Active.
+- Revocation requested.
+- Revoked.
+- Expired.
+- Failed.
+- Pending verification.
+- Unknown.
+
+The actual status names may follow the existing implementation, but the two lifecycles must not be collapsed into one status.
+
+A service can be cancelled while a mandate remains active.
+
+A mandate can be revoked while a service remains active.
+
+The UI should explain these states plainly.
+
+## 6.4 Cancellation instructions and OTP accuracy
+
+Do not make unsupported claims about OTP requirements.
+
+In particular, do not claim that a payment within a mandate's authorised maximum amount requires no OTP.
+
+A mandate ceiling indicates an authorised limit; it does not, by itself, establish the authentication requirements for a particular transaction or cancellation action.
+
+Use cautious, accurate language.
+
+When the exact authentication procedure is unknown, say that the bank, payment provider or service may require additional verification.
+
+## 6.5 Cancellation evidence
+
+The system may capture:
+
+- User-reported cancellation.
+- Uploaded or manually entered confirmation reference.
+- Merchant confirmation.
+- Mandate revocation evidence.
+- Date and time supplied by the user.
+- Subsequent transaction activity.
+
+Do not generate a fake confirmation reference.
+
+Do not insert a fabricated confirmation date such as 2026-09-10 or any other hardcoded date.
+
+Do not make an action appear completed when the user has only started it.
+
+Make the evidence source clear.
+
+## 6.6 Post-cancellation verification
+
+Continue monitoring subsequent transactions against available cancellation and revocation evidence.
+
+Where a new matching debit appears after cancellation, flag it for review.
+
+Display:
+
+- Original commitment.
+- Service cancellation status.
+- Mandate revocation status.
+- Subsequent debit details.
+- Date comparison.
+- Evidence supporting the possible violation.
+- Recommended next steps.
+
+Do not automatically label every later debit as unauthorised. Consider billing periods, final invoices, pending charges, refunds, settlement delays and the available evidence.
+
+---
+
+# PART 7 — EVIDENCE CASEBOOK
+
+Preserve and improve the Evidence Casebook.
+
+Each financial commitment should have a clear evidence trail.
+
+Where supported, show:
+
+- Source transaction.
+- Source mandate.
+- Source invoice or service terms.
+- Merchant resolution evidence.
+- Detection rationale.
+- User verification.
+- Service cancellation history.
+- Payment mandate revocation history.
+- Subsequent debits.
+- Reconciliation changes.
+- Relevant timestamps.
+
+The Casebook should allow a user or reviewer to understand why the system reached its conclusion.
+
+Make evidence provenance clear.
+
+Do not call the evidence timeline tamper-proof, immutable or cryptographically verified unless the system actually implements and validates those properties.
+
+If the records are stored in ordinary application persistence, describe them honestly as an evidence history or audit-style timeline.
+
+Preserve existing evidence rather than silently overwriting or deleting it.
+
+---
+
+# PART 8 — NEO4J FINANCIAL RELATIONSHIP INTELLIGENCE
+
+Neo4j must provide genuine backend functionality, not merely a graph illustration.
+
+## 8.1 Graph model
+
+Review the existing graph schema and preserve its useful entities and relationships.
+
+The graph should represent the relationships between concepts such as:
+
+- Users.
+- Financial accounts.
+- Transactions.
+- Merchants.
+- Merchant aliases.
+- Payment processors.
+- Financial commitments.
+- Subscriptions.
+- Mandates.
+- Services.
+- Invoices.
+- Cancellation events.
+- Reconciliation findings.
+- Evidence records.
+
+Use the existing documented labels and relationships where possible.
+
+Do not add unnecessary duplicate nodes or create a new parallel graph model without justification.
+
+## 8.2 Genuine graph operations
+
+Verify that the application actually:
+
+- Connects to the configured Neo4j database.
+- Writes the intended nodes.
+- Writes the intended relationships.
+- Executes actual Cypher queries.
+- Reads the resulting graph data.
+- Uses graph results for the advertised graph-backed functions.
+- Handles database errors correctly.
+
+A graph constructed entirely in local memory and then displayed with a Neo4j badge is not acceptable.
+
+If an operation performs some matching locally after retrieving graph data, describe the actual architecture accurately.
+
+Do not claim that a query is graph-backed when it is merely a frontend filter.
+
+## 8.3 Graph correctness
+
+Review:
+
+- Graph schema consistency.
+- Node identity.
+- Relationship identity.
+- Duplicate prevention.
+- Query parameters.
+- Read and write error handling.
+- Connection state.
+- Reconnection behaviour.
+- Unresolved merchant handling.
+- Orphaned nodes.
+- Transaction-to-commitment links.
+- Mandate-to-commitment links.
+
+Investigate and correct any logic that truncates unresolved graph results unexpectedly, including unintended `slice(0,1)` behaviour.
+
+Ensure that displayed node and relationship counts come from actual results rather than hardcoded values.
+
+## 8.4 Financial Relationship Map
+
+Present this feature in the UI as:
+
+**Financial Relationship Map**
+
+It should help users understand connections between:
+
+- Transactions.
+- Merchants.
+- Services.
+- Commitments.
+- Mandates.
+- Evidence.
+
+Make the graph usable and readable.
+
+Selecting a node should reveal relevant information and evidence.
+
+For mobile devices, provide a suitable node-detail drawer or bottom sheet rather than forcing users to interact with a tiny graph.
+
+---
+
+# PART 9 — SARVAM AI AND DEBITLENS BHASHA
+
+The user-facing feature should be named:
+
+**DebitLens Bhasha**
+
+Its purpose is to help users understand unfamiliar financial activity and cancellation instructions in supported Indian languages.
+
+## 9.1 User-facing functionality
+
+Provide a clear interface to:
+
+- Explain an unfamiliar debit description.
+- Explain why a payment was flagged.
+- Explain a financial commitment.
+- Explain the difference between service cancellation and mandate revocation.
+- Translate cancellation instructions.
+- Explain a reconciliation finding.
+- Ask contextual questions about a selected commitment.
+
+The assistant must use the relevant application context when the question concerns an actual commitment.
+
+It should not give generic answers that ignore the selected financial record.
+
+## 9.2 Accurate model attribution
+
+Inspect the actual Sarvam implementation before changing the labels or documentation.
+
+In particular, distinguish between:
+
+- A Sarvam-105B model used for contextual explanation.
+- Sarvam Translate used for translation.
+- Deterministic local answer generation.
+- Fallback responses.
+
+If `/api/sarvam/ask` first creates a deterministic grounded answer and then translates that answer using `sarvam-translate:v1`, do not claim that this route used Sarvam-105B.
+
+The model attribution must correspond to the actual service called.
+
+Do not display an AI service as live when it is not configured.
+
+## 9.3 Fallback handling
+
+If Sarvam is unavailable:
+
+- Show a clear and useful fallback message.
+- Distinguish translated output from locally generated output.
+- Do not silently misrepresent the source.
+- Do not claim successful AI processing if the provider call failed.
+- Keep the rest of DebitLens functional.
+
+## 9.4 Indian language support
+
+Review the actual language catalogue and use only supported language codes.
+
+The current intended catalogue includes English and supported Indian-language options.
+
+Make language selection clear and consistent.
+
+Do not advertise a language as fully supported unless the application can actually provide the promised functionality.
+
+## 9.5 Financial safety
+
+The language assistant must:
+
+- Explain evidence rather than inventing it.
+- Avoid guaranteeing that a cancellation will succeed.
+- Avoid presenting uncertain merchant matches as facts.
+- Avoid inventing refund eligibility.
+- Avoid providing unsupported bank or regulatory instructions.
+- Clearly distinguish informational guidance from an actual transaction or mandate operation.
+
+---
+
+# PART 10 — DATA COVERAGE AND USER TRUST
+
+Preserve and improve the Data Coverage feature.
+
+The application should make it clear what information is available and what is missing.
+
+Examples:
+
+- Transaction history available.
+- Mandate information available.
+- Invoice information unavailable.
+- Service terms unverified.
+- Merchant identity partially resolved.
+- Cancellation evidence not supplied.
+- Payment revocation not confirmed.
+
+Do not present a commitment as fully verified when only transaction history is available.
+
+Explain how missing data affects confidence and reconciliation.
+
+Do not invent financial data to make the dashboard look complete.
+
+The application must always distinguish synthetic demonstration data from actual user financial information.
+
+Any preloaded demo dataset must be clearly identified as sample or synthetic data.
+
+Never present sample transactions as real bank-connected data.
+
+---
+
+# PART 11 — PERSISTENCE, BACKEND AND API RELIABILITY
+
+Inspect the existing backend and persistence implementation.
+
+## 11.1 Persistence
+
+Verify that user actions, cancellation records, evidence records and relevant settings persist according to the existing architecture.
+
+If local JSON persistence is retained:
+
+- Validate incoming data.
+- Handle read and write errors.
+- Avoid corrupting existing records.
+- Use safe write patterns.
+- Prefer writing to a temporary file and atomically replacing the previous file where supported.
+- Avoid partial or inconsistent updates.
+- Prevent unintended duplicate writes.
+
+Do not imply that local JSON persistence is a production-grade financial data platform.
+
+Clearly document the current storage model.
+
+## 11.2 APIs
+
+Review the API routes for:
+
+- Correct response types.
+- Error handling.
+- Input validation.
+- Consistent status codes.
+- Data integrity.
+- Sensible fallback behaviour.
+- No hardcoded successful responses.
+- No fabricated metrics.
+- No fake integration status.
+
+Ensure that frontend components consume real API data rather than duplicate static demo values.
+
+The frontend should not claim an operation succeeded until the backend confirms it.
+
+## 11.3 Security and privacy
+
+Review the existing privacy and security documentation and implementation.
+
+At minimum:
+
+- Do not expose API keys in frontend code.
+- Do not commit `.env` files or secrets.
+- Keep sensitive information out of logs.
+- Validate incoming data.
+- Avoid exposing internal errors to consumers.
+- Do not imply that synthetic demo data represents real connected accounts.
+- Keep technical diagnostics separate from consumer financial data.
+
+Document any limitations that remain.
+
+---
+
+# PART 12 — RESPONSIVE DESIGN ACROSS ALL DEVICES
+
+<This requirement is mandatory. Do not optimise only for a single laptop screen.>
+
+The entire application must work properly across Windows laptops, MacBooks, desktop monitors, tablets, Android devices and iPhones.
+
+Do not simply shrink the desktop UI.
+
+Create a deliberate responsive layout for every major screen.
+
+## 12.1 Supported CSS viewport ranges
+
+Implement and test the following responsive ranges:
+
+| Viewport width | Intended layout |
+|---|---|
+| 320–374 px | Very small mobile |
+| 375–430 px | Standard mobile |
+| 431–599 px | Large mobile |
+| 600–767 px | Small tablet / large mobile landscape |
+| 768–1023 px | Tablet |
+| 1024–1279 px | Small laptop |
+| 1280–1535 px | Standard laptop / desktop |
+| 1536–1919 px | Large desktop |
+| 1920 px and above | Wide desktop |
+
+Use CSS viewport dimensions, not hardware detection.
+
+The same page must adapt naturally when the browser window is resized.
+
+## 12.2 Desktop layout
+
+On a standard desktop:
+
+- Use a clean persistent sidebar.
+- Keep the main content aligned.
+- Use a sensible maximum content width where appropriate.
+- Use a consistent spacing system.
+- Avoid unnecessary horizontal whitespace.
+- Keep financial data readable.
+- Use balanced dashboard card layouts.
+- Avoid oversized headings.
+
+The sidebar should generally occupy approximately 240–260 px where appropriate.
+
+## 12.3 Laptop layout
+
+On laptops with more restricted horizontal space:
+
+- Reduce excessive spacing.
+- Adapt dashboard card widths.
+- Allow sensible sidebar contraction.
+- Ensure graphs and tables do not overflow.
+- Keep the most important financial information visible.
+- Avoid requiring horizontal scrolling for ordinary page content.
+
+## 12.4 Tablet layout
+
+On tablets:
+
+- Use a collapsible or compact sidebar.
+- Allow dashboards to display two columns where appropriate.
+- Stack complex information panels when necessary.
+- Keep graphs interactive.
+- Adapt tables and evidence views.
+- Ensure dialogs fit within the viewport.
+
+## 12.5 Mobile layout
+
+On mobile:
+
+- Replace the persistent desktop sidebar with a drawer or suitable mobile navigation.
+- Consider bottom navigation for primary destinations if it improves usability.
+- Use a single-column content flow.
+- Stack financial cards vertically.
+- Make buttons and controls easy to tap.
+- Avoid tiny text.
+- Keep important actions reachable.
+- Prevent horizontal overflow.
+- Use appropriate bottom sheets for detail views.
+- Ensure modals fit the screen.
+- Respect device safe areas.
+
+Every touch target should ideally be at least 44 × 44 CSS pixels.
+
+Use approximately 14–16 px as the normal body text range, adjusting only when readability is maintained.
+
+## 12.6 Responsive dashboard
+
+The Financial Overview dashboard should adapt naturally:
+
+- Wide desktop: approximately four cards per row where useful.
+- Tablet: approximately two cards per row.
+- Mobile: one card per row.
+
+Do not force every metric into an equally sized card.
+
+Maintain clear priority between:
+
+- Total identified commitments.
+- Monthly recurring expenditure.
+- Findings requiring attention.
+- Unverified commitments.
+- Potential price changes.
+- Cancellation follow-up.
+
+Ensure the dashboard remains easy to scan.
+
+## 12.7 Responsive tables and lists
+
+For narrow screens:
+
+- Convert dense tables into vertically stacked information cards where appropriate.
+- Alternatively use a clearly contained horizontal scroll area for genuinely tabular data.
+- Do not allow a table to create page-wide horizontal overflow.
+- Keep important transaction and merchant information visible.
+- Make row actions accessible without hover.
+
+## 12.8 Responsive Financial Relationship Map
+
+The graph must remain usable on every screen size.
+
+Desktop:
+- Use the available content area.
+- Support node selection and detail inspection.
+- Keep labels readable.
+
+Tablet:
+- Reduce unnecessary graph margins.
+- Provide accessible selection controls.
+
+Mobile:
+- Allow appropriate graph scaling and panning.
+- Do not rely on tiny text labels.
+- Show selected-node details in a bottom sheet or drawer.
+- Keep graph controls reachable.
+- Provide a readable alternative list or relationship summary where necessary.
+
+## 12.9 Responsive Reconciliation Centre
+
+On desktop, the user may see the relevant transaction, mandate and service-term comparison in a structured layout.
+
+On mobile, stack these sections vertically.
+
+Maintain a clear explanation of:
+
+- What matches.
+- What conflicts.
+- What is missing.
+- Why the outcome was generated.
+- What action is recommended.
+
+Do not sacrifice clarity to preserve a desktop table layout.
+
+## 12.10 Responsive Evidence Casebook
+
+Ensure the evidence timeline works on small screens.
+
+Use:
+
+- Vertical timelines.
+- Readable evidence cards.
+- Collapsible supporting information.
+- Clear timestamps.
+- Accessible source labels.
+
+Never make important evidence accessible only through a hover interaction.
+
+## 12.11 Responsive cancellation workflow
+
+On mobile, Layer A and Layer B should appear as clearly separated stacked sections.
+
+Keep the distinction between service cancellation and mandate revocation obvious.
+
+Buttons and status information should remain readable.
+
+## 12.12 Responsive DebitLens Bhasha
+
+The language interface must work naturally on mobile.
+
+- Input areas should use available width.
+- Long answers should wrap correctly.
+- Language selection must be easy to use.
+- The send action must remain accessible.
+- Do not let translated text overflow.
+- Keep contextual commitment information available without crowding the interface.
+
+## 12.13 Responsive dialogs, navigation and forms
+
+Test all dialogs and forms at narrow widths.
+
+Check:
+
+- Dialog height and width.
+- Internal scrolling.
+- Keyboard visibility.
+- Dropdown placement.
+- Form field wrapping.
+- Button placement.
+- Mobile navigation.
+- Drawer dismissal.
+- Focus and keyboard accessibility.
+
+Do not allow modals to extend beyond the viewport.
+
+## 12.14 Accessibility and usability
+
+Ensure:
+
+- Keyboard navigation.
+- Visible focus indicators.
+- Appropriate contrast.
+- Meaningful labels.
+- Accessible button names.
+- Proper heading hierarchy.
+- Reduced-motion support.
+- No critical hover-only interactions.
+- Readable error messages.
+- Clear loading and empty states.
+
+Use icons consistently, with text labels where icon-only controls could be ambiguous.
+
+---
+
+# PART 13 — VISUAL DESIGN AND BRAND QUALITY
+
+## 13.1 Design direction
+
+DebitLens should communicate:
+
+- Trust.
+- Financial control.
+- Privacy.
+- Clarity.
+- Intelligence.
+- Reliability.
+- Consumer empowerment.
+
+Use a restrained and professional fintech visual system.
+
+Preferred direction:
+
+- Deep navy or dark blue for primary branding.
+- White or soft neutral backgrounds.
+- Restrained teal for positive states.
+- Amber for review-required findings.
+- Red for genuine warnings.
+- Consistent typography.
+- Clean icons.
+- Consistent spacing.
+- Subtle borders.
+- Carefully used shadows.
+- Minimal animations.
+
+Avoid:
+
+- Excessive gradients.
+- Glowing AI effects.
+- Random colour combinations.
+- Unnecessary decorative charts.
+- Oversized empty cards.
+- Inconsistent corner radii.
+- Excessive badges.
+- Decorative technology illustrations.
+- Partner logos.
+- Large promotional banners.
+- Dense unstructured text.
+
+## 13.2 Consistent component system
+
+Review and standardise:
+
+- Buttons.
+- Inputs.
+- Dropdowns.
+- Cards.
+- Tables.
+- Modals.
+- Drawers.
+- Badges.
+- Status indicators.
+- Navigation.
+- Page headers.
+- Empty states.
+- Loading states.
+- Error states.
+
+Use consistent spacing, border radius, font hierarchy and interaction states.
+
+Do not create a different visual style for every page.
+
+## 13.3 Professional wording
+
+Use concise and consumer-friendly language.
+
+Prefer explanations over technical jargon.
+
+Examples:
+
+Instead of:
+"Reconciliation engine identified a recurring transaction candidate."
+
+Use:
+"We found a payment pattern that may indicate a recurring commitment."
+
+Instead of:
+"Mandate-to-service relationship unresolved."
+
+Use:
+"We found a payment authorisation, but could not confirm which service it belongs to."
+
+Instead of:
+"Post-cancellation debit anomaly."
+
+Use:
+"A payment appeared after the reported cancellation date. Please review it."
+
+All wording must accurately reflect the underlying evidence.
+
+---
+
+# PART 14 — TECHNICAL DOCUMENTATION AND HONEST CLAIMS
+
+Keep the technical documentation suitable for hackathon judges and developers.
+
+Maintain or update the relevant documents, including:
+
+- README.md.
+- Neo4j graph schema.
+- Cypher query catalogue.
+- Sarvam Bhasha design.
+- Reconciliation engine documentation.
+- Service document intelligence documentation.
+- Evidence Casebook documentation.
+- Two-layer cancellation guide.
+- Confidence-scoring specification.
+- Detection evaluation.
+- Synthetic dataset dictionary.
+- Privacy and security documentation.
+- Three-minute demo script.
+- Q&A defence sheet.
+
+Update outdated documentation to match the actual implementation.
+
+## 14.1 No unsupported claims
+
+Do not claim:
+
+- General 100% detection accuracy based on a small synthetic dataset.
+- General merchant identification accuracy without a representative evaluation.
+- Real bank connectivity if only sample data is available.
+- Universal PDF or OCR support if it has not been implemented.
+- Automatic cancellation if the system only provides instructions.
+- Direct mandate revocation if it has not been performed.
+- Tamper-proof evidence if the storage system does not support it.
+- Live Neo4j or Sarvam integration without an actual successful service operation.
+
+The existing demonstration dataset contains 45 synthetic transactions and curated expected outcomes. Metrics from that dataset must be described as test-fixture results, not general real-world accuracy.
+
+Do not advertise PDF/OCR extraction if the current application only supports pasted text or manual entry.
+
+Be accurate about the architecture, capabilities and limitations.
+
+## 14.2 Competition documentation versus product UI
+
+The technical documentation, developer README, judging presentation and technical demo script may explicitly mention:
+
+- HackFront Fintech T4.1.
+- Neo4j.
+- Sarvam AI.
+- Partner integrations.
+- Technical implementation details.
+
+These references are appropriate in the competition and developer context.
+
+They must not appear as promotional labels in the normal DebitLens consumer interface.
+
+---
+
+# PART 15 — TESTING AND QUALITY ASSURANCE
+
+Do not stop after editing the UI.
+
+Run the actual project checks and fix the problems they reveal.
+
+## 15.1 Automated tests
+
+Review and extend the existing test suite.
+
+At minimum, test:
+
+**Detection and data parsing**
+- Recurring debit detection.
+- Irregular recurring activity.
+- Resumed payments.
+- Price changes.
+- Unknown merchant resolution.
+- Missing billing frequency.
+- Missing invoice price.
+- User-verification state.
+- Invalid or incomplete service terms.
+
+**Reconciliation**
+- All nine supported reconciliation outcomes.
+- Transaction and mandate matching.
+- Expired mandate handling.
+- Revoked mandate handling.
+- Active but expired-date mandate handling.
+- Missing service terms.
+- Conflicting amounts.
+- Missing transaction activity.
+- Correct evidence attribution.
+
+**Cancellation**
+- Service cancellation independent of mandate revocation.
+- Mandate revocation independent of service cancellation.
+- Pending cancellation.
+- Failed cancellation.
+- Missing confirmation evidence.
+- No fabricated cancellation date.
+- No fabricated confirmation reference.
+- Post-cancellation debit detection.
+
+**Duplicate and reversal handling**
+- Duplicate debit detection.
+- Reversal matching.
+- No false unresolved duplicate after a corresponding reversal.
+
+**Neo4j**
+- Connection failure.
+- Successful write.
+- Successful read.
+- Query parameterisation.
+- Duplicate prevention.
+- Unresolved nodes.
+- Accurate result counts.
+- Appropriate fallback behaviour.
+
+**Sarvam**
+- Correct provider attribution.
+- Translation success.
+- Translation failure.
+- Missing API configuration.
+- Contextual explanation.
+- Deterministic fallback.
+- Supported language handling.
+
+**Persistence and APIs**
+- Data survives reload where expected.
+- API error handling.
+- Invalid request handling.
+- Duplicate record protection.
+- Safe persistence updates.
+
+**Frontend**
+- Main navigation.
+- Dashboard loading.
+- Commitment details.
+- Reconciliation.
+- Evidence Casebook.
+- Cancellation flow.
+- Bhasha.
+- Technical diagnostics.
+- Empty and error states.
+
+Add regression tests for every bug that you fix.
+
+## 15.2 Type checking and production build
+
+Run the actual available project scripts.
+
+At minimum, where supported:
+
+- `npm run typecheck`
+- `npm test`
+- `npm run build`
+
+Check the actual `package.json` scripts before executing commands.
+
+Do not claim a command passed if it was not actually run.
+
+Fix TypeScript errors, failing tests, build errors and runtime errors.
+
+If a test fails, investigate the cause instead of weakening the test or changing expected results merely to get a passing run.
+
+Do not delete tests to make the suite green.
+
+## 15.3 Responsive viewport testing
+
+Test the complete application at these viewport sizes:
+
+- 360 × 800.
+- 390 × 844.
+- 430 × 932.
+- 768 × 1024.
+- 1024 × 768.
+- 1280 × 720.
+- 1366 × 768.
+- 1440 × 900.
+- 1728 × 1117.
+- 1920 × 1080.
+
+Also test browser zoom at:
+
+- 100%.
+- 125%.
+- 150%.
+
+Check:
+
+- No unintended horizontal page scrolling.
+- No overlapping elements.
+- No clipped cards.
+- No unreadable tables.
+- No off-screen modal buttons.
+- No broken navigation.
+- No distorted graph layout.
+- No text overflow.
+- No tiny touch targets.
+- No hidden important actions.
+
+Where possible, test:
+
+- Safari on macOS.
+- Chrome on Windows.
+- Chrome on macOS.
+- Chrome on Android.
+- Safari on iOS.
+
+If physical devices are unavailable, use browser responsive emulation and clearly distinguish emulated checks from physical-device testing.
+
+---
+
+# PART 16 — FINAL RELEASE AND SUBMISSION PACKAGE
+
+After development and testing, prepare a clean and complete release package.
+
+## 16.1 Code and configuration
+
+Verify:
+
+- The application starts using the documented commands.
+- The frontend and backend are connected correctly.
+- Environment configuration is documented.
+- `.env.example` contains placeholders only.
+- Real `.env` files are excluded.
+- API keys and credentials are not committed.
+- Required sample data is included.
+- Documentation matches the implementation.
+- All required assets are present.
+
+## 16.2 Sample data
+
+Ensure the final ZIP includes the actual demonstration sample files:
+
+- `public/samples/debitlens-transactions.csv`
+- `public/samples/debitlens-notifications.json`
+
+Check that the sample import flow works from the packaged project.
+
+Do not assume that a file is included simply because it exists in the development directory. Inspect the final archive.
+
+## 16.3 ZIP contents
+
+Create a clean submission ZIP with:
+
+- Complete application source.
+- Required public assets.
+- Required sample files.
+- Backend source.
+- Test source.
+- Documentation.
+- README.
+- `.env.example`.
+- Required configuration files.
+
+Exclude:
+
+- `.env`.
+- Real API keys.
+- `node_modules`.
+- Unnecessary build artifacts.
+- Temporary files.
+- Runtime database files containing personal information.
+- Debug logs.
+- Duplicate archives.
+- Unrelated development files.
+
+Do not omit files required to run or demonstrate the application.
+
+Inspect the completed archive and verify its contents.
+
+---
+
+# PART 17 — FINAL ACCEPTANCE CHECKLIST
+
+Do not declare the project complete until you have reviewed the following.
+
+## Product and branding
+- [ ] DebitLens is the clear product identity.
+- [ ] The main UI does not show HackFront or T4.1.
+- [ ] The main UI does not promote Neo4j or Sarvam.
+- [ ] Technical integrations remain available in diagnostics.
+- [ ] Product terminology is consistent.
+- [ ] Visual design is coherent and professional.
+
+## Financial correctness
+- [ ] Missing billing frequency remains UNKNOWN.
+- [ ] Missing invoice values are not invented.
+- [ ] User verification is represented accurately.
+- [ ] Expired mandates are not treated as valid active mandates.
+- [ ] All nine reconciliation outcomes are tested.
+- [ ] Duplicate reversals are handled correctly.
+- [ ] Financial findings have explainable evidence.
+
+## Cancellation and evidence
+- [ ] Service cancellation and mandate revocation are independent.
+- [ ] No fake cancellation URLs are displayed.
+- [ ] No fake confirmation references are generated.
+- [ ] No invented confirmation dates are displayed.
+- [ ] OTP claims are accurate.
+- [ ] Post-cancellation monitoring works.
+- [ ] Evidence history is represented honestly.
+
+## Neo4j and Sarvam
+- [ ] Neo4j performs actual graph operations.
+- [ ] Graph status reflects actual connection and query results.
+- [ ] Financial Relationship Map uses real supported data.
+- [ ] Sarvam calls use the correct model and endpoint.
+- [ ] Translation and contextual explanation are distinguished.
+- [ ] Fallback behaviour is honest.
+- [ ] Technical attribution is accurate.
+
+## Responsive UI
+- [ ] Very small mobile is usable.
+- [ ] Standard mobile is usable.
+- [ ] Large mobile is usable.
+- [ ] Tablet is usable.
+- [ ] Laptop is usable.
+- [ ] MacBook-sized viewports are usable.
+- [ ] Large desktop is usable.
+- [ ] Wide desktop is usable.
+- [ ] No important element overflows or becomes inaccessible.
+- [ ] Modal, drawer and graph interactions work at narrow widths.
+
+## Engineering and submission
+- [ ] Tests pass.
+- [ ] Type checking passes.
+- [ ] Production build passes.
+- [ ] Runtime behaviour has been checked.
+- [ ] Documentation is current.
+- [ ] Sample files are included.
+- [ ] No secrets are present in the final ZIP.
+- [ ] Final ZIP contents have been verified.
+
+---
+
+# PART 18 — FINAL REPORT TO THE USER
+
+When all work is complete, provide a factual final report containing:
+
+1. Summary of changes made.
+2. Financial logic and reconciliation corrections.
+3. Cancellation and Evidence Casebook improvements.
+4. Neo4j integration improvements.
+5. Sarvam integration improvements.
+6. Branding changes.
+7. Responsive design improvements.
+8. Actual test results.
+9. Actual typecheck and build results.
+10. Any remaining known limitations.
+11. Final release ZIP location.
+12. Exact instructions to install, configure and run the application.
+
+Clearly separate:
+
+- Successfully implemented and tested.
+- Implemented but not independently verified.
+- Not implemented.
+- Blocked by unavailable credentials or external services.
+
+Do not claim all features are verified merely because the code has been written.
+
+Do not stop after generating a list of suggested fixes. Make the changes in the actual codebase, run the checks, fix the issues you uncover, and package the result.
+
+## FINAL PRODUCT STANDARD
+
+The finished DebitLens application should feel like a professional, coherent and trustworthy fintech product.
+
+A user should be able to understand an unfamiliar recurring debit, see the evidence behind the system's interpretation, compare the transaction with the associated mandate and service terms, take the appropriate cancellation actions, and track what happens afterwards.
+
+A judge should be able to inspect the technical architecture and understand how Neo4j and Sarvam AI contribute to the implementation.
+
+A consumer should simply experience DebitLens — without being distracted by hackathon labels, partner branding or unnecessary technical jargon.
+
+**Build the product, not a showcase of the tools used to build it.**
