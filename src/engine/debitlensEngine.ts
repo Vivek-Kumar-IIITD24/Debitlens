@@ -20,6 +20,11 @@ import {
   BhashaCancellationExplanationResponse,
   BhashaAlertExplanationResponse,
   RedactedPrivacyPayload,
+  ServiceLifecycleStatus,
+  MandateLifecycleStatus,
+  MandateRecord,
+  ServiceTermsRecord,
+  ReconciliationFindingRecord,
 } from '../types/debitlens';
 import {
   MERCHANT_CATALOGUE,
@@ -27,6 +32,15 @@ import {
   RAIL_SUPPORT_URLS,
   SUPPORTED_LANGUAGES,
 } from './referenceData';
+import { toMinorUnits, fromMinorUnits } from '../utils/currency';
+import {
+  buildInitialSeedMandates,
+  buildInitialSeedServiceTerms,
+  reconcileCommitment,
+  deriveIndependentLifecycleStatuses,
+} from './reconciliationEngine';
+
+export * from './reconciliationEngine';
 
 export interface RawCsvRow {
   transaction_id: string;
@@ -421,6 +435,7 @@ export function parseAndNormaliseTransactions(
       rawDescription: rawDesc,
       normalisedDescription: resolved.normalisedDescription,
       amount: amt,
+      amountMinor: toMinorUnits(amt),
       currency: (row.currency || 'INR').trim().toUpperCase(),
       direction: direction === 'CREDIT' ? 'CREDIT' : 'DEBIT',
       paymentRail: resolved.paymentMechanism,
@@ -569,6 +584,14 @@ export interface UserCommitmentStateOverride {
   completedStepIds?: string[];
   evidenceRecords?: CancellationSessionRecord['evidence'];
   cancelledAtOverride?: string | null;
+  entityClass?: 'RECURRING_CANDIDATE' | 'FINANCIAL_COMMITMENT';
+  verificationStatus?: 'PENDING_REVIEW' | 'CONFIRMED' | 'USER_CONFIRMED' | 'REJECTED';
+  serviceLifecycleStatus?: ServiceLifecycleStatus;
+  mandateLifecycleStatus?: MandateLifecycleStatus;
+  expectedAmountMinorOverride?: number;
+  typicalAmountOverride?: number;
+  recurrenceTypeOverride?: RecurrenceFrequency;
+  nextExpectedDateOverride?: string | null;
 }
 
 export function detectCommitmentsAndAlerts(
@@ -868,8 +891,52 @@ export function detectCommitmentsAndAlerts(
         }. Revoking a NACH/AutoPay mandate does NOT extinguish your loan contract, policy, or bill obligation and may trigger late penalties, credit bureau reporting, or policy lapse. Always contact ${merchant.canonicalName} directly first.`
       : undefined;
 
+    const seedMandates = buildInitialSeedMandates();
+    const matchedMandate =
+      seedMandates.find((m) => m.commitmentId === commitmentId) || null;
+    const independentLifecycles = deriveIndependentLifecycleStatuses(
+      session,
+      matchedMandate,
+      override.serviceLifecycleStatus,
+      override.mandateLifecycleStatus
+    );
+
+    const effectiveRecurrence =
+      override.recurrenceTypeOverride ||
+      (trialNotif && sorted.length === 1 ? 'TRIAL_CONVERTED' : recurrenceType);
+    const effectiveTypicalAmount =
+      override.typicalAmountOverride !== undefined
+        ? override.typicalAmountOverride
+        : override.expectedAmountMinorOverride !== undefined
+        ? fromMinorUnits(override.expectedAmountMinorOverride)
+        : typicalAmount;
+
+    const isDefaultCandidate =
+      effectiveRecurrence === 'IRREGULAR' ||
+      effectiveRecurrence === 'RESUMED' ||
+      effectiveRecurrence === 'TRIAL_CONVERTED' ||
+      confidenceBreakdown.label === 'LOW';
+
+    const entityClass: 'RECURRING_CANDIDATE' | 'FINANCIAL_COMMITMENT' =
+      override.entityClass ||
+      (override.verificationStatus === 'CONFIRMED' || override.verificationStatus === 'USER_CONFIRMED'
+        ? 'FINANCIAL_COMMITMENT'
+        : isDefaultCandidate
+        ? 'RECURRING_CANDIDATE'
+        : 'FINANCIAL_COMMITMENT');
+
+    const verificationStatus: 'PENDING_REVIEW' | 'CONFIRMED' | 'USER_CONFIRMED' | 'REJECTED' =
+      override.verificationStatus ||
+      (sorted.some((t) => t.resolutionStatus === 'USER_CONFIRMED')
+        ? 'USER_CONFIRMED'
+        : entityClass === 'RECURRING_CANDIDATE'
+        ? 'PENDING_REVIEW'
+        : 'CONFIRMED');
+
     commitments.push({
       id: commitmentId,
+      entityClass,
+      verificationStatus,
       merchantId: merchant.id,
       merchantName: merchant.canonicalName,
       serviceName: merchant.serviceName,
@@ -877,23 +944,33 @@ export function detectCommitmentsAndAlerts(
       isFinancialObligation: merchant.isFinancialObligation,
       obligationWarning,
       paymentRail: latestTxn.paymentRail,
-      mandateRef: latestTxn.externalReference || null,
+      mandateRef: latestTxn.externalReference || matchedMandate?.mandateReference || null,
       processorName: latestTxn.processorName,
-      recurrenceType: trialNotif && sorted.length === 1 ? 'TRIAL_CONVERTED' : recurrenceType,
+      recurrenceType: effectiveRecurrence,
       recurrenceIntervalDays,
-      typicalAmount,
+      typicalAmount: effectiveTypicalAmount,
       latestAmount,
       previousAmount,
+      expectedAmountMinor:
+        override.expectedAmountMinorOverride !== undefined
+          ? override.expectedAmountMinorOverride
+          : toMinorUnits(effectiveTypicalAmount),
+      latestAmountMinor: toMinorUnits(latestAmount),
       currency: 'INR',
       annualisedAmount,
       monthlyEquivalent,
       totalHistoricalSpend,
-      nextExpectedDate,
+      nextExpectedDate:
+        override.nextExpectedDateOverride !== undefined
+          ? override.nextExpectedDateOverride
+          : nextExpectedDate,
       lastPaymentDate: latestTxn.transactionDate,
       status: commitmentStatus,
-      relationshipStatus: sorted.some((t) => t.resolutionStatus === 'USER_CONFIRMED')
-        ? 'USER_CONFIRMED'
-        : 'CONFIRMED',
+      relationshipStatus:
+        verificationStatus === 'USER_CONFIRMED' ||
+        sorted.some((t) => t.resolutionStatus === 'USER_CONFIRMED')
+          ? 'USER_CONFIRMED'
+          : 'CONFIRMED',
       confidenceScore: confidenceBreakdown.totalScore,
       confidenceLabel: confidenceBreakdown.label,
       confidenceBreakdown,
@@ -914,6 +991,8 @@ export function detectCommitmentsAndAlerts(
       usageStatus,
       cancellationSessionId: sessionId,
       cancellationState: session.status,
+      serviceLifecycleStatus: independentLifecycles.serviceLifecycleStatus,
+      mandateLifecycleStatus: independentLifecycles.mandateLifecycleStatus,
     });
 
     if (priceChangeDetected && priceChangeAmount && priceChangePercent) {
@@ -1319,6 +1398,9 @@ export function buildCommitmentGraphResponse(params: {
   playbooks: CancellationPlaybookRecord[];
   sessions: CancellationSessionRecord[];
   notifications: NotificationInput[];
+  mandates?: MandateRecord[];
+  serviceTerms?: ServiceTermsRecord[];
+  reconciliationFindings?: ReconciliationFindingRecord[];
   executionMode?: GraphExecutionMode;
 }): CommitmentGraphResponse {
   const {
@@ -1329,6 +1411,9 @@ export function buildCommitmentGraphResponse(params: {
     playbooks,
     sessions,
     notifications,
+    mandates = buildInitialSeedMandates(),
+    serviceTerms = buildInitialSeedServiceTerms(),
+    reconciliationFindings,
     executionMode = 'LOCAL_PREVIEW',
   } = params;
 
@@ -1460,6 +1545,7 @@ export function buildCommitmentGraphResponse(params: {
       isCoreCommitmentPath: true,
       properties: {
         commitmentId: targetCommitment.id,
+        serviceName: targetCommitment.serviceName,
         recurrenceType: targetCommitment.recurrenceType,
         annualisedAmount: targetCommitment.annualisedAmount,
         monthlyEquivalent: targetCommitment.monthlyEquivalent,
@@ -1688,6 +1774,7 @@ export function buildCommitmentGraphResponse(params: {
         properties: {
           transactionId: txn.id,
           date: txn.transactionDate,
+          transactionDate: txn.transactionDate,
           amount: txn.amount,
           rawDescription: txn.rawDescription,
           accountAlias: txn.accountAlias,
@@ -1905,6 +1992,99 @@ export function buildCommitmentGraphResponse(params: {
       }
     }
 
+    // Attach Service Terms Document & Three-Way ReconciliationFinding nodes (Section 4.1 & 4.2)
+    const matchedDoc = serviceTerms.find((d) => d.commitmentId === targetCommitment.id) || null;
+    if (matchedDoc) {
+      addNode({
+        id: matchedDoc.id,
+        label: 'Document',
+        title: `Doc: ${matchedDoc.serviceName}`,
+        subtitle: `Expected ₹${matchedDoc.expectedAmount} (${matchedDoc.billingFrequency})`,
+        status: matchedDoc.userVerified ? 'USER_CONFIRMED' : 'CONFIRMED',
+        confidence: matchedDoc.extractionConfidence,
+        isCoreCommitmentPath: true,
+        properties: {
+          documentId: matchedDoc.id,
+          expectedAmountMinor: matchedDoc.expectedAmountMinor,
+          expectedAmount: matchedDoc.expectedAmount,
+          billingFrequency: matchedDoc.billingFrequency,
+          documentSource: matchedDoc.documentSource,
+        },
+      });
+      edges.push({
+        id: `EDGE-DOC-CMT-${matchedDoc.id}`,
+        source: matchedDoc.id,
+        target: targetCommitment.id,
+        type: 'DOCUMENT_DESCRIBES_COMMITMENT',
+        status: matchedDoc.userVerified ? 'USER_CONFIRMED' : 'CONFIRMED',
+        confidence: matchedDoc.extractionConfidence,
+        matchingMethod: 'DOCUMENT_INTELLIGENCE_EXTRACTION',
+        evidenceType: 'SERVICE_INVOICE_TERMS',
+        sourceReference: matchedDoc.id,
+        createdAt: matchedDoc.createdAt,
+        evidenceSummary: `Documented expected billing ₹${matchedDoc.expectedAmount}/${matchedDoc.billingFrequency.toLowerCase()}.`,
+        isCoreCommitmentPath: true,
+      });
+    }
+
+    const matchedMandateForRec =
+      mandates.find(
+        (m) =>
+          m.commitmentId === targetCommitment.id ||
+          (targetCommitment.mandateRef && m.mandateReference === targetCommitment.mandateRef)
+      ) || null;
+    const recFinding =
+      reconciliationFindings?.find((r) => r.commitmentId === targetCommitment.id) ||
+      reconcileCommitment({
+        commitment: targetCommitment,
+        transactions,
+        mandate: matchedMandateForRec,
+        serviceTerms: matchedDoc,
+        cancellationSession: sess || null,
+      });
+
+    if (recFinding) {
+      addNode({
+        id: recFinding.id,
+        label: 'ReconciliationFinding',
+        title: `Reconciliation: ${recFinding.status.replace(/_/g, ' ')}`,
+        subtitle: `Actual ₹${recFinding.actualTransactionAmount} vs Doc ${
+          recFinding.expectedServiceAmount !== null ? `₹${recFinding.expectedServiceAmount}` : 'N/A'
+        }`,
+        status:
+          recFinding.status === 'MATCHED'
+            ? 'CONFIRMED'
+            : recFinding.status === 'UNRESOLVED'
+            ? 'UNRESOLVED'
+            : 'INFERRED',
+        confidence: targetCommitment.confidenceScore,
+        isCoreCommitmentPath: true,
+        properties: {
+          reconciliationId: recFinding.id,
+          status: recFinding.status,
+          expectedServiceAmountMinor: recFinding.expectedServiceAmountMinor,
+          actualTransactionAmountMinor: recFinding.actualTransactionAmountMinor,
+          mandateMaxAmountMinor: recFinding.mandateMaxAmountMinor,
+          discrepancyAmountMinor: recFinding.discrepancyAmountMinor,
+          withinMandateLimit: recFinding.withinMandateLimit,
+        },
+      });
+      edges.push({
+        id: `EDGE-CMT-REC-${recFinding.id}`,
+        source: targetCommitment.id,
+        target: recFinding.id,
+        type: 'COMMITMENT_HAS_RECONCILIATION',
+        status: 'CONFIRMED',
+        confidence: targetCommitment.confidenceScore,
+        matchingMethod: 'THREE_WAY_RECONCILIATION_ENGINE',
+        evidenceType: 'RECONCILIATION_PROOF',
+        sourceReference: recFinding.id,
+        createdAt: recFinding.evaluatedAt,
+        evidenceSummary: recFinding.explanation,
+        isCoreCommitmentPath: true,
+      });
+    }
+
     // Include 1 unresolved processor-only transaction on the same processor (Operation 7 demonstration)
     const unresolvedOnSameProcessor = transactions.filter(
       (t) =>
@@ -1933,6 +2113,7 @@ export function buildCommitmentGraphResponse(params: {
         properties: {
           transactionId: uTxn.id,
           date: uTxn.transactionDate,
+          transactionDate: uTxn.transactionDate,
           amount: uTxn.amount,
           rawDescription: uTxn.rawDescription,
           unmergedReason: 'Shared processor (Razorpay) only — no verified merchant alias.',

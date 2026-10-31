@@ -8,6 +8,9 @@ import {
   GraphEdgeData,
   GraphExecutionMode,
   GraphNodeData,
+  MandateRecord,
+  ReconciliationFindingRecord,
+  ServiceTermsRecord,
   TransactionRecord,
 } from '../types/debitlens';
 import {
@@ -23,6 +26,10 @@ export interface Neo4jRuntimeStatus {
   lastSuccessfulCheck: string | null;
   status: GraphExecutionMode;
   message: string;
+  nodeCount?: number;
+  relationshipCount?: number;
+  constraintCount?: number;
+  constraintsVerified?: boolean;
 }
 
 const CYPHER_CREATE_CONSTRAINTS = [
@@ -43,6 +50,8 @@ const CYPHER_CREATE_CONSTRAINTS = [
   'CREATE CONSTRAINT step_id_unique IF NOT EXISTS FOR (st:CancellationStep) REQUIRE st.id IS UNIQUE',
   'CREATE CONSTRAINT evidence_id_unique IF NOT EXISTS FOR (ev:CancellationEvidence) REQUIRE ev.id IS UNIQUE',
   'CREATE CONSTRAINT alert_id_unique IF NOT EXISTS FOR (al:DetectionAlert) REQUIRE al.id IS UNIQUE',
+  'CREATE CONSTRAINT doc_id_unique IF NOT EXISTS FOR (doc:Document) REQUIRE doc.id IS UNIQUE',
+  'CREATE CONSTRAINT rec_id_unique IF NOT EXISTS FOR (rec:ReconciliationFinding) REQUIRE rec.id IS UNIQUE',
 ];
 
 const VALID_LABELS = new Set([
@@ -55,9 +64,14 @@ const VALID_LABELS = new Set([
   'PaymentProcessor',
   'Service',
   'Commitment',
+  'FinancialCommitment',
+  'RecurringCandidate',
   'Mandate',
   'PaymentRail',
   'NotificationEvent',
+  'Document',
+  'Evidence',
+  'ReconciliationFinding',
   'CancellationPlaybook',
   'CancellationSession',
   'CancellationStep',
@@ -84,14 +98,34 @@ const VALID_REL_TYPES = new Set([
   'SESSION_HAS_STEP',
   'SESSION_HAS_EVIDENCE',
   'NOTIFICATION_SUPPORTS_COMMITMENT',
+  'COMMITMENT_HAS_EVIDENCE',
+  'COMMITMENT_HAS_RECONCILIATION',
+  'DOCUMENT_DESCRIBES_COMMITMENT',
 ]);
+
+export function isPlaceholderEnvValue(val: string | undefined | null): boolean {
+  if (!val) return true;
+  const trimmed = val.trim();
+  if (!trimmed) return true;
+  if (trimmed.includes('<') && trimmed.includes('>')) return true;
+  const lower = trimmed.toLowerCase();
+  return (
+    lower.includes('paste_your_') ||
+    lower.includes('your-instance-id') ||
+    lower.includes('your-auradb-password') ||
+    lower.includes('your_sarvam_api_key') ||
+    lower.startsWith('my_') ||
+    lower.startsWith('your_') ||
+    lower === 'changeme'
+  );
+}
 
 export class Neo4jPersistenceService {
   private driver: Driver | null = null;
   private lastSuccessfulCheck: string | null = null;
   private lastConnected = false;
   private lastError: string | null = null;
-  private constraintsInitialised = false;
+  private verifiedConstraintCount = 0;
 
   public isConfigured(): boolean {
     const enabled = process.env.NEO4J_ENABLED !== 'false';
@@ -99,12 +133,8 @@ export class Neo4jPersistenceService {
     const password = process.env.NEO4J_PASSWORD;
     return Boolean(
       enabled &&
-        uri &&
-        password &&
-        !uri.includes('your-instance-id') &&
-        !uri.includes('<instance-id>') &&
-        password !== 'your-auradb-password' &&
-        password !== '<password>'
+        !isPlaceholderEnvValue(uri) &&
+        !isPlaceholderEnvValue(password)
     );
   }
 
@@ -130,10 +160,13 @@ export class Neo4jPersistenceService {
     }
   }
 
-  public async checkConnectivity(): Promise<Neo4jRuntimeStatus> {
+  public async checkConnectivity(includeCounts = false): Promise<Neo4jRuntimeStatus> {
     const database = this.getDatabaseName();
     const uri = process.env.NEO4J_URI || null;
-    const uriMasked = uri ? uri.replace(/\/\/.*@/, '//***@') : null;
+    const uriMasked =
+      uri && !isPlaceholderEnvValue(uri)
+        ? uri.replace(/\/\/.*@/, '//***@')
+        : null;
 
     if (!this.isConfigured()) {
       this.lastConnected = false;
@@ -146,7 +179,7 @@ export class Neo4jPersistenceService {
         lastSuccessfulCheck: this.lastSuccessfulCheck,
         status: allowPreview ? 'LOCAL_PREVIEW' : 'NOT_CONFIGURED',
         message:
-          'NEO4J_URI / NEO4J_PASSWORD are not configured in .env. Running in transparent LOCAL_PREVIEW mode.',
+          'NEO4J_URI / NEO4J_PASSWORD are not configured with valid non-placeholder values. Running in transparent LOCAL_PREVIEW mode.',
       };
     }
 
@@ -168,6 +201,32 @@ export class Neo4jPersistenceService {
       this.lastConnected = true;
       this.lastSuccessfulCheck = new Date().toISOString();
       this.lastError = null;
+
+      let nodeCount: number | undefined;
+      let relationshipCount: number | undefined;
+      let constraintCount: number | undefined = this.verifiedConstraintCount || undefined;
+
+      if (includeCounts) {
+        const session = drv.session({ database });
+        try {
+          const nRes = await session.run('MATCH (n) RETURN count(n) AS cnt');
+          nodeCount =
+            nRes.records[0]?.get('cnt')?.toNumber?.() ??
+            Number(nRes.records[0]?.get('cnt') || 0);
+          const rRes = await session.run('MATCH ()-[r]->() RETURN count(r) AS cnt');
+          relationshipCount =
+            rRes.records[0]?.get('cnt')?.toNumber?.() ??
+            Number(rRes.records[0]?.get('cnt') || 0);
+          const cRes = await session.run('SHOW CONSTRAINTS YIELD name RETURN count(name) AS cnt');
+          constraintCount =
+            cRes.records[0]?.get('cnt')?.toNumber?.() ??
+            Number(cRes.records[0]?.get('cnt') || 0);
+          this.verifiedConstraintCount = constraintCount ?? 0;
+        } finally {
+          await session.close();
+        }
+      }
+
       return {
         configured: true,
         connected: true,
@@ -176,6 +235,10 @@ export class Neo4jPersistenceService {
         lastSuccessfulCheck: this.lastSuccessfulCheck,
         status: 'LIVE_NEO4J',
         message: `Connected to live Neo4j AuraDB (${database}).`,
+        nodeCount,
+        relationshipCount,
+        constraintCount,
+        constraintsVerified: (constraintCount ?? 0) > 0,
       };
     } catch (err: any) {
       this.lastConnected = false;
@@ -187,29 +250,35 @@ export class Neo4jPersistenceService {
         database,
         lastSuccessfulCheck: this.lastSuccessfulCheck,
         status: 'CONNECTION_FAILED',
-        message: `Neo4j connection failed: ${this.lastError}. Falling back to LOCAL_PREVIEW.`,
+        message: `Neo4j connection failed: ${this.lastError}.`,
       };
     }
   }
 
-  public async ensureConstraints(): Promise<void> {
-    if (this.constraintsInitialised) return;
+  public async ensureConstraints(): Promise<number> {
     const drv = this.getDriver();
-    if (!drv) return;
+    if (!drv) return 0;
     const session = drv.session({ database: this.getDatabaseName() });
     try {
       for (const stmt of CYPHER_CREATE_CONSTRAINTS) {
         await session.run(stmt);
       }
-      this.constraintsInitialised = true;
+      const showRes = await session.run(
+        'SHOW CONSTRAINTS YIELD name RETURN count(name) AS constraintCount'
+      );
+      const count =
+        showRes.records[0]?.get('constraintCount')?.toNumber?.() ??
+        Number(showRes.records[0]?.get('constraintCount') || 0);
+      this.verifiedConstraintCount = count;
+      return count;
     } finally {
       await session.close();
     }
   }
 
   /**
-   * Collects the complete graph across all commitments and unresolved transactions,
-   * then persists all 17 node labels and 18 relationship types into Neo4j using UNWIND + MERGE.
+   * Collects the complete graph across all commitments and ALL unresolved transactions,
+   * then persists all node labels and relationship types into Neo4j using UNWIND + MERGE.
    */
   public async syncFullGraphToNeo4j(params: {
     transactions: TransactionRecord[];
@@ -218,6 +287,9 @@ export class Neo4jPersistenceService {
     playbooks: CancellationPlaybookRecord[];
     sessions: CancellationSessionRecord[];
     notifications: NotificationInput[];
+    mandates?: MandateRecord[];
+    serviceTerms?: ServiceTermsRecord[];
+    reconciliationFindings?: ReconciliationFindingRecord[];
   }): Promise<{ persisted: boolean; nodesWritten: number; edgesWritten: number; error?: string }> {
     const connectivity = await this.checkConnectivity();
     if (!connectivity.connected) {
@@ -232,7 +304,6 @@ export class Neo4jPersistenceService {
     const drv = this.getDriver()!;
     await this.ensureConstraints();
 
-    // Aggregate nodes and edges across all commitments so the full graph is stored in Neo4j
     const allNodesMap = new Map<string, GraphNodeData>();
     const allEdgesMap = new Map<string, GraphEdgeData>();
 
@@ -245,10 +316,108 @@ export class Neo4jPersistenceService {
         playbooks: params.playbooks,
         sessions: params.sessions,
         notifications: params.notifications,
+        mandates: params.mandates,
+        serviceTerms: params.serviceTerms,
+        reconciliationFindings: params.reconciliationFindings,
         executionMode: 'LIVE_NEO4J',
       });
       for (const n of subGraph.nodes) allNodesMap.set(n.id, n);
       for (const e of subGraph.edges) allEdgesMap.set(e.id, e);
+    }
+
+    // Ensure ALL unresolved transactions (both PROCESSOR_ONLY_UNRESOLVED and GENERIC_MECHANISM_ONLY, e.g. TXN-9501, TXN-9502, TXN-9503) are persisted in Neo4j
+    const unresolvedTxns = params.transactions.filter(
+      (t) => t.resolutionStatus === 'UNRESOLVED'
+    );
+    for (const uTxn of unresolvedTxns) {
+      if (uTxn.processorId && uTxn.processorName) {
+        allNodesMap.set(uTxn.processorId, {
+          id: uTxn.processorId,
+          label: 'PaymentProcessor',
+          title: uTxn.processorName,
+          subtitle: 'Payment Aggregator / Gateway',
+          status: 'CONFIRMED',
+          confidence: 98,
+          isCoreCommitmentPath: true,
+          properties: {
+            processorId: uTxn.processorId,
+            processorName: uTxn.processorName,
+          },
+        });
+      }
+      allNodesMap.set(uTxn.id, {
+        id: uTxn.id,
+        label: 'Transaction',
+        title: `${uTxn.id} · ₹${uTxn.amount} (UNRESOLVED)`,
+        subtitle: `${uTxn.transactionDate} · ${uTxn.rawDescription}`,
+        status: 'UNRESOLVED',
+        confidence: uTxn.confidenceScore,
+        isCoreCommitmentPath: true,
+        properties: {
+          transactionId: uTxn.id,
+          date: uTxn.transactionDate,
+          transactionDate: uTxn.transactionDate,
+          amount: uTxn.amount,
+          amountMinor: uTxn.amountMinor ?? Math.round(uTxn.amount * 100),
+          rawDescription: uTxn.rawDescription,
+          normalisedDescription: uTxn.normalisedDescription,
+          paymentRail: uTxn.paymentRail,
+          accountAlias: uTxn.accountAlias,
+          processorId: uTxn.processorId,
+          processorName: uTxn.processorName,
+          matchingMethod: uTxn.matchingMethod,
+          resolutionExplanation: uTxn.resolutionExplanation,
+          unmergedReason: uTxn.processorName
+            ? 'Shared processor only — no verified merchant alias.'
+            : 'Generic payment mechanism prefix only — no processor or merchant identity.',
+        },
+      });
+      const uDescId = `DESC-${uTxn.rawDescription.replace(/[^A-Z0-9]/gi, '_')}`;
+      allNodesMap.set(uDescId, {
+        id: uDescId,
+        label: 'Descriptor',
+        title: uTxn.rawDescription,
+        subtitle: 'Unresolved Descriptor',
+        status: 'UNRESOLVED',
+        confidence: uTxn.confidenceScore,
+        isCoreCommitmentPath: true,
+        properties: {
+          rawDescriptor: uTxn.rawDescription,
+          normalisedDescriptor: uTxn.normalisedDescription,
+          matchingMethod: uTxn.matchingMethod,
+          status: 'UNRESOLVED_NEEDS_REVIEW',
+        },
+      });
+      allEdgesMap.set(`EDGE-TXN-DESC-${uTxn.id}`, {
+        id: `EDGE-TXN-DESC-${uTxn.id}`,
+        source: uTxn.id,
+        target: uDescId,
+        type: 'TRANSACTION_HAS_DESCRIPTOR',
+        status: 'UNRESOLVED',
+        confidence: uTxn.confidenceScore,
+        matchingMethod: uTxn.matchingMethod,
+        evidenceType: 'UNRESOLVED_DESCRIPTOR',
+        sourceReference: uTxn.id,
+        createdAt: '2026-10-31T00:00:00Z',
+        evidenceSummary: uTxn.resolutionExplanation,
+        isCoreCommitmentPath: true,
+      });
+      if (uTxn.processorId) {
+        allEdgesMap.set(`EDGE-TXN-PROC-${uTxn.id}`, {
+          id: `EDGE-TXN-PROC-${uTxn.id}`,
+          source: uTxn.id,
+          target: uTxn.processorId,
+          type: 'TRANSACTION_PROCESSED_BY',
+          status: 'UNRESOLVED',
+          confidence: uTxn.confidenceScore,
+          matchingMethod: 'SPECIFIC_PROCESSOR_MATCH',
+          evidenceType: 'PROCESSOR_ONLY_LINK',
+          sourceReference: uTxn.id,
+          createdAt: '2026-10-31T00:00:00Z',
+          evidenceSummary: `Connected to processor node ONLY; intentionally NOT merged into any subscription.`,
+          isCoreCommitmentPath: true,
+        });
+      }
     }
 
     const session = drv.session({ database: this.getDatabaseName() });
@@ -263,12 +432,17 @@ export class Neo4jPersistenceService {
           confidence: number;
           isCoreCommitmentPath: boolean;
           propsJson: string;
+          props: Record<string, string | number | boolean | null>;
         }>
       >();
 
       for (const node of allNodesMap.values()) {
         if (!VALID_LABELS.has(node.label)) continue;
         const list = nodesByLabel.get(node.label) || [];
+        const cleanProps: Record<string, string | number | boolean | null> = {};
+        for (const [k, v] of Object.entries(node.properties || {})) {
+          if (v !== undefined) cleanProps[k] = v;
+        }
         list.push({
           id: node.id,
           title: node.title,
@@ -276,7 +450,8 @@ export class Neo4jPersistenceService {
           status: node.status,
           confidence: node.confidence ?? 100,
           isCoreCommitmentPath: Boolean(node.isCoreCommitmentPath),
-          propsJson: JSON.stringify(node.properties || {}),
+          propsJson: JSON.stringify(cleanProps),
+          props: cleanProps,
         });
         nodesByLabel.set(node.label, list);
       }
@@ -286,7 +461,8 @@ export class Neo4jPersistenceService {
         await session.run(
           `UNWIND $batch AS item
            MERGE (n:${label} {id: item.id})
-           SET n.title = item.title,
+           SET n += item.props,
+               n.title = item.title,
                n.subtitle = item.subtitle,
                n.status = item.status,
                n.confidence = item.confidence,
@@ -343,9 +519,12 @@ export class Neo4jPersistenceService {
            MATCH (dst {id: rel.target})
            MERGE (src)-[r:${relType} {id: rel.id}]->(dst)
            SET r.confidenceScore = rel.confidence,
+               r.confidence = rel.confidence,
                r.relationshipStatus = rel.status,
+               r.status = rel.status,
                r.evidenceType = rel.evidenceType,
                r.matchMethod = rel.matchingMethod,
+               r.matchingMethod = rel.matchingMethod,
                r.sourceReference = rel.sourceReference,
                r.evidenceSummary = rel.evidenceSummary,
                r.isCoreCommitmentPath = rel.isCoreCommitmentPath,
@@ -370,6 +549,144 @@ export class Neo4jPersistenceService {
   }
 
   /**
+   * Executes a live parameterised Cypher query against Neo4j AuraDB for unresolved transactions (Section 20.C).
+   */
+  public async queryUnresolvedTransactions(
+    fallbackTransactions: TransactionRecord[]
+  ): Promise<{
+    executionMode: GraphExecutionMode;
+    cypherExecuted: string;
+    count: number;
+    transactions: Array<{
+      id: string;
+      transactionId: string;
+      transactionDate: string;
+      rawDescription: string;
+      amount: number;
+      paymentRail: string;
+      processorId: string | null;
+      processorName: string | null;
+      matchingMethod: string;
+      resolutionStatus: string;
+      confidenceScore: number;
+      resolutionExplanation: string;
+    }>;
+  }> {
+    const cypherQuery = `MATCH (t:Transaction {demoNamespace: 'DEBITLENS_DEMO_V1', status: 'UNRESOLVED'})-[:TRANSACTION_PROCESSED_BY]->(p:PaymentProcessor)
+OPTIONAL MATCH (t)-[:TRANSACTION_HAS_DESCRIPTOR]->(d:Descriptor)
+WHERE NOT (t)-[:TRANSACTION_SUPPORTS_COMMITMENT]->(:Commitment)
+RETURN t.id AS id,
+       coalesce(t.transactionDate, t.date) AS transactionDate,
+       coalesce(t.rawDescription, d.rawDescriptor) AS rawDescription,
+       t.amount AS amount,
+       t.paymentRail AS paymentRail,
+       p.id AS processorId,
+       p.processorName AS processorName,
+       coalesce(t.matchingMethod, d.matchingMethod, 'PROCESSOR_ONLY_UNRESOLVED') AS matchingMethod,
+       t.status AS resolutionStatus,
+       t.confidence AS confidenceScore,
+       coalesce(t.resolutionExplanation, t.unmergedReason) AS resolutionExplanation
+ORDER BY t.id`;
+
+    const connectivity = await this.checkConnectivity();
+    if (!connectivity.connected) {
+      const localUnres = fallbackTransactions
+        .filter((t) => t.resolutionStatus === 'UNRESOLVED' && t.processorId !== null)
+        .map((t) => ({
+          id: t.id,
+          transactionId: t.transactionId,
+          transactionDate: t.transactionDate,
+          rawDescription: t.rawDescription,
+          amount: t.amount,
+          paymentRail: t.paymentRail,
+          processorId: t.processorId,
+          processorName: t.processorName,
+          matchingMethod: t.matchingMethod,
+          resolutionStatus: t.resolutionStatus,
+          confidenceScore: t.confidenceScore,
+          resolutionExplanation: t.resolutionExplanation,
+        }));
+      return {
+        executionMode: connectivity.status,
+        cypherExecuted: cypherQuery,
+        count: localUnres.length,
+        transactions: localUnres,
+      };
+    }
+
+    const drv = this.getDriver()!;
+    const session = drv.session({ database: this.getDatabaseName() });
+    try {
+      const res = await session.run(cypherQuery);
+      const records = res.records.map((r) => {
+        const rawAmt = r.get('amount');
+        const amt =
+          rawAmt && typeof rawAmt === 'object' && 'toNumber' in rawAmt
+            ? rawAmt.toNumber()
+            : Number(rawAmt || 0);
+        const rawConf = r.get('confidenceScore');
+        const conf =
+          rawConf && typeof rawConf === 'object' && 'toNumber' in rawConf
+            ? rawConf.toNumber()
+            : Number(rawConf || 35);
+        const id = String(r.get('id'));
+        const fallback = fallbackTransactions.find((f) => f.id === id);
+        return {
+          id,
+          transactionId: id,
+          transactionDate: String(r.get('transactionDate') || fallback?.transactionDate || ''),
+          rawDescription: String(r.get('rawDescription') || fallback?.rawDescription || ''),
+          amount: amt || fallback?.amount || 0,
+          paymentRail: String(r.get('paymentRail') || fallback?.paymentRail || 'UNKNOWN'),
+          processorId: (r.get('processorId') as string | null) ?? fallback?.processorId ?? null,
+          processorName:
+            (r.get('processorName') as string | null) ?? fallback?.processorName ?? null,
+          matchingMethod: String(
+            r.get('matchingMethod') || fallback?.matchingMethod || 'PROCESSOR_ONLY_UNRESOLVED'
+          ),
+          resolutionStatus: String(r.get('resolutionStatus') || 'UNRESOLVED'),
+          confidenceScore: conf,
+          resolutionExplanation: String(
+            r.get('resolutionExplanation') || fallback?.resolutionExplanation || ''
+          ),
+        };
+      });
+
+      return {
+        executionMode: records.length > 0 ? 'LIVE_NEO4J' : 'EMPTY_LIVE_RESULT',
+        cypherExecuted: cypherQuery,
+        count: records.length,
+        transactions: records,
+      };
+    } catch {
+      const localUnres = fallbackTransactions
+        .filter((t) => t.resolutionStatus === 'UNRESOLVED')
+        .map((t) => ({
+          id: t.id,
+          transactionId: t.transactionId,
+          transactionDate: t.transactionDate,
+          rawDescription: t.rawDescription,
+          amount: t.amount,
+          paymentRail: t.paymentRail,
+          processorId: t.processorId,
+          processorName: t.processorName,
+          matchingMethod: t.matchingMethod,
+          resolutionStatus: t.resolutionStatus,
+          confidenceScore: t.confidenceScore,
+          resolutionExplanation: t.resolutionExplanation,
+        }));
+      return {
+        executionMode: 'QUERY_FAILED',
+        cypherExecuted: cypherQuery,
+        count: localUnres.length,
+        transactions: localUnres,
+      };
+    } finally {
+      await session.close();
+    }
+  }
+
+  /**
    * Rebuilds demo data in Neo4j safely by deleting only nodes in the DEBITLENS_DEMO_V1 namespace.
    */
   public async rebuildDemoGraphInNeo4j(params: {
@@ -379,6 +696,9 @@ export class Neo4jPersistenceService {
     playbooks: CancellationPlaybookRecord[];
     sessions: CancellationSessionRecord[];
     notifications: NotificationInput[];
+    mandates?: MandateRecord[];
+    serviceTerms?: ServiceTermsRecord[];
+    reconciliationFindings?: ReconciliationFindingRecord[];
   }): Promise<{
     rebuilt: boolean;
     nodesWritten: number;
@@ -431,6 +751,9 @@ export class Neo4jPersistenceService {
     playbooks: CancellationPlaybookRecord[];
     sessions: CancellationSessionRecord[];
     notifications: NotificationInput[];
+    mandates?: MandateRecord[];
+    serviceTerms?: ServiceTermsRecord[];
+    reconciliationFindings?: ReconciliationFindingRecord[];
   }): Promise<CommitmentGraphResponse> {
     const connectivity = await this.checkConnectivity();
     if (!connectivity.connected) {
@@ -523,20 +846,63 @@ export class Neo4jPersistenceService {
         }
       }
 
+      // Execute Operations 1-7 Cypher queries against live Neo4j AuraDB with honest per-query status (Section 20.B)
+      const liveExecutedQueries: CommitmentGraphResponse['executedCypherQueries'] = [];
+      for (const q of baseGraph.executedCypherQueries) {
+        try {
+          const qRes = await session.run(q.cypher, q.parameters);
+          const rows = qRes.records.map((r) => {
+            const obj: Record<string, unknown> = {};
+            for (const key of r.keys) {
+              const val = r.get(key);
+              if (val && typeof val === 'object' && 'toNumber' in val && typeof (val as any).toNumber === 'function') {
+                obj[String(key)] = (val as any).toNumber();
+              } else if (Array.isArray(val)) {
+                obj[String(key)] = val.map((item) =>
+                  item && typeof item === 'object' && 'toNumber' in item ? item.toNumber() : item
+                );
+              } else {
+                obj[String(key)] = val;
+              }
+            }
+            return obj;
+          });
+          liveExecutedQueries.push({
+            ...q,
+            executionMode: rows.length > 0 ? 'LIVE_NEO4J' : 'EMPTY_LIVE_RESULT',
+            rowCount: rows.length,
+            sampleResults: rows,
+          });
+        } catch (err: any) {
+          liveExecutedQueries.push({
+            ...q,
+            executionMode: 'QUERY_FAILED',
+            rowCount: 0,
+            sampleResults: [],
+            errorMessage: err?.message || 'Cypher query execution failed',
+          });
+        }
+      }
+
       if (liveNodesMap.size > 0) {
         return {
           ...baseGraph,
           executionMode: 'LIVE_NEO4J',
           nodes: Array.from(liveNodesMap.values()),
           edges: Array.from(liveEdgesMap.values()),
+          executedCypherQueries: liveExecutedQueries,
         };
       }
 
-      return baseGraph;
+      return {
+        ...baseGraph,
+        executionMode: 'EMPTY_LIVE_RESULT',
+        executedCypherQueries: liveExecutedQueries,
+      };
     } catch {
       return buildCommitmentGraphResponse({
         ...params,
-        executionMode: 'CONNECTION_FAILED',
+        executionMode: 'QUERY_FAILED',
       });
     } finally {
       await session.close();

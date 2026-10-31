@@ -1,0 +1,16 @@
+# Judge Q&A Defence Sheet
+
+## Q1: Why does DebitLens use Neo4j AuraDB instead of a relational table?
+**Answer:** Recurring payment intelligence is fundamentally a multi-hop graph problem: connecting bank accounts, noisy statement descriptors (`RZP*STREAMBOX`, `STREAMBOX*BILL`), payment processors (Razorpay, BillDesk), canonical merchants, service plans, payment mandates (`UMN-...`), invoice documents (`Document`), reconciliation findings (`ReconciliationFinding`), and two-layer cancellation sessions. In Neo4j, traversing a 7-hop provenance path or isolating shared-processor transactions (`MATCH (t:Transaction)-[:TRANSACTION_PROCESSED_BY]->(p:PaymentProcessor) WHERE NOT (t)-[:TRANSACTION_SUPPORTS_COMMITMENT]->(:Commitment)`) is native, explainable, and enforced by 19 verified uniqueness constraints (`SHOW CONSTRAINTS`).
+
+## Q2: How do you prevent false merges when two different merchants use Razorpay or BillDesk?
+**Answer:** DebitLens separates `processorIdentity` from `merchantIdentity` in a strict 6-tier resolution hierarchy. A processor token (`RZP*`, `RAZORPAY*`, `BILLDESK*`, `CASHFREE*`) only populates `processorIdentity`. Unless a verified merchant alias token is also matched, the transaction is marked `resolutionStatus: "UNRESOLVED"` with `matchingMethod: "PROCESSOR_ONLY_UNRESOLVED"` (`TXN-9501`, `TXN-9502`, `TXN-9503`) and is never linked to a `Commitment` node. Our benchmark evaluation verifies `falseMergesCount === 0`.
+
+## Q3: Why did the ₹799 StreamBox debit succeed automatically if the user's invoice was ₹499? Is that fraud?
+**Answer:** Under UPI AutoPay and e-Mandate rules, users often authorise a mandate ceiling (`maxAmountMinor = 99900` paise / `₹999`) that is higher than their initial promotional or base plan price (`₹499`). When the merchant bills `₹799`, the bank permits the debit automatically because `₹799 ≤ ₹999`. DebitLens flags this as `AMOUNT_DISCREPANCY` (`+₹300`) via Three-Way Reconciliation across the invoice, statement debit, and mandate ceiling—and explicitly states that it does **not** declare fraud, since it could be a tier upgrade, promo expiry, or price revision.
+
+## Q4: What happens if a commitment has no mandate in DebitLens? Does that mean it is an unauthorised debit?
+**Answer:** No. DebitLens practices strict epistemic humility: if no mandate record is matched, it reports `TRANSACTION_WITHOUT_VISIBLE_MANDATE` with the exact explanation: *"No matching mandate was found in the available imported records."* Our **Data Coverage & Visibility Blind Spots** panel explicitly reminds the user which data sources have been imported and which have not.
+
+## Q5: How do you ensure Sarvam AI never hallucinates financial numbers or exposes user PII?
+**Answer:** First, all financial numbers, merchant names, confidence scores, and reconciliation statuses are computed deterministically before Sarvam is called. Second, `redactTransactionForSarvam()` strips account numbers, phone/email patterns, and reference tokens. Third, we track `fieldStatuses` per translated field (`LIVE_SARVAM` vs `LOCAL_FALLBACK`) and throttle concurrent requests (`runWithConcurrencyLimit`, max 3, 10s timeout) so the UI never makes false `LIVE_SARVAM` claims.

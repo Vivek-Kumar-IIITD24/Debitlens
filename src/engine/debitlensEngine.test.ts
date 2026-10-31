@@ -13,9 +13,20 @@ import {
   buildGroundedMerchantExplanation,
   buildGroundedCancellationExplanation,
   evaluateDetectionMetricsAgainstGroundTruth,
+  buildInitialSeedMandates,
+  buildInitialSeedServiceTerms,
+  extractServiceTermsFromText,
+  reconcileCommitment,
+  runFullReconciliation,
+  buildCommitmentEvidenceCasebook,
+  buildDataCoverageSummary,
+  deriveIndependentLifecycleStatuses,
+  buildGroundedContextualQuestionResponse,
   RawCsvRow,
   NotificationInput,
 } from './debitlensEngine';
+import { toMinorUnits, fromMinorUnits, formatMinorINR } from '../utils/currency';
+import { isPlaceholderEnvValue } from '../services/neo4jPersistenceService';
 import { MERCHANT_CATALOGUE } from './referenceData';
 
 const SAMPLE_ROWS: RawCsvRow[] = [
@@ -746,7 +757,7 @@ test('Adversarial Case 13: Duplicate imported transaction IDs are rejected deter
 });
 
 test('Adversarial Case 14: Incomplete notification record is handled gracefully without crash', () => {
-  const incompleteNotifs: NotificationInput[] = [
+  const incompleteNotifs = [
     {
       id: 'NOTIF-INCOMPLETE',
       eventType: 'TRIAL_STARTED',
@@ -755,7 +766,7 @@ test('Adversarial Case 14: Incomplete notification record is handled gracefully 
       expectedAmount: 999,
       currency: 'INR',
     },
-  ];
+  ] as unknown as NotificationInput[];
   const { transactions } = parseAndNormaliseTransactions(SAMPLE_ROWS);
   const { commitments } = detectCommitmentsAndAlerts(transactions, incompleteNotifs);
   const learnpro = commitments.find((c) => c.id === 'CMT-LEARNPRO');
@@ -832,3 +843,264 @@ test('Dynamic Ground-Truth Evaluation computes genuine metrics against data/grou
   assert.equal(metrics.precisionPercent, 100);
   assert.equal(metrics.recallPercent, 100);
 });
+
+// ----------------------------------------------------------------------------
+// 11. MINOR UNITS, PLACEHOLDER ENV VALIDATION & CANDIDATE VS COMMITMENT
+// ----------------------------------------------------------------------------
+
+test('Minor Units conversion (paise) is exact and free of floating-point drift', () => {
+  assert.equal(toMinorUnits(499), 49900);
+  assert.equal(toMinorUnits(799.5), 79950);
+  assert.equal(fromMinorUnits(49900), 499);
+  assert.equal(formatMinorINR(49900), '₹499');
+
+  const { transactions } = parseAndNormaliseTransactions(SAMPLE_ROWS);
+  const { commitments } = detectCommitmentsAndAlerts(transactions, SAMPLE_NOTIFICATIONS);
+  for (const tx of transactions) {
+    assert.equal(tx.amountMinor, Math.round(tx.amount * 100));
+  }
+  for (const cm of commitments) {
+    assert.equal(cm.expectedAmountMinor, Math.round(cm.typicalAmount * 100));
+    assert.equal(cm.latestAmountMinor, Math.round(cm.latestAmount * 100));
+    assert.ok(
+      cm.entityClass === 'FINANCIAL_COMMITMENT' || cm.entityClass === 'RECURRING_CANDIDATE',
+      'Commitment must declare entityClass'
+    );
+    assert.ok(
+      cm.verificationStatus === 'CONFIRMED' ||
+        cm.verificationStatus === 'PENDING_REVIEW' ||
+        cm.verificationStatus === 'USER_CONFIRMED',
+      'Commitment must declare verificationStatus'
+    );
+  }
+});
+
+test('Placeholder environment value detector rejects template placeholders', () => {
+  assert.equal(isPlaceholderEnvValue(''), true);
+  assert.equal(isPlaceholderEnvValue('<PASTE_YOUR_AURA_URI_HERE>'), true);
+  assert.equal(isPlaceholderEnvValue('MY_GEMINI_API_KEY'), true);
+  assert.equal(isPlaceholderEnvValue('YOUR_SARVAM_API_KEY'), true);
+  assert.equal(isPlaceholderEnvValue('neo4j+s://5ded3f74.databases.neo4j.io'), false);
+});
+
+// ----------------------------------------------------------------------------
+// 12. THREE-WAY FINANCIAL RECONCILIATION & SECTION 22 JUDGE DEMO
+// ----------------------------------------------------------------------------
+
+test('Three-Way Reconciliation produces accurate outcomes and never claims fraud or non-existent mandates', () => {
+  const { transactions } = parseAndNormaliseTransactions(SAMPLE_ROWS);
+  const { commitments, sessions } = detectCommitmentsAndAlerts(transactions, SAMPLE_NOTIFICATIONS);
+  const mandates = buildInitialSeedMandates();
+  const serviceTerms = buildInitialSeedServiceTerms();
+
+  const findings = runFullReconciliation({
+    commitments,
+    transactions,
+    mandates,
+    serviceTerms,
+    sessions,
+  });
+  assert.ok(findings.length >= commitments.length);
+
+  // StreamBox initial seed: ₹499 invoice vs ₹499 debit vs ₹999 mandate ceiling -> MATCHED
+  const streamboxInitial = findings.find((f) => f.commitmentId === 'CMT-STREAMBOX');
+  assert.ok(streamboxInitial);
+  assert.equal(streamboxInitial.status, 'MATCHED');
+  assert.equal(streamboxInitial.withinMandateLimit, true);
+
+  // MusicFlow initial seed: ₹199 plan terms vs ₹249 latest debit -> AMOUNT_DISCREPANCY (+₹50)
+  const musicflowFinding = findings.find((f) => f.commitmentId === 'CMT-MUSICFLOW');
+  assert.ok(musicflowFinding);
+  assert.equal(musicflowFinding.status, 'AMOUNT_DISCREPANCY');
+  assert.equal(musicflowFinding.discrepancyAmount, 50);
+  assert.equal(musicflowFinding.discrepancyAmountMinor, 5000);
+  assert.ok(
+    !musicflowFinding.explanation.toLowerCase().includes('fraud'),
+    'Must never declare amount discrepancy as fraud'
+  );
+
+  // Section 22 Judge Demo: StreamBox debits ₹799 against ₹499 invoice and ₹999 mandate ceiling
+  const streamboxCommitment = commitments.find((c) => c.id === 'CMT-STREAMBOX')!;
+  const demoTxRow: RawCsvRow = {
+    transaction_id: 'TXN-DEMO-799',
+    transaction_date: '2026-11-05',
+    raw_description: 'RZP*STREAMBOX',
+    amount: 799,
+    currency: 'INR',
+    direction: 'DEBIT',
+    payment_rail: 'UPI_AUTOPAY',
+    account_alias: 'HDFC-XX4821',
+    external_reference: 'UTR60405998877',
+  };
+  const { transactions: demoNormalized } = parseAndNormaliseTransactions([demoTxRow]);
+  const linkedDemoTx = {
+    ...demoNormalized[0],
+    commitmentId: 'CMT-STREAMBOX',
+  };
+  const updatedStreambox = {
+    ...streamboxCommitment,
+    latestAmount: 799,
+    latestAmountMinor: 79900,
+    supportingTransactionIds: [...streamboxCommitment.supportingTransactionIds, 'TXN-DEMO-799'],
+  };
+  const streamboxMandate = mandates.find((m) => m.commitmentId === 'CMT-STREAMBOX')!;
+  const streamboxTerms = serviceTerms.find((t) => t.commitmentId === 'CMT-STREAMBOX')!;
+
+  const demoFinding = reconcileCommitment({
+    commitment: updatedStreambox,
+    transactions: [...transactions, linkedDemoTx],
+    mandate: streamboxMandate,
+    serviceTerms: streamboxTerms,
+    cancellationSession: null,
+  });
+
+  assert.equal(demoFinding.status, 'AMOUNT_DISCREPANCY');
+  assert.equal(demoFinding.expectedServiceAmount, 499);
+  assert.equal(demoFinding.actualTransactionAmount, 799);
+  assert.equal(demoFinding.mandateMaxAmount, 999);
+  assert.equal(demoFinding.discrepancyAmount, 300);
+  assert.equal(demoFinding.discrepancyAmountMinor, 30000);
+  assert.equal(demoFinding.withinMandateLimit, true);
+  assert.ok(demoFinding.explanation.includes('300'));
+
+  // Missing visible mandate -> TRANSACTION_WITHOUT_VISIBLE_MANDATE with epistemic humility
+  const noMandateFinding = reconcileCommitment({
+    commitment: streamboxCommitment,
+    transactions,
+    mandate: null,
+    serviceTerms: streamboxTerms,
+    cancellationSession: null,
+  });
+  assert.equal(noMandateFinding.status, 'TRANSACTION_WITHOUT_VISIBLE_MANDATE');
+  assert.ok(
+    noMandateFinding.explanation.includes('no matching mandate was found in the available imported records'),
+    'Must use exact epistemically humble wording when mandate is absent from imported records'
+  );
+});
+
+// ----------------------------------------------------------------------------
+// 13. SERVICE TERMS EXTRACTION, EVIDENCE CASEBOOK, LIFECYCLES & BHASHA Q&A
+// ----------------------------------------------------------------------------
+
+test('Service Terms parser extracts structured billing terms from pasted invoice text', () => {
+  const extracted = extractServiceTermsFromText({
+    commitmentId: 'CMT-STREAMBOX',
+    merchantName: 'StreamBox Media Pvt Ltd',
+    serviceName: 'StreamBox Standard Monthly Plan',
+    documentSource: 'PASTED_INVOICE_TEXT',
+    rawText:
+      'StreamBox Standard Monthly Plan Invoice #INV-9981. Billing Cycle: Monthly. Plan Price: Rs. 499. Renewal Date: 2026-11-05. Cancel at least 2 days before renewal.',
+  });
+
+  assert.equal(extracted.expectedAmount, 499);
+  assert.equal(extracted.expectedAmountMinor, 49900);
+  assert.equal(extracted.billingFrequency, 'MONTHLY');
+  assert.equal(extracted.renewalDate, '2026-11-05');
+  assert.equal(extracted.cancellationNoticeDays, 2);
+  assert.ok(extracted.extractedFields.some((f) => f.fieldName === 'expectedAmount'));
+  assert.ok(extracted.extractionConfidence >= 75);
+});
+
+test('Evidence Casebook & Independent Cancellation Lifecycles track Layer A and Layer B separately', () => {
+  const { transactions } = parseAndNormaliseTransactions(SAMPLE_ROWS);
+  const { commitments, alerts, sessions } = detectCommitmentsAndAlerts(
+    transactions,
+    SAMPLE_NOTIFICATIONS
+  );
+  const mandates = buildInitialSeedMandates();
+  const serviceTerms = buildInitialSeedServiceTerms();
+  const findings = runFullReconciliation({
+    commitments,
+    transactions,
+    mandates,
+    serviceTerms,
+    sessions,
+  });
+
+  const streambox = commitments.find((c) => c.id === 'CMT-STREAMBOX')!;
+  const streamboxSession = sessions.find((s) => s.commitmentId === 'CMT-STREAMBOX') || null;
+  const casebook = buildCommitmentEvidenceCasebook({
+    commitment: streambox,
+    transactions,
+    mandate: mandates.find((m) => m.commitmentId === 'CMT-STREAMBOX') || null,
+    serviceTerms: serviceTerms.find((t) => t.commitmentId === 'CMT-STREAMBOX') || null,
+    reconciliation: findings.find((f) => f.commitmentId === 'CMT-STREAMBOX') || null,
+    alerts,
+    session: streamboxSession,
+  });
+
+  assert.ok(
+    casebook.entries.length >= 4,
+    'Evidence casebook must assemble multi-source evidence chain'
+  );
+
+  // Verify independent Layer A & Layer B statuses
+  const partialCancel = deriveIndependentLifecycleStatuses(
+    {
+      ...(streamboxSession as any),
+      serviceCancelledAt: '2026-10-20',
+      paymentAuthorisationRevokedAt: null,
+      evidence: [
+        {
+          id: 'EV-TEST-1',
+          evidenceType: 'SERVICE_CONFIRMATION',
+          referenceNumber: 'SB-CANCEL-991',
+          evidenceDate: '2026-10-20',
+          description: 'Cancelled in StreamBox account settings',
+          createdAt: '2026-10-20T10:00:00Z',
+        },
+      ],
+    },
+    mandates.find((m) => m.commitmentId === 'CMT-STREAMBOX') || null
+  );
+
+  assert.equal(partialCancel.serviceLifecycleStatus, 'CANCELLATION_EVIDENCE_ATTACHED');
+  assert.equal(partialCancel.mandateLifecycleStatus, 'ACTIVE');
+});
+
+test('Data Coverage summary and Contextual Bhasha Q&A provide grounded, honest responses', () => {
+  const { transactions } = parseAndNormaliseTransactions(SAMPLE_ROWS);
+  const { commitments, sessions } = detectCommitmentsAndAlerts(
+    transactions,
+    SAMPLE_NOTIFICATIONS
+  );
+  const mandates = buildInitialSeedMandates();
+  const serviceTerms = buildInitialSeedServiceTerms();
+  const findings = runFullReconciliation({
+    commitments,
+    transactions,
+    mandates,
+    serviceTerms,
+    sessions,
+  });
+
+  const coverage = buildDataCoverageSummary({
+    transactions,
+    commitments,
+    mandates,
+    serviceTerms,
+    notificationsCount: SAMPLE_NOTIFICATIONS.length,
+  });
+
+  assert.equal(coverage.importedTransactionCount, transactions.length);
+  assert.ok(coverage.blindSpots.length >= 1);
+
+  const streambox = commitments.find((c) => c.id === 'CMT-STREAMBOX')!;
+  const qa = buildGroundedContextualQuestionResponse({
+    commitment: streambox,
+    question: 'Why was I charged this amount and how do I cancel?',
+    language: 'hi-IN',
+    transactions,
+    mandate: mandates.find((m) => m.commitmentId === 'CMT-STREAMBOX') || null,
+    serviceTerms: serviceTerms.find((t) => t.commitmentId === 'CMT-STREAMBOX') || null,
+    reconciliation: findings.find((f) => f.commitmentId === 'CMT-STREAMBOX') || null,
+    session: sessions.find((s) => s.commitmentId === 'CMT-STREAMBOX') || null,
+  });
+
+  assert.equal(qa.commitmentId, 'CMT-STREAMBOX');
+  assert.ok(qa.englishAnswer.includes('StreamBox'));
+  assert.ok(qa.localizedAnswer.includes('StreamBox'));
+  assert.ok(qa.evidenceRecordIds.length >= 2);
+});
+
+

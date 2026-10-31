@@ -15,6 +15,15 @@ import {
   buildGroundedAlertExplanation,
   evaluateDetectionMetricsAgainstGroundTruth,
   UserCommitmentStateOverride,
+  buildInitialSeedMandates,
+  buildInitialSeedServiceTerms,
+  extractServiceTermsFromText,
+  reconcileCommitment,
+  runFullReconciliation,
+  buildCommitmentEvidenceCasebook,
+  buildDataCoverageSummary,
+  buildInitialSeedGuardrails,
+  buildGroundedContextualQuestionResponse,
 } from './src/engine/debitlensEngine';
 import {
   MERCHANT_CATALOGUE,
@@ -26,8 +35,21 @@ import {
   IntegrationStatusResponse,
   CancellationEvidenceRecord,
   SarvamRuntimeStatus,
+  MandateRecord,
+  ServiceTermsRecord,
+  EvidenceCasebookEntry,
+  AuditEventRecord,
+  FinancialGuardrailConfig,
+  ServiceLifecycleStatus,
+  MandateLifecycleStatus,
+  RecurrenceFrequency,
+  PaymentRailType,
 } from './src/types/debitlens';
-import { neo4jPersistenceService } from './src/services/neo4jPersistenceService';
+import { toMinorUnits, fromMinorUnits } from './src/utils/currency';
+import {
+  neo4jPersistenceService,
+  isPlaceholderEnvValue,
+} from './src/services/neo4jPersistenceService';
 
 dotenv.config();
 
@@ -57,14 +79,46 @@ interface PersistentAppStore {
   userCommitmentOverrides: Record<string, UserCommitmentStateOverride>;
   alertStatusOverrides: Record<string, 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED'>;
   importHistory: ImportHistoryEntry[];
+  mandates: MandateRecord[];
+  serviceTerms: ServiceTermsRecord[];
+  customCasebookEntries: EvidenceCasebookEntry[];
+  auditEvents: AuditEventRecord[];
+  guardrails: FinancialGuardrailConfig[];
 }
 
 let rawCsvRows: RawCsvRow[] = [];
-let notificationEvents: NotificationInput[] = [];
+let notificationEvents: NotificationInput[];
 let userMerchantOverrides: Record<string, string> = {};
 let userCommitmentOverrides: Record<string, UserCommitmentStateOverride> = {};
 let alertStatusOverrides: Record<string, 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED'> = {};
 let importHistory: ImportHistoryEntry[] = [];
+let mandatesStore: MandateRecord[] = [];
+let serviceTermsStore: ServiceTermsRecord[] = [];
+let customCasebookEntries: EvidenceCasebookEntry[] = [];
+let auditEventsStore: AuditEventRecord[] = [];
+let guardrailsStore: FinancialGuardrailConfig[] = [];
+
+function recordAuditEvent(params: {
+  commitmentId: string | null;
+  eventType: AuditEventRecord['eventType'];
+  summary: string;
+  previousState?: string | null;
+  newState?: string | null;
+  actor?: 'SYSTEM_ENGINE' | 'USER_ACTION';
+}) {
+  const evt: AuditEventRecord = {
+    id: `AUD-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    commitmentId: params.commitmentId,
+    timestamp: new Date().toISOString(),
+    eventType: params.eventType,
+    summary: params.summary,
+    previousState: params.previousState ?? null,
+    newState: params.newState ?? null,
+    actor: params.actor ?? 'USER_ACTION',
+  };
+  auditEventsStore.push(evt);
+  return evt;
+}
 
 function savePersistentStore() {
   try {
@@ -75,6 +129,11 @@ function savePersistentStore() {
       userCommitmentOverrides,
       alertStatusOverrides,
       importHistory,
+      mandates: mandatesStore,
+      serviceTerms: serviceTermsStore,
+      customCasebookEntries,
+      auditEvents: auditEventsStore,
+      guardrails: guardrailsStore,
     };
     fs.writeFileSync(PERSISTENT_STORE_PATH, JSON.stringify(payload, null, 2), 'utf-8');
   } catch (err) {
@@ -93,6 +152,17 @@ function loadSeedData(forceReset = false) {
         userCommitmentOverrides = saved.userCommitmentOverrides || {};
         alertStatusOverrides = saved.alertStatusOverrides || {};
         importHistory = saved.importHistory || [];
+        mandatesStore =
+          Array.isArray(saved.mandates) && saved.mandates.length > 0
+            ? saved.mandates
+            : buildInitialSeedMandates();
+        serviceTermsStore =
+          Array.isArray(saved.serviceTerms) && saved.serviceTerms.length > 0
+            ? saved.serviceTerms
+            : buildInitialSeedServiceTerms();
+        customCasebookEntries = saved.customCasebookEntries || [];
+        auditEventsStore = saved.auditEvents || [];
+        guardrailsStore = saved.guardrails || [];
         return;
       }
     } catch {
@@ -108,6 +178,31 @@ function loadSeedData(forceReset = false) {
   userMerchantOverrides = {};
   userCommitmentOverrides = {};
   alertStatusOverrides = {};
+  mandatesStore = buildInitialSeedMandates();
+  serviceTermsStore = buildInitialSeedServiceTerms();
+  customCasebookEntries = [];
+  auditEventsStore = [
+    {
+      id: 'AUD-SEED-01',
+      commitmentId: 'CMT-DESIGNVAULT',
+      timestamp: '2026-09-10T14:20:00Z',
+      eventType: 'SERVICE_STATUS_UPDATED',
+      summary: 'User attached DesignVault service cancellation confirmation DV-CANC-20260910-881.',
+      previousState: 'ACTIVE',
+      newState: 'CANCELLATION_EVIDENCE_ATTACHED',
+      actor: 'USER_ACTION',
+    },
+    {
+      id: 'AUD-SEED-02',
+      commitmentId: 'CMT-DESIGNVAULT',
+      timestamp: '2026-09-10T14:35:00Z',
+      eventType: 'MANDATE_STATUS_UPDATED',
+      summary: 'User recorded ICICI SIHub mandate revocation SIHUB-REV-994012.',
+      previousState: 'ACTIVE',
+      newState: 'REVOCATION_EVIDENCE_ATTACHED',
+      actor: 'USER_ACTION',
+    },
+  ];
   importHistory = [
     {
       id: 'BATCH-SEED-01',
@@ -129,7 +224,28 @@ function loadSeedData(forceReset = false) {
       duplicateRecords: 0,
       importedAt: '2026-10-30T09:01:00Z',
     },
+    {
+      id: 'BATCH-MANDATE-01',
+      filename: 'seed-mandate-registry.json',
+      sourceType: 'MANDATE_JSON',
+      totalRecords: mandatesStore.length,
+      acceptedRecords: mandatesStore.length,
+      rejectedRecords: 0,
+      duplicateRecords: 0,
+      importedAt: '2026-10-30T09:02:00Z',
+    },
+    {
+      id: 'BATCH-DOCS-01',
+      filename: 'seed-service-invoices.json',
+      sourceType: 'SERVICE_DOCUMENTS',
+      totalRecords: serviceTermsStore.length,
+      acceptedRecords: serviceTermsStore.length,
+      rejectedRecords: 0,
+      duplicateRecords: 0,
+      importedAt: '2026-10-30T09:03:00Z',
+    },
   ];
+  guardrailsStore = [];
   savePersistentStore();
 }
 
@@ -154,7 +270,28 @@ function computeCurrentState() {
     }
   }
 
-  return { transactions, invalidRows, duplicateRows, commitments, alerts, playbooks, sessions };
+  const reconciliationFindings = runFullReconciliation({
+    commitments,
+    transactions,
+    mandates: mandatesStore,
+    serviceTerms: serviceTermsStore,
+    sessions,
+  });
+
+  if (guardrailsStore.length === 0) {
+    guardrailsStore = buildInitialSeedGuardrails(commitments);
+  }
+
+  return {
+    transactions,
+    invalidRows,
+    duplicateRows,
+    commitments,
+    alerts,
+    playbooks,
+    sessions,
+    reconciliationFindings,
+  };
 }
 
 // Sync initial seed to Neo4j if configured
@@ -168,29 +305,27 @@ async function syncStateToGraphAsync() {
     playbooks: state.playbooks,
     sessions: state.sessions,
     notifications: notificationEvents,
+    mandates: mandatesStore,
+    serviceTerms: serviceTermsStore,
+    reconciliationFindings: state.reconciliationFindings,
   });
 }
 
 syncStateToGraphAsync();
 
 // ============================================================================
-// SARVAM AI BACKEND CLIENT & RUNTIME STATUS TRACKING
+// SARVAM AI BACKEND CLIENT, CONCURRENCY LIMITER & FIELD-LEVEL STATUS TRACKING
 // ============================================================================
 const SARVAM_BASE_URL = process.env.SARVAM_BASE_URL || 'https://api.sarvam.ai';
 const SARVAM_CHAT_MODEL = process.env.SARVAM_CHAT_MODEL || 'sarvam-105b';
 const SARVAM_TRANSLATION_MODEL = process.env.SARVAM_TRANSLATION_MODEL || 'sarvam-translate:v1';
 const SARVAM_DEFAULT_LANGUAGE = (process.env.SARVAM_DEFAULT_LANGUAGE || 'en-IN') as LanguageCode;
+const SARVAM_TIMEOUT_MS = 10000;
 
-function isSarvamConfigured(): boolean {
+export function isSarvamConfigured(): boolean {
   const enabled = process.env.SARVAM_ENABLED !== 'false';
   const key = process.env.SARVAM_API_KEY;
-  return Boolean(
-    enabled &&
-      key &&
-      key.trim() !== '' &&
-      key !== 'your-sarvam-subscription-key' &&
-      key !== '<api-key>'
-  );
+  return Boolean(enabled && !isPlaceholderEnvValue(key));
 }
 
 let sarvamLastSuccessfulRequest: string | null = null;
@@ -212,9 +347,30 @@ function getEffectiveSarvamStatus(): SarvamRuntimeStatus {
 const translationCache = new Map<string, string>();
 
 /**
- * Splits text into sentence-aware chunks under maxChars so long cancellation playbooks
- * never fail Sarvam character limits.
+ * Concurrency limiter so multi-field playbook translations never flood Sarvam API.
  */
+async function runWithConcurrencyLimit<T>(
+  taskFactories: Array<() => Promise<T>>,
+  concurrency = 3
+): Promise<T[]> {
+  const results: T[] = new Array(taskFactories.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < taskFactories.length) {
+      const idx = nextIndex++;
+      results[idx] = await taskFactories[idx]();
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, taskFactories.length) },
+    () => worker()
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 function splitIntoSentenceChunks(text: string, maxChars = 900): string[] {
   const trimmed = text.trim();
   if (trimmed.length <= maxChars) return [trimmed];
@@ -254,12 +410,12 @@ async function callSarvamTranslateApi(
     };
   }
   if (targetLanguage === 'en-IN') {
-    return { translatedText: inputText, status: 'LIVE_SUCCESS' };
+    return { translatedText: inputText, status: 'LIVE_SARVAM' };
   }
 
   const cacheKey = `${model}:${targetLanguage}:${inputText}`;
   if (translationCache.has(cacheKey)) {
-    return { translatedText: translationCache.get(cacheKey)!, status: 'LIVE_SUCCESS' };
+    return { translatedText: translationCache.get(cacheKey)!, status: 'LIVE_SARVAM' };
   }
 
   const maxChars = model === 'mayura:v1' ? 900 : 1800;
@@ -281,6 +437,7 @@ async function callSarvamTranslateApi(
           model,
           enable_preprocessing: true,
         }),
+        signal: AbortSignal.timeout(SARVAM_TIMEOUT_MS),
       });
 
       if (response.status === 429) {
@@ -309,9 +466,9 @@ async function callSarvamTranslateApi(
     const joined = translatedChunks.join(' ');
     translationCache.set(cacheKey, joined);
     sarvamLastSuccessfulRequest = new Date().toISOString();
-    sarvamLastRequestStatus = 'LIVE_SUCCESS';
+    sarvamLastRequestStatus = 'LIVE_SARVAM';
     sarvamLastError = null;
-    return { translatedText: joined, status: 'LIVE_SUCCESS' };
+    return { translatedText: joined, status: 'LIVE_SARVAM' };
   } catch (err: unknown) {
     sarvamLastRequestStatus = 'REQUEST_FAILED';
     sarvamLastError = err instanceof Error ? err.message : String(err);
@@ -347,6 +504,7 @@ async function callSarvamChatExplanationApi(
         ],
         temperature: 0.1,
       }),
+      signal: AbortSignal.timeout(SARVAM_TIMEOUT_MS),
     });
 
     if (response.status === 429) {
@@ -369,9 +527,9 @@ async function callSarvamChatExplanationApi(
     const content = data.choices?.[0]?.message?.content || null;
     if (content) {
       sarvamLastSuccessfulRequest = new Date().toISOString();
-      sarvamLastRequestStatus = 'LIVE_SUCCESS';
+      sarvamLastRequestStatus = 'LIVE_SARVAM';
       sarvamLastError = null;
-      return { content, status: 'LIVE_SUCCESS' };
+      return { content, status: 'LIVE_SARVAM' };
     }
     sarvamLastRequestStatus = 'REQUEST_FAILED';
     sarvamLastError = 'Empty content in Sarvam chat response';
@@ -389,15 +547,16 @@ async function callSarvamChatExplanationApi(
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'UP',
-    application: 'DebitLens Financial Commitment Intelligence',
+    application: 'DebitLens Financial Commitment Intelligence & Reconciliation Platform',
+    tagline: 'Find it. Understand it. Reconcile it. Verify it.',
     timestamp: new Date().toISOString(),
   });
 });
 
 app.get('/api/integrations/status', async (_req, res) => {
   const state = computeCurrentState();
-  const neo4jHealth = await neo4jPersistenceService.checkConnectivity();
-  const fullGraph = buildCommitmentGraphResponse({
+  const neo4jHealth = await neo4jPersistenceService.checkConnectivity(true);
+  const fallbackGraph = buildCommitmentGraphResponse({
     focusCommitmentId: state.commitments[0]?.id || null,
     transactions: state.transactions,
     commitments: state.commitments,
@@ -405,11 +564,17 @@ app.get('/api/integrations/status', async (_req, res) => {
     playbooks: state.playbooks,
     sessions: state.sessions,
     notifications: notificationEvents,
+    mandates: mandatesStore,
+    serviceTerms: serviceTermsStore,
+    reconciliationFindings: state.reconciliationFindings,
     executionMode: neo4jHealth.status,
   });
 
   const sarvamConfigured = isSarvamConfigured();
   const effectiveSarvamStatus = getEffectiveSarvamStatus();
+  const isLiveSarvam =
+    effectiveSarvamStatus === 'LIVE_SARVAM' || effectiveSarvamStatus === 'LIVE_SUCCESS';
+
   const payload: IntegrationStatusResponse = {
     neo4j: {
       configured: neo4jHealth.configured,
@@ -420,9 +585,9 @@ app.get('/api/integrations/status', async (_req, res) => {
       database: neo4jHealth.database,
       driverStatus: neo4jHealth.status,
       message: neo4jHealth.message,
-      nodeCount: fullGraph.nodes.length,
-      relationshipCount: fullGraph.edges.length,
-      constraintsVerified: neo4jHealth.connected,
+      nodeCount: neo4jHealth.nodeCount ?? fallbackGraph.nodes.length,
+      relationshipCount: neo4jHealth.relationshipCount ?? fallbackGraph.edges.length,
+      constraintsVerified: Boolean(neo4jHealth.constraintsVerified),
     },
     sarvam: {
       configured: sarvamConfigured,
@@ -434,21 +599,22 @@ app.get('/api/integrations/status', async (_req, res) => {
       translationModel: SARVAM_TRANSLATION_MODEL,
       defaultLanguage: SARVAM_DEFAULT_LANGUAGE,
       status: effectiveSarvamStatus,
-      message:
-        effectiveSarvamStatus === 'LIVE_SUCCESS'
-          ? `Live Sarvam AI verified (${SARVAM_CHAT_MODEL} + ${SARVAM_TRANSLATION_MODEL}). Last successful call at ${sarvamLastSuccessfulRequest}.`
-          : effectiveSarvamStatus === 'CONFIGURED_NOT_TESTED'
-          ? `SARVAM_API_KEY configured server-side (${SARVAM_CHAT_MODEL} + ${SARVAM_TRANSLATION_MODEL}). Status: CONFIGURED_NOT_TESTED until first live request completes.`
-          : effectiveSarvamStatus === 'RATE_LIMITED' || effectiveSarvamStatus === 'REQUEST_FAILED'
-          ? `Sarvam API request status: ${effectiveSarvamStatus} (${sarvamLastError || 'error'}). Using clearly labelled LOCAL_FALLBACK.`
-          : 'SARVAM_API_KEY not configured in backend environment. Using clearly labelled deterministic Bhasha LOCAL_FALLBACK translations.',
+      message: isLiveSarvam
+        ? `Live Sarvam AI verified (${SARVAM_CHAT_MODEL} + ${SARVAM_TRANSLATION_MODEL}). Last successful call at ${sarvamLastSuccessfulRequest}.`
+        : effectiveSarvamStatus === 'PARTIAL_SARVAM'
+        ? `Sarvam AI partially succeeded (${SARVAM_CHAT_MODEL} + ${SARVAM_TRANSLATION_MODEL}); fallback used for failed fields.`
+        : effectiveSarvamStatus === 'CONFIGURED_NOT_TESTED'
+        ? `SARVAM_API_KEY configured server-side (${SARVAM_CHAT_MODEL} + ${SARVAM_TRANSLATION_MODEL}). Status: CONFIGURED_NOT_TESTED until first live request completes.`
+        : effectiveSarvamStatus === 'RATE_LIMITED' || effectiveSarvamStatus === 'REQUEST_FAILED'
+        ? `Sarvam API request status: ${effectiveSarvamStatus} (${sarvamLastError || 'error'}). Using clearly labelled LOCAL_FALLBACK.`
+        : 'SARVAM_API_KEY not configured in backend environment. Using clearly labelled deterministic Bhasha LOCAL_FALLBACK translations.',
     },
   };
   res.json(payload);
 });
 
 app.get('/api/graph/health', async (_req, res) => {
-  const health = await neo4jPersistenceService.checkConnectivity();
+  const health = await neo4jPersistenceService.checkConnectivity(true);
   res.json({
     ...health,
     timestamp: new Date().toISOString(),
@@ -489,6 +655,9 @@ app.get('/api/graph/commitments/:id', async (req, res) => {
     playbooks: state.playbooks,
     sessions: state.sessions,
     notifications: notificationEvents,
+    mandates: mandatesStore,
+    serviceTerms: serviceTermsStore,
+    reconciliationFindings: state.reconciliationFindings,
   });
   res.json(graphResponse);
 });
@@ -504,6 +673,9 @@ app.get('/api/graph/merchants/:id/relationships', async (req, res) => {
     playbooks: state.playbooks,
     sessions: state.sessions,
     notifications: notificationEvents,
+    mandates: mandatesStore,
+    serviceTerms: serviceTermsStore,
+    reconciliationFindings: state.reconciliationFindings,
   });
   res.json(graphResponse);
 });
@@ -518,6 +690,9 @@ app.get('/api/graph/commitments/:id/evidence', async (req, res) => {
     playbooks: state.playbooks,
     sessions: state.sessions,
     notifications: notificationEvents,
+    mandates: mandatesStore,
+    serviceTerms: serviceTermsStore,
+    reconciliationFindings: state.reconciliationFindings,
   });
   res.json({
     commitmentId: req.params.id,
@@ -537,24 +712,19 @@ app.get('/api/graph/commitments/:id/path-explanation', async (req, res) => {
     playbooks: state.playbooks,
     sessions: state.sessions,
     notifications: notificationEvents,
+    mandates: mandatesStore,
+    serviceTerms: serviceTermsStore,
+    reconciliationFindings: state.reconciliationFindings,
   });
   res.json(graphResponse.pathExplanation);
 });
 
-app.get('/api/graph/unresolved-transactions', (_req, res) => {
+app.get('/api/graph/unresolved-transactions', async (_req, res) => {
   const state = computeCurrentState();
-  const unresolved = state.transactions.filter(
-    (t) => t.direction === 'DEBIT' && t.resolutionStatus === 'UNRESOLVED'
+  const unresolvedResult = await neo4jPersistenceService.queryUnresolvedTransactions(
+    state.transactions
   );
-  res.json({
-    count: unresolved.length,
-    cypherExecuted: `MATCH (t:Transaction)-[:TRANSACTION_HAS_DESCRIPTOR]->(d:Descriptor)
-OPTIONAL MATCH (t)-[:TRANSACTION_PROCESSED_BY]->(p:PaymentProcessor)
-WHERE NOT (d)-[:DESCRIPTOR_RESOLVES_TO_MERCHANT]->(:Merchant)
-RETURN t, d, p
-ORDER BY t.date DESC`,
-    transactions: unresolved,
-  });
+  res.json(unresolvedResult);
 });
 
 app.post('/api/graph/rebuild-demo', async (_req, res) => {
@@ -567,6 +737,9 @@ app.post('/api/graph/rebuild-demo', async (_req, res) => {
     playbooks: state.playbooks,
     sessions: state.sessions,
     notifications: notificationEvents,
+    mandates: mandatesStore,
+    serviceTerms: serviceTermsStore,
+    reconciliationFindings: state.reconciliationFindings,
   });
   res.json({
     ...rebuildResult,
@@ -576,7 +749,7 @@ app.post('/api/graph/rebuild-demo', async (_req, res) => {
 });
 
 // ============================================================================
-// REST API ENDPOINTS — SARVAM AI ("DEBITLENS BHASHA")
+// REST API ENDPOINTS — SARVAM AI ("DEBITLENS BHASHA") WITH FIELD-LEVEL TRACKING
 // ============================================================================
 const handleSupportedLanguages = (_req: express.Request, res: express.Response) => {
   res.json({
@@ -610,16 +783,33 @@ const handleMerchantExplanation = async (req: express.Request, res: express.Resp
       baseExplanation.privacyAudit
     )}. Summary in English: ${baseExplanation.englishSource.fullSummary}`;
 
-    const [chatRes, whyRes, idRes, uncRes, actRes, sumRes] = await Promise.all([
-      callSarvamChatExplanationApi(systemPrompt, userPrompt),
-      callSarvamTranslateApi(baseExplanation.englishSource.whyConfusing, language),
-      callSarvamTranslateApi(baseExplanation.englishSource.whatIsIdentified, language),
-      callSarvamTranslateApi(baseExplanation.englishSource.whatRemainsUncertain, language),
-      callSarvamTranslateApi(baseExplanation.englishSource.recommendedAction, language),
-      callSarvamTranslateApi(baseExplanation.englishSource.fullSummary, language),
-    ]);
+    const chatRes = await callSarvamChatExplanationApi(systemPrompt, userPrompt);
+    const [whyRes, idRes, uncRes, actRes, sumRes] = await runWithConcurrencyLimit(
+      [
+        () => callSarvamTranslateApi(baseExplanation.englishSource.whyConfusing, language),
+        () => callSarvamTranslateApi(baseExplanation.englishSource.whatIsIdentified, language),
+        () => callSarvamTranslateApi(baseExplanation.englishSource.whatRemainsUncertain, language),
+        () => callSarvamTranslateApi(baseExplanation.englishSource.recommendedAction, language),
+        () => callSarvamTranslateApi(baseExplanation.englishSource.fullSummary, language),
+      ],
+      3
+    );
 
-    if (chatRes.content || sumRes.translatedText) {
+    const fieldStatuses: Record<string, 'LIVE_SARVAM' | 'LOCAL_FALLBACK'> = {
+      whyConfusing: whyRes.translatedText ? 'LIVE_SARVAM' : 'LOCAL_FALLBACK',
+      whatIsIdentified: idRes.translatedText ? 'LIVE_SARVAM' : 'LOCAL_FALLBACK',
+      whatRemainsUncertain: uncRes.translatedText ? 'LIVE_SARVAM' : 'LOCAL_FALLBACK',
+      recommendedAction: actRes.translatedText ? 'LIVE_SARVAM' : 'LOCAL_FALLBACK',
+      fullSummary: chatRes.content || sumRes.translatedText ? 'LIVE_SARVAM' : 'LOCAL_FALLBACK',
+    };
+
+    const liveCount = Object.values(fieldStatuses).filter((s) => s === 'LIVE_SARVAM').length;
+    const totalCount = Object.keys(fieldStatuses).length;
+
+    if (liveCount > 0) {
+      const allSucceeded = liveCount === totalCount;
+      const overallStatus: SarvamRuntimeStatus = allSucceeded ? 'LIVE_SARVAM' : 'PARTIAL_SARVAM';
+      const overallMode = allSucceeded ? 'LIVE_SARVAM' : 'LOCAL_FALLBACK';
       const liveExp = buildGroundedMerchantExplanation(
         txn,
         language,
@@ -636,9 +826,13 @@ const handleMerchantExplanation = async (req: express.Request, res: express.Resp
             sumRes.translatedText ||
             baseExplanation.localizedExplanation.fullSummary,
         },
-        'LIVE_SARVAM',
-        'LIVE_SUCCESS'
+        overallMode,
+        overallStatus
       );
+      liveExp.sarvamMeta.fieldStatuses = fieldStatuses;
+      if (!allSucceeded) {
+        liveExp.sarvamMeta.mode = 'PARTIAL_SARVAM_API';
+      }
       res.json(liveExp);
       return;
     } else {
@@ -650,6 +844,7 @@ const handleMerchantExplanation = async (req: express.Request, res: express.Resp
         chatRes.status,
         chatRes.error || sumRes.error
       );
+      fallbackWithReason.sarvamMeta.fieldStatuses = fieldStatuses;
       res.json(fallbackWithReason);
       return;
     }
@@ -679,77 +874,65 @@ const handleCancellationExplanation = async (req: express.Request, res: express.
   if (isSarvamConfigured() && language !== 'en-IN') {
     const enPb = baseCancel.englishPlaybook;
     const translatedMap: Record<string, string> = {};
-    const tasks: Array<Promise<void>> = [];
+    const fieldStatuses: Record<string, 'LIVE_SARVAM' | 'LOCAL_FALLBACK'> = {};
+    const taskFactories: Array<() => Promise<void>> = [];
+
+    const registerFieldTask = (fieldKey: string, textToTranslate: string) => {
+      taskFactories.push(async () => {
+        const r = await callSarvamTranslateApi(textToTranslate, language);
+        if (r.translatedText) {
+          translatedMap[fieldKey] = r.translatedText;
+          fieldStatuses[fieldKey] = 'LIVE_SARVAM';
+        } else {
+          fieldStatuses[fieldKey] = 'LOCAL_FALLBACK';
+        }
+      });
+    };
 
     if (enPb.contractualWarning) {
-      tasks.push(
-        callSarvamTranslateApi(enPb.contractualWarning, language).then((r) => {
-          if (r.translatedText) translatedMap.contractualWarning = r.translatedText;
-        })
-      );
+      registerFieldTask('contractualWarning', enPb.contractualWarning);
     }
 
-    tasks.push(
-      callSarvamTranslateApi(enPb.layerATitle, language).then((r) => {
-        if (r.translatedText) translatedMap.layerATitle = r.translatedText;
-      }),
-      callSarvamTranslateApi(enPb.layerADescription, language).then((r) => {
-        if (r.translatedText) translatedMap.layerADescription = r.translatedText;
-      }),
-      callSarvamTranslateApi(enPb.layerBTitle, language).then((r) => {
-        if (r.translatedText) translatedMap.layerBTitle = r.translatedText;
-      }),
-      callSarvamTranslateApi(enPb.layerBDescription, language).then((r) => {
-        if (r.translatedText) translatedMap.layerBDescription = r.translatedText;
-      }),
-      callSarvamTranslateApi(enPb.confirmationExplanation, language).then((r) => {
-        if (r.translatedText) translatedMap.confirmationExplanation = r.translatedText;
-      }),
-      callSarvamTranslateApi(enPb.statusMessage, language).then((r) => {
-        if (r.translatedText) translatedMap.statusMessage = r.translatedText;
-      })
-    );
+    registerFieldTask('layerATitle', enPb.layerATitle);
+    registerFieldTask('layerADescription', enPb.layerADescription);
+    registerFieldTask('layerBTitle', enPb.layerBTitle);
+    registerFieldTask('layerBDescription', enPb.layerBDescription);
+    registerFieldTask('confirmationExplanation', enPb.confirmationExplanation);
+    registerFieldTask('statusMessage', enPb.statusMessage);
 
     enPb.layerASteps.forEach((step, idx) => {
-      tasks.push(
-        callSarvamTranslateApi(step.title, language).then((r) => {
-          if (r.translatedText) translatedMap[`layerA_title_${idx}`] = r.translatedText;
-        }),
-        callSarvamTranslateApi(step.instruction, language).then((r) => {
-          if (r.translatedText) translatedMap[`layerA_inst_${idx}`] = r.translatedText;
-        })
-      );
+      registerFieldTask(`layerA_title_${idx}`, step.title);
+      registerFieldTask(`layerA_inst_${idx}`, step.instruction);
     });
 
     enPb.layerBSteps.forEach((step, idx) => {
-      tasks.push(
-        callSarvamTranslateApi(step.title, language).then((r) => {
-          if (r.translatedText) translatedMap[`layerB_title_${idx}`] = r.translatedText;
-        }),
-        callSarvamTranslateApi(step.instruction, language).then((r) => {
-          if (r.translatedText) translatedMap[`layerB_inst_${idx}`] = r.translatedText;
-        })
-      );
+      registerFieldTask(`layerB_title_${idx}`, step.title);
+      registerFieldTask(`layerB_inst_${idx}`, step.instruction);
     });
 
     enPb.safetyAndEscalationNotes.forEach((note, idx) => {
-      tasks.push(
-        callSarvamTranslateApi(note, language).then((r) => {
-          if (r.translatedText) translatedMap[`escalation_${idx}`] = r.translatedText;
-        })
-      );
+      registerFieldTask(`escalation_${idx}`, note);
     });
 
-    await Promise.all(tasks);
+    await runWithConcurrencyLimit(taskFactories, 3);
 
-    if (Object.keys(translatedMap).length > 0) {
+    const liveCount = Object.values(fieldStatuses).filter((s) => s === 'LIVE_SARVAM').length;
+    const totalCount = Object.keys(fieldStatuses).length;
+
+    if (liveCount > 0) {
+      const allSucceeded = liveCount === totalCount;
+      const overallStatus: SarvamRuntimeStatus = allSucceeded ? 'LIVE_SARVAM' : 'PARTIAL_SARVAM';
       const liveCancel = buildGroundedCancellationExplanation(
         playbook,
         language,
         translatedMap,
-        'LIVE_SARVAM',
-        'LIVE_SUCCESS'
+        allSucceeded ? 'LIVE_SARVAM' : 'LOCAL_FALLBACK',
+        overallStatus
       );
+      liveCancel.sarvamMeta.fieldStatuses = fieldStatuses;
+      if (!allSucceeded) {
+        liveCancel.sarvamMeta.mode = 'PARTIAL_SARVAM_API';
+      }
       res.json(liveCancel);
       return;
     } else {
@@ -761,6 +944,7 @@ const handleCancellationExplanation = async (req: express.Request, res: express.
         sarvamLastRequestStatus,
         sarvamLastError || 'Sarvam translation failed'
       );
+      fallbackCancel.sarvamMeta.fieldStatuses = fieldStatuses;
       res.json(fallbackCancel);
       return;
     }
@@ -786,25 +970,40 @@ const handleFinancialAlertExplanation = async (req: express.Request, res: expres
 
   const baseAlert = buildGroundedAlertExplanation(alert, language);
   if (isSarvamConfigured() && language !== 'en-IN') {
-    const [titleRes, expRes, actRes] = await Promise.all([
-      callSarvamTranslateApi(alert.title, language),
-      callSarvamTranslateApi(alert.description, language),
-      callSarvamTranslateApi(alert.suggestedAction, language),
-    ]);
-    if (expRes.translatedText) {
-      res.json(
-        buildGroundedAlertExplanation(
-          alert,
-          language,
-          {
-            title: titleRes.translatedText || undefined,
-            explanation: expRes.translatedText,
-            action: actRes.translatedText || undefined,
-          },
-          'LIVE_SARVAM',
-          'LIVE_SUCCESS'
-        )
+    const [titleRes, expRes, actRes] = await runWithConcurrencyLimit(
+      [
+        () => callSarvamTranslateApi(alert.title, language),
+        () => callSarvamTranslateApi(alert.description, language),
+        () => callSarvamTranslateApi(alert.suggestedAction, language),
+      ],
+      3
+    );
+
+    const fieldStatuses: Record<string, 'LIVE_SARVAM' | 'LOCAL_FALLBACK'> = {
+      title: titleRes.translatedText ? 'LIVE_SARVAM' : 'LOCAL_FALLBACK',
+      explanation: expRes.translatedText ? 'LIVE_SARVAM' : 'LOCAL_FALLBACK',
+      action: actRes.translatedText ? 'LIVE_SARVAM' : 'LOCAL_FALLBACK',
+    };
+    const liveCount = Object.values(fieldStatuses).filter((s) => s === 'LIVE_SARVAM').length;
+
+    if (liveCount > 0) {
+      const allSucceeded = liveCount === 3;
+      const alertResp = buildGroundedAlertExplanation(
+        alert,
+        language,
+        {
+          title: titleRes.translatedText || undefined,
+          explanation: expRes.translatedText || undefined,
+          action: actRes.translatedText || undefined,
+        },
+        allSucceeded ? 'LIVE_SARVAM' : 'LOCAL_FALLBACK',
+        allSucceeded ? 'LIVE_SARVAM' : 'PARTIAL_SARVAM'
       );
+      alertResp.sarvamMeta.fieldStatuses = fieldStatuses;
+      if (!allSucceeded) {
+        alertResp.sarvamMeta.mode = 'PARTIAL_SARVAM_API';
+      }
+      res.json(alertResp);
       return;
     }
   }
@@ -813,6 +1012,73 @@ const handleFinancialAlertExplanation = async (req: express.Request, res: expres
 };
 app.post('/api/language/financial-alert', handleFinancialAlertExplanation);
 app.post('/api/sarvam/financial-alert', handleFinancialAlertExplanation);
+
+// Contextual Sarvam Bhasha Financial Q&A (Section 11 & 15)
+const handleContextualAsk = async (req: express.Request, res: express.Response) => {
+  const {
+    commitmentId = 'CMT-STREAMBOX',
+    question = 'Why did this recurring charge happen and how does it compare with my mandate and invoice?',
+    language = 'hi-IN',
+  } = (req.body || {}) as {
+    commitmentId?: string;
+    question?: string;
+    language?: LanguageCode;
+  };
+
+  const state = computeCurrentState();
+  const cmt =
+    state.commitments.find((c) => c.id === commitmentId) || state.commitments[0];
+  if (!cmt) {
+    res.status(404).json({ error: 'Commitment not found' });
+    return;
+  }
+
+  const mandate =
+    mandatesStore.find(
+      (m) => m.commitmentId === cmt.id || (cmt.mandateRef && m.mandateReference === cmt.mandateRef)
+    ) || null;
+  const serviceTerms = serviceTermsStore.find((s) => s.commitmentId === cmt.id) || null;
+  const reconciliation =
+    state.reconciliationFindings.find((r) => r.commitmentId === cmt.id) || null;
+  const session = state.sessions.find((s) => s.commitmentId === cmt.id) || null;
+
+  const baseResponse = buildGroundedContextualQuestionResponse({
+    commitment: cmt,
+    question,
+    language,
+    transactions: state.transactions,
+    mandate,
+    serviceTerms,
+    reconciliation,
+    session,
+  });
+
+  if (isSarvamConfigured() && language !== 'en-IN') {
+    const transRes = await callSarvamTranslateApi(baseResponse.englishAnswer, language);
+    if (transRes.translatedText) {
+      res.json(
+        buildGroundedContextualQuestionResponse({
+          commitment: cmt,
+          question,
+          language,
+          transactions: state.transactions,
+          mandate,
+          serviceTerms,
+          reconciliation,
+          session,
+          sarvamStatus: 'LIVE_SARVAM',
+          sarvamMode: 'LIVE_SARVAM_API',
+          liveLocalizedAnswer: transRes.translatedText,
+        })
+      );
+      return;
+    }
+  }
+
+  res.json(baseResponse);
+};
+app.post('/api/sarvam/ask', handleContextualAsk);
+app.post('/api/language/ask', handleContextualAsk);
 
 const handleTranslate = async (req: express.Request, res: express.Response) => {
   const { text, targetLanguage = 'hi-IN', model = 'sarvam-translate:v1' } = req.body as {
@@ -838,13 +1104,39 @@ const handleTranslate = async (req: express.Request, res: express.Response) => {
 app.post('/api/language/translate', handleTranslate);
 app.post('/api/sarvam/translate', handleTranslate);
 
+app.post('/api/sarvam/test', async (req, res) => {
+  const { language = 'hi-IN' } = (req.body || {}) as { language?: LanguageCode };
+  const probeText =
+    'Your bank statement shows RAZORPAY*STREAMBOX because Razorpay processed this ₹499 UPI AutoPay debit on behalf of StreamBox.';
+  const result = await callSarvamTranslateApi(probeText, language);
+  res.json({
+    configured: isSarvamConfigured(),
+    status: getEffectiveSarvamStatus(),
+    lastSuccessfulRequest: sarvamLastSuccessfulRequest,
+    lastError: sarvamLastError,
+    probeSource: probeText,
+    probeTranslated: result.translatedText,
+    chatModel: SARVAM_CHAT_MODEL,
+    translationModel: SARVAM_TRANSLATION_MODEL,
+  });
+});
+
+async function verifySarvamOnStartupAsync() {
+  if (!isSarvamConfigured()) return;
+  await callSarvamTranslateApi(
+    'DebitLens verified recurring payment for StreamBox.',
+    'hi-IN'
+  );
+}
+verifySarvamOnStartupAsync();
+
 // ============================================================================
 // REST API ENDPOINTS — CORE DEBITLENS DASHBOARD, COMMITMENTS, TRANSACTIONS
 // ============================================================================
 app.get('/api/dashboard/summary', (_req, res) => {
   const state = computeCurrentState();
   const activeCommitments = state.commitments.filter(
-    (c) => c.status !== 'CANCELLED_USER_CONFIRMED'
+    (c) => c.status !== 'CANCELLED_USER_CONFIRMED' && c.verificationStatus !== 'REJECTED'
   );
   const monthlyRecurringSpend = Number(
     activeCommitments.reduce((sum, c) => sum + c.monthlyEquivalent, 0).toFixed(2)
@@ -875,7 +1167,8 @@ app.get('/api/dashboard/summary', (_req, res) => {
       (c) =>
         c.status === 'NEEDS_REVIEW' ||
         c.status === 'RESUMED_REVIEW' ||
-        c.status === 'POST_CANCEL_ALERT'
+        c.status === 'POST_CANCEL_ALERT' ||
+        c.entityClass === 'RECURRING_CANDIDATE'
     ).length + unresolvedTxnsCount;
 
   res.json({
@@ -958,22 +1251,36 @@ app.get('/api/merchants', (_req, res) => {
   });
 });
 
-app.post('/api/merchants/:id/confirm', async (req, res) => {
-  const { rawDescription } = req.body as { rawDescription: string };
-  if (!rawDescription) {
-    res.status(400).json({ error: 'rawDescription is required' });
+const handleConfirmIdentityMatch = async (req: express.Request, res: express.Response) => {
+  const { rawDescription, merchantId } = req.body as {
+    rawDescription?: string;
+    merchantId?: string;
+  };
+  const targetMerchantId = merchantId || req.params.id;
+  if (!rawDescription || !targetMerchantId) {
+    res.status(400).json({ error: 'rawDescription and merchantId are required' });
     return;
   }
-  userMerchantOverrides[rawDescription] = req.params.id;
+  userMerchantOverrides[rawDescription] = targetMerchantId;
+  recordAuditEvent({
+    commitmentId: null,
+    eventType: 'IDENTITY_MATCH_CONFIRMED',
+    summary: `User confirmed descriptor "${rawDescription}" maps to merchant ${targetMerchantId}.`,
+    previousState: 'UNRESOLVED',
+    newState: targetMerchantId,
+  });
   savePersistentStore();
   const state = computeCurrentState();
   await syncStateToGraphAsync();
   res.json({
-    message: `Descriptor "${rawDescription}" confirmed for merchant ${req.params.id}.`,
+    message: `Descriptor "${rawDescription}" confirmed for merchant ${targetMerchantId}.`,
     transactions: state.transactions,
     commitments: state.commitments,
   });
-});
+};
+
+app.post('/api/merchants/:id/confirm', handleConfirmIdentityMatch);
+app.post('/api/identity-matches/:id/review', handleConfirmIdentityMatch);
 
 app.get('/api/commitments', (_req, res) => {
   const state = computeCurrentState();
@@ -990,12 +1297,111 @@ app.get('/api/commitments/:id', (req, res) => {
   const supportingTransactions = state.transactions.filter((t) => t.commitmentId === cmt.id);
   const playbook = state.playbooks.find((p) => p.commitmentId === cmt.id);
   const session = state.sessions.find((s) => s.commitmentId === cmt.id);
+  const mandate =
+    mandatesStore.find(
+      (m) => m.commitmentId === cmt.id || (cmt.mandateRef && m.mandateReference === cmt.mandateRef)
+    ) || null;
+  const serviceTerms = serviceTermsStore.find((s) => s.commitmentId === cmt.id) || null;
+  const reconciliation =
+    state.reconciliationFindings.find((r) => r.commitmentId === cmt.id) || null;
   res.json({
     commitment: cmt,
     supportingTransactions,
     playbook,
     session,
+    mandate,
+    serviceTerms,
+    reconciliation,
   });
+});
+
+// Section 3 & 15: Confirm RecurringCandidate -> Confirmed FinancialCommitment
+app.post('/api/commitments/:id/confirm', async (req, res) => {
+  const id = req.params.id;
+  const prev = userCommitmentOverrides[id]?.verificationStatus || 'PENDING_REVIEW';
+  userCommitmentOverrides[id] = {
+    ...(userCommitmentOverrides[id] || {}),
+    entityClass: 'FINANCIAL_COMMITMENT',
+    verificationStatus: 'USER_CONFIRMED',
+  };
+  recordAuditEvent({
+    commitmentId: id,
+    eventType: 'CANDIDATE_CONFIRMED',
+    summary: `User confirmed RecurringCandidate ${id} as a verified FinancialCommitment.`,
+    previousState: prev,
+    newState: 'USER_CONFIRMED',
+  });
+  savePersistentStore();
+  const state = computeCurrentState();
+  await syncStateToGraphAsync();
+  const updated = state.commitments.find((c) => c.id === id);
+  res.json(updated);
+});
+
+// Section 3 & 15: Reject RecurringCandidate
+app.post('/api/commitments/:id/reject', async (req, res) => {
+  const id = req.params.id;
+  const prev = userCommitmentOverrides[id]?.verificationStatus || 'PENDING_REVIEW';
+  userCommitmentOverrides[id] = {
+    ...(userCommitmentOverrides[id] || {}),
+    entityClass: 'RECURRING_CANDIDATE',
+    verificationStatus: 'REJECTED',
+  };
+  recordAuditEvent({
+    commitmentId: id,
+    eventType: 'CANDIDATE_REJECTED',
+    summary: `User rejected RecurringCandidate ${id} from confirmed commitments.`,
+    previousState: prev,
+    newState: 'REJECTED',
+  });
+  savePersistentStore();
+  const state = computeCurrentState();
+  await syncStateToGraphAsync();
+  const updated = state.commitments.find((c) => c.id === id);
+  res.json(updated);
+});
+
+// Section 15: Edit commitment fields (typicalAmount, expectedAmountMinor, recurrenceType, nextExpectedDate, lastUsedDate)
+app.patch('/api/commitments/:id', async (req, res) => {
+  const id = req.params.id;
+  const {
+    typicalAmount,
+    expectedAmountMinor,
+    recurrenceType,
+    nextExpectedDate,
+    lastUsedDate,
+  } = (req.body || {}) as {
+    typicalAmount?: number;
+    expectedAmountMinor?: number;
+    recurrenceType?: RecurrenceFrequency;
+    nextExpectedDate?: string | null;
+    lastUsedDate?: string | null;
+  };
+
+  const current = userCommitmentOverrides[id] || {};
+  userCommitmentOverrides[id] = {
+    ...current,
+    ...(typicalAmount !== undefined ? { typicalAmountOverride: Number(typicalAmount) } : {}),
+    ...(expectedAmountMinor !== undefined
+      ? { expectedAmountMinorOverride: Number(expectedAmountMinor) }
+      : {}),
+    ...(recurrenceType !== undefined ? { recurrenceTypeOverride: recurrenceType } : {}),
+    ...(nextExpectedDate !== undefined ? { nextExpectedDateOverride: nextExpectedDate } : {}),
+    ...(lastUsedDate !== undefined ? { lastUsedDate } : {}),
+  };
+
+  recordAuditEvent({
+    commitmentId: id,
+    eventType: 'CANDIDATE_CONFIRMED',
+    summary: `Updated commitment parameters for ${id}.`,
+    previousState: null,
+    newState: JSON.stringify(req.body),
+  });
+
+  savePersistentStore();
+  const state = computeCurrentState();
+  await syncStateToGraphAsync();
+  res.json(state.commitments.find((c) => c.id === id));
 });
 
 app.patch('/api/commitments/:id/usage', async (req, res) => {
@@ -1012,6 +1418,244 @@ app.patch('/api/commitments/:id/usage', async (req, res) => {
   res.json(updated);
 });
 
+// ============================================================================
+// REST API ENDPOINTS — MANDATES, SERVICE TERMS & THREE-WAY RECONCILIATION
+// ============================================================================
+app.get('/api/mandates', (_req, res) => {
+  res.json(mandatesStore);
+});
+
+app.post('/api/mandates/import', async (req, res) => {
+  const { mandates, mandate } = (req.body || {}) as {
+    mandates?: Partial<MandateRecord>[];
+    mandate?: Partial<MandateRecord>;
+  };
+  const incoming = Array.isArray(mandates) ? mandates : mandate ? [mandate] : [];
+  if (incoming.length === 0) {
+    res.status(400).json({ error: 'Provide mandate or mandates array to import.' });
+    return;
+  }
+
+  let added = 0;
+  for (const item of incoming) {
+    if (!item.mandateReference || !item.merchantName) continue;
+    const maxMinor =
+      item.maxAmountMinor !== undefined
+        ? Number(item.maxAmountMinor)
+        : toMinorUnits(Number(item.maxAmount || 500));
+    const newMandate: MandateRecord = {
+      id: item.id || `MND-${Date.now()}-${added}`,
+      mandateReference: item.mandateReference,
+      commitmentId: item.commitmentId ?? null,
+      merchantId: item.merchantId ?? null,
+      merchantName: item.merchantName,
+      paymentRail: (item.paymentRail as PaymentRailType) || 'UPI_AUTOPAY',
+      maxAmountMinor: maxMinor,
+      maxAmount: fromMinorUnits(maxMinor),
+      currency: item.currency || 'INR',
+      frequency: (item.frequency as RecurrenceFrequency) || 'MONTHLY',
+      startDate: item.startDate || '2026-06-01',
+      endDate: item.endDate ?? null,
+      mandateStatus: item.mandateStatus || 'ACTIVE',
+      sourceType: 'USER_IMPORTED',
+      updatedAt: new Date().toISOString(),
+    };
+    const existingIdx = mandatesStore.findIndex(
+      (m) =>
+        m.id === newMandate.id ||
+        (newMandate.commitmentId && m.commitmentId === newMandate.commitmentId)
+    );
+    if (existingIdx >= 0) {
+      mandatesStore[existingIdx] = newMandate;
+    } else {
+      mandatesStore.push(newMandate);
+    }
+    added++;
+  }
+
+  savePersistentStore();
+  const state = computeCurrentState();
+  await syncStateToGraphAsync();
+  res.json({
+    importedCount: added,
+    mandates: mandatesStore,
+    reconciliationFindings: state.reconciliationFindings,
+  });
+});
+
+app.get('/api/service-terms', (_req, res) => {
+  res.json(serviceTermsStore);
+});
+
+app.get('/api/commitments/:id/service-terms', (req, res) => {
+  const doc = serviceTermsStore.find((s) => s.commitmentId === req.params.id) || null;
+  res.json(doc);
+});
+
+const handleUpsertServiceDocument = async (req: express.Request, res: express.Response) => {
+  const {
+    commitmentId,
+    merchantName,
+    serviceName,
+    rawText,
+    expectedAmount,
+    expectedAmountMinor,
+    billingFrequency,
+    trialEndDate,
+    renewalDate,
+    cancellationNoticeDays,
+    userVerified = true,
+  } = (req.body || {}) as {
+    commitmentId: string;
+    merchantName?: string;
+    serviceName?: string;
+    rawText?: string;
+    expectedAmount?: number;
+    expectedAmountMinor?: number;
+    billingFrequency?: RecurrenceFrequency;
+    trialEndDate?: string | null;
+    renewalDate?: string | null;
+    cancellationNoticeDays?: number | null;
+    userVerified?: boolean;
+  };
+
+  if (!commitmentId) {
+    res.status(400).json({ error: 'commitmentId is required' });
+    return;
+  }
+
+  const stateBefore = computeCurrentState();
+  const targetCmt = stateBefore.commitments.find((c) => c.id === commitmentId);
+
+  let docRecord: ServiceTermsRecord;
+  if (rawText && rawText.trim().length > 0) {
+    docRecord = extractServiceTermsFromText({
+      commitmentId,
+      merchantName: merchantName || targetCmt?.merchantName,
+      serviceName: serviceName || targetCmt?.serviceName,
+      rawText,
+      documentSource: 'PASTED_INVOICE_TEXT',
+    });
+    if (expectedAmountMinor !== undefined || expectedAmount !== undefined) {
+      const minor =
+        expectedAmountMinor !== undefined
+          ? Number(expectedAmountMinor)
+          : toMinorUnits(Number(expectedAmount));
+      docRecord.expectedAmountMinor = minor;
+      docRecord.expectedAmount = fromMinorUnits(minor);
+    }
+    if (billingFrequency) {
+      docRecord.billingFrequency = billingFrequency;
+    }
+    docRecord.userVerified = Boolean(userVerified);
+  } else {
+    const minor =
+      expectedAmountMinor !== undefined
+        ? Number(expectedAmountMinor)
+        : toMinorUnits(Number(expectedAmount || targetCmt?.typicalAmount || 499));
+    docRecord = {
+      id: `DOC-${commitmentId}-${Date.now()}`,
+      commitmentId,
+      merchantName: merchantName || targetCmt?.merchantName || 'Merchant',
+      serviceName: serviceName || targetCmt?.serviceName || 'Service Plan',
+      expectedAmountMinor: minor,
+      expectedAmount: fromMinorUnits(minor),
+      currency: 'INR',
+      billingFrequency: billingFrequency || targetCmt?.recurrenceType || 'MONTHLY',
+      trialEndDate: trialEndDate ?? null,
+      renewalDate: renewalDate ?? null,
+      cancellationNoticeDays: cancellationNoticeDays ?? null,
+      documentSource: 'MANUAL_ENTRY',
+      rawDocumentText: `Manual Service Terms Entry for ${
+        serviceName || targetCmt?.serviceName
+      }: Expected billing INR ${fromMinorUnits(minor)} (${minor} paise) per ${
+        billingFrequency || 'MONTHLY'
+      }.`,
+      extractionConfidence: 100,
+      extractedFields: [
+        {
+          fieldName: 'expectedAmount',
+          extractedValue: `INR ${fromMinorUnits(minor)} (${minor} paise)`,
+          confidence: 100,
+          sourceSnippet: 'Manual structured input',
+          userVerified: true,
+        },
+      ],
+      userVerified: true,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  const existingIdx = serviceTermsStore.findIndex((s) => s.commitmentId === commitmentId);
+  if (existingIdx >= 0) {
+    serviceTermsStore[existingIdx] = docRecord;
+  } else {
+    serviceTermsStore.push(docRecord);
+  }
+
+  recordAuditEvent({
+    commitmentId,
+    eventType: 'SERVICE_TERMS_ATTACHED',
+    summary: `Attached service terms ${docRecord.id} for ${docRecord.serviceName} (Expected ₹${docRecord.expectedAmount}/${docRecord.billingFrequency}).`,
+    previousState: null,
+    newState: `expectedAmountMinor=${docRecord.expectedAmountMinor}`,
+  });
+
+  savePersistentStore();
+  const stateAfter = computeCurrentState();
+  await syncStateToGraphAsync();
+  const reconciliation = stateAfter.reconciliationFindings.find(
+    (r) => r.commitmentId === commitmentId
+  );
+
+  res.json({
+    serviceTerms: docRecord,
+    reconciliation,
+    allFindings: stateAfter.reconciliationFindings,
+  });
+};
+
+app.post('/api/service-documents', handleUpsertServiceDocument);
+app.post('/api/service-terms', handleUpsertServiceDocument);
+
+app.get('/api/reconciliation/findings', (_req, res) => {
+  const state = computeCurrentState();
+  res.json(state.reconciliationFindings);
+});
+
+app.get('/api/commitments/:id/reconciliation', (req, res) => {
+  const state = computeCurrentState();
+  const finding = state.reconciliationFindings.find((r) => r.commitmentId === req.params.id);
+  if (!finding) {
+    res.status(404).json({ error: 'Reconciliation finding not found for commitment' });
+    return;
+  }
+  res.json(finding);
+});
+
+app.post('/api/commitments/:id/reconcile', async (req, res) => {
+  const state = computeCurrentState();
+  const finding = state.reconciliationFindings.find((r) => r.commitmentId === req.params.id);
+  if (!finding) {
+    res.status(404).json({ error: 'Commitment not found for reconciliation' });
+    return;
+  }
+  recordAuditEvent({
+    commitmentId: req.params.id,
+    eventType: 'RECONCILIATION_EVALUATED',
+    summary: `Evaluated three-way reconciliation for ${req.params.id}: ${finding.status}`,
+    previousState: null,
+    newState: finding.status,
+    actor: 'SYSTEM_ENGINE',
+  });
+  savePersistentStore();
+  await syncStateToGraphAsync();
+  res.json(finding);
+});
+
+// ============================================================================
+// REST API ENDPOINTS — EVIDENCE CASEBOOK & AUDIT TIMELINE (Section 9 & 15)
+// ============================================================================
 app.get('/api/commitments/:id/evidence', (req, res) => {
   const state = computeCurrentState();
   const cmt = state.commitments.find((c) => c.id === req.params.id);
@@ -1019,14 +1663,112 @@ app.get('/api/commitments/:id/evidence', (req, res) => {
     res.status(404).json({ error: 'Commitment not found' });
     return;
   }
+  const mandate =
+    mandatesStore.find(
+      (m) => m.commitmentId === cmt.id || (cmt.mandateRef && m.mandateReference === cmt.mandateRef)
+    ) || null;
+  const serviceTerms = serviceTermsStore.find((s) => s.commitmentId === cmt.id) || null;
+  const reconciliation =
+    state.reconciliationFindings.find((r) => r.commitmentId === cmt.id) || null;
+  const session = state.sessions.find((s) => s.commitmentId === cmt.id) || null;
+
+  const casebook = buildCommitmentEvidenceCasebook({
+    commitment: cmt,
+    transactions: state.transactions,
+    mandate,
+    serviceTerms,
+    reconciliation,
+    alerts: state.alerts,
+    session,
+    customEntries: customCasebookEntries,
+    auditEvents: auditEventsStore,
+  });
+
   res.json({
     commitmentId: cmt.id,
     confidenceBreakdown: cmt.confidenceBreakdown,
     supportingTransactions: state.transactions.filter((t) => t.commitmentId === cmt.id),
     connectedDescriptors: cmt.connectedDescriptors,
+    entries: casebook.entries,
+    auditEvents: casebook.auditEvents,
   });
 });
 
+app.post('/api/commitments/:id/evidence', async (req, res) => {
+  const id = req.params.id;
+  const {
+    category = 'SERVICE_CANCELLATION_EVENT',
+    title,
+    description,
+    sourceReference,
+    amountMinor = null,
+  } = (req.body || {}) as {
+    category?: EvidenceCasebookEntry['category'];
+    title: string;
+    description: string;
+    sourceReference: string;
+    amountMinor?: number | null;
+  };
+
+  if (!title || !description || !sourceReference) {
+    res.status(400).json({ error: 'title, description, and sourceReference are required.' });
+    return;
+  }
+
+  const entry: EvidenceCasebookEntry = {
+    id: `CB-USER-${Date.now()}`,
+    commitmentId: id,
+    timestamp: new Date().toISOString(),
+    category,
+    title,
+    description,
+    sourceReference,
+    amountMinor,
+    verificationStatus: 'USER_CONFIRMED',
+    actor: 'USER_CASEBOOK_ATTACHMENT',
+  };
+  customCasebookEntries.push(entry);
+
+  recordAuditEvent({
+    commitmentId: id,
+    eventType: 'EVIDENCE_ATTACHED',
+    summary: `Attached evidence record "${title}" (Ref: ${sourceReference}).`,
+    previousState: null,
+    newState: sourceReference,
+  });
+
+  savePersistentStore();
+  await syncStateToGraphAsync();
+
+  const state = computeCurrentState();
+  const cmt = state.commitments.find((c) => c.id === id)!;
+  const mandate =
+    mandatesStore.find(
+      (m) => m.commitmentId === cmt.id || (cmt.mandateRef && m.mandateReference === cmt.mandateRef)
+    ) || null;
+  const serviceTerms = serviceTermsStore.find((s) => s.commitmentId === cmt.id) || null;
+  const reconciliation =
+    state.reconciliationFindings.find((r) => r.commitmentId === cmt.id) || null;
+  const session = state.sessions.find((s) => s.commitmentId === cmt.id) || null;
+
+  const casebook = buildCommitmentEvidenceCasebook({
+    commitment: cmt,
+    transactions: state.transactions,
+    mandate,
+    serviceTerms,
+    reconciliation,
+    alerts: state.alerts,
+    session,
+    customEntries: customCasebookEntries,
+    auditEvents: auditEventsStore,
+  });
+
+  res.json(casebook);
+});
+
+// ============================================================================
+// REST API ENDPOINTS — TWO INDEPENDENT CANCELLATION LIFECYCLES (Section 10 & 15)
+// ============================================================================
 app.get('/api/alerts', (_req, res) => {
   const state = computeCurrentState();
   res.json(state.alerts);
@@ -1057,6 +1799,199 @@ app.get('/api/cancellation/sessions', (_req, res) => {
   res.json({
     playbooks: state.playbooks,
     sessions: state.sessions,
+  });
+});
+
+app.post('/api/commitments/:id/cancellation', async (req, res) => {
+  const id = req.params.id;
+  const state = computeCurrentState();
+  const cmt = state.commitments.find((c) => c.id === id);
+  if (!cmt) {
+    res.status(404).json({ error: 'Commitment not found' });
+    return;
+  }
+  userCommitmentOverrides[id] = {
+    ...(userCommitmentOverrides[id] || {}),
+    serviceLifecycleStatus: 'CANCELLATION_REQUESTED',
+  };
+  recordAuditEvent({
+    commitmentId: id,
+    eventType: 'SERVICE_STATUS_UPDATED',
+    summary: `Initiated cancellation workflow for ${cmt.serviceName}.`,
+    previousState: cmt.serviceLifecycleStatus,
+    newState: 'CANCELLATION_REQUESTED',
+  });
+  savePersistentStore();
+  const updatedState = computeCurrentState();
+  await syncStateToGraphAsync();
+  res.json({
+    commitment: updatedState.commitments.find((c) => c.id === id),
+    session: updatedState.sessions.find((s) => s.commitmentId === id),
+    playbook: updatedState.playbooks.find((p) => p.commitmentId === id),
+  });
+});
+
+app.patch('/api/cancellations/:id/service-status', async (req, res) => {
+  const { serviceLifecycleStatus, referenceNumber, notes } = (req.body || {}) as {
+    serviceLifecycleStatus: ServiceLifecycleStatus;
+    referenceNumber?: string;
+    notes?: string;
+  };
+  const state = computeCurrentState();
+  const sess =
+    state.sessions.find((s) => s.id === req.params.id || s.commitmentId === req.params.id) || null;
+  if (!sess) {
+    res.status(404).json({ error: 'Cancellation session not found' });
+    return;
+  }
+  const cmtId = sess.commitmentId;
+  const prevCmt = state.commitments.find((c) => c.id === cmtId);
+
+  const currentOverride = userCommitmentOverrides[cmtId] || {};
+  const existingEvid = currentOverride.evidenceRecords ?? sess.evidence;
+  const updatedEvid = [...existingEvid];
+
+  if (referenceNumber) {
+    updatedEvid.push({
+      id: `EVID-SRV-${Date.now()}`,
+      cancellationSessionId: sess.id,
+      evidenceType:
+        serviceLifecycleStatus === 'MERCHANT_UNRESPONSIVE'
+          ? 'MERCHANT_UNRESPONSIVE'
+          : 'SERVICE_CONFIRMATION',
+      description: notes || `Service lifecycle updated to ${serviceLifecycleStatus}`,
+      referenceNumber,
+      evidenceDate: new Date().toISOString().slice(0, 10),
+      verificationStatus: 'EVIDENCE_ATTACHED',
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  userCommitmentOverrides[cmtId] = {
+    ...currentOverride,
+    serviceLifecycleStatus,
+    evidenceRecords: updatedEvid,
+  };
+
+  recordAuditEvent({
+    commitmentId: cmtId,
+    eventType: 'SERVICE_STATUS_UPDATED',
+    summary: `Updated Layer A Service Lifecycle Status to ${serviceLifecycleStatus}${
+      referenceNumber ? ` (Ref: ${referenceNumber})` : ''
+    }.`,
+    previousState: prevCmt?.serviceLifecycleStatus || 'ACTIVE',
+    newState: serviceLifecycleStatus,
+  });
+
+  savePersistentStore();
+  const updatedState = computeCurrentState();
+  await syncStateToGraphAsync();
+  res.json({
+    commitment: updatedState.commitments.find((c) => c.id === cmtId),
+    session: updatedState.sessions.find((s) => s.commitmentId === cmtId),
+  });
+});
+
+app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
+  const { mandateLifecycleStatus, referenceNumber, notes } = (req.body || {}) as {
+    mandateLifecycleStatus: MandateLifecycleStatus;
+    referenceNumber?: string;
+    notes?: string;
+  };
+  const state = computeCurrentState();
+  const sess =
+    state.sessions.find((s) => s.id === req.params.id || s.commitmentId === req.params.id) || null;
+  if (!sess) {
+    res.status(404).json({ error: 'Cancellation session not found' });
+    return;
+  }
+  const cmtId = sess.commitmentId;
+  const prevCmt = state.commitments.find((c) => c.id === cmtId);
+
+  const currentOverride = userCommitmentOverrides[cmtId] || {};
+  const existingEvid = currentOverride.evidenceRecords ?? sess.evidence;
+  const updatedEvid = [...existingEvid];
+
+  if (referenceNumber) {
+    updatedEvid.push({
+      id: `EVID-MND-${Date.now()}`,
+      cancellationSessionId: sess.id,
+      evidenceType: 'MANDATE_REVOCATION',
+      description: notes || `Mandate lifecycle updated to ${mandateLifecycleStatus}`,
+      referenceNumber,
+      evidenceDate: new Date().toISOString().slice(0, 10),
+      verificationStatus: 'EVIDENCE_ATTACHED',
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  userCommitmentOverrides[cmtId] = {
+    ...currentOverride,
+    mandateLifecycleStatus,
+    evidenceRecords: updatedEvid,
+  };
+
+  // Also sync status into mandatesStore if matching mandate exists
+  const mndIdx = mandatesStore.findIndex((m) => m.commitmentId === cmtId);
+  if (mndIdx >= 0) {
+    if (
+      mandateLifecycleStatus === 'REVOCATION_REPORTED_BY_USER' ||
+      mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED'
+    ) {
+      mandatesStore[mndIdx].mandateStatus = 'REVOCATION_REPORTED';
+    } else if (mandateLifecycleStatus === 'PAUSED_REPORTED_BY_USER') {
+      mandatesStore[mndIdx].mandateStatus = 'PAUSED';
+    } else if (mandateLifecycleStatus === 'ACTIVE') {
+      mandatesStore[mndIdx].mandateStatus = 'ACTIVE';
+    }
+  }
+
+  recordAuditEvent({
+    commitmentId: cmtId,
+    eventType: 'MANDATE_STATUS_UPDATED',
+    summary: `Updated Layer B Mandate Lifecycle Status to ${mandateLifecycleStatus}${
+      referenceNumber ? ` (Ref: ${referenceNumber})` : ''
+    }.`,
+    previousState: prevCmt?.mandateLifecycleStatus || 'ACTIVE',
+    newState: mandateLifecycleStatus,
+  });
+
+  savePersistentStore();
+  const updatedState = computeCurrentState();
+  await syncStateToGraphAsync();
+  res.json({
+    commitment: updatedState.commitments.find((c) => c.id === cmtId),
+    session: updatedState.sessions.find((s) => s.commitmentId === cmtId),
+  });
+});
+
+app.get('/api/cancellations/:id/monitoring', (req, res) => {
+  const state = computeCurrentState();
+  const sess =
+    state.sessions.find((s) => s.id === req.params.id || s.commitmentId === req.params.id) || null;
+  if (!sess) {
+    res.status(404).json({ error: 'Cancellation session not found' });
+    return;
+  }
+  const cmt = state.commitments.find((c) => c.id === sess.commitmentId);
+  const postCancelTxns = state.transactions.filter((t) =>
+    sess.postCancellationTransactionIds.includes(t.id)
+  );
+  res.json({
+    sessionId: sess.id,
+    commitmentId: sess.commitmentId,
+    serviceLifecycleStatus: cmt?.serviceLifecycleStatus || 'ACTIVE',
+    mandateLifecycleStatus: cmt?.mandateLifecycleStatus || 'ACTIVE',
+    serviceCancelledAt: sess.serviceCancelledAt,
+    paymentAuthorisationRevokedAt: sess.paymentAuthorisationRevokedAt,
+    postCancellationDebitDetected: postCancelTxns.length > 0,
+    postCancellationTransactions: postCancelTxns,
+    monitoringStatus:
+      postCancelTxns.length > 0
+        ? 'POST_CANCELLATION_DEBIT_DETECTED'
+        : sess.serviceCancelledAt && sess.paymentAuthorisationRevokedAt
+        ? 'MONITORING_ACTIVE_CLEAN'
+        : 'AWAITING_BOTH_LAYERS',
   });
 });
 
@@ -1124,6 +2059,13 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
     ...(userCommitmentOverrides[cmtId] || {}),
     evidenceRecords: [...existingEvidence, newEvid],
   };
+  recordAuditEvent({
+    commitmentId: cmtId,
+    eventType: 'EVIDENCE_ATTACHED',
+    summary: `Attached ${evidenceType} evidence (Ref: ${referenceNumber}).`,
+    previousState: null,
+    newState: referenceNumber,
+  });
   savePersistentStore();
   const updatedState = computeCurrentState();
   await syncStateToGraphAsync();
@@ -1134,8 +2076,78 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
 });
 
 // ============================================================================
-// IMPORT, DETECTION METRICS & DEMO ENDPOINTS
+// DATA COVERAGE, GUARDRAILS, IMPORT, METRICS & JUDGE DEMO SCENARIO (Section 12, 13, 22)
 // ============================================================================
+app.get('/api/import/coverage', (_req, res) => {
+  const state = computeCurrentState();
+  const coverage = buildDataCoverageSummary({
+    transactions: state.transactions,
+    commitments: state.commitments,
+    mandates: mandatesStore,
+    serviceTerms: serviceTermsStore,
+    notificationsCount: notificationEvents.length,
+  });
+  res.json(coverage);
+});
+
+app.get('/api/guardrails', (_req, res) => {
+  computeCurrentState();
+  res.json(guardrailsStore);
+});
+
+app.patch('/api/guardrails/:commitmentId', (req, res) => {
+  computeCurrentState();
+  const cmtId = req.params.commitmentId;
+  const {
+    maxExpectedAmountMinor,
+    alertOnAnyIncrease,
+    preDebitReminderDays,
+    requireTwoLayerCancellationConfirmation,
+  } = (req.body || {}) as Partial<FinancialGuardrailConfig>;
+
+  const idx = guardrailsStore.findIndex((g) => g.commitmentId === cmtId);
+  const existing: FinancialGuardrailConfig =
+    idx >= 0
+      ? guardrailsStore[idx]
+      : {
+          commitmentId: cmtId,
+          maxExpectedAmountMinor: 49900,
+          alertOnAnyIncrease: true,
+          preDebitReminderDays: 3,
+          requireTwoLayerCancellationConfirmation: true,
+          updatedAt: new Date().toISOString(),
+        };
+
+  const updated: FinancialGuardrailConfig = {
+    ...existing,
+    ...(maxExpectedAmountMinor !== undefined
+      ? { maxExpectedAmountMinor: Number(maxExpectedAmountMinor) }
+      : {}),
+    ...(alertOnAnyIncrease !== undefined
+      ? { alertOnAnyIncrease: Boolean(alertOnAnyIncrease) }
+      : {}),
+    ...(preDebitReminderDays !== undefined
+      ? { preDebitReminderDays: Number(preDebitReminderDays) }
+      : {}),
+    ...(requireTwoLayerCancellationConfirmation !== undefined
+      ? {
+          requireTwoLayerCancellationConfirmation: Boolean(
+            requireTwoLayerCancellationConfirmation
+          ),
+        }
+      : {}),
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (idx >= 0) {
+    guardrailsStore[idx] = updated;
+  } else {
+    guardrailsStore.push(updated);
+  }
+  savePersistentStore();
+  res.json(updated);
+});
+
 app.get('/api/import/history', (_req, res) => {
   res.json(importHistory);
 });
@@ -1145,7 +2157,7 @@ app.get('/api/import/template', (_req, res) => {
   res.send(
     [
       'transaction_id,transaction_date,raw_description,amount,currency,direction,payment_rail,account_alias,external_reference',
-      'TXN-DEMO-101,2026-10-28,"RZP*STREAMBOX, MUMBAI IN",299,INR,DEBIT,UPI_AUTOPAY,HDFC-XX4821,UMN-STREAMBOX-01',
+      'TXN-DEMO-101,2026-10-28,"RZP*STREAMBOX, MUMBAI IN",799,INR,DEBIT,UPI_AUTOPAY,HDFC-XX4821,UMN-STREAMBOX-9821@okaxis',
       'TXN-DEMO-102,2026-10-29,"SI-CLOUDVAULT ""PRO"" PLAN",219,INR,DEBIT,CARD_EMANDATE,ICICI-CC-9012,SIHUB-CLOUDVAULT-09',
     ].join('\n')
   );
@@ -1259,14 +2271,13 @@ app.post('/api/import/notifications', async (req, res) => {
       eventDate: String(item.eventDate),
       eventType: item.eventType || 'MANDATE_CREATED',
       merchantHint: String(item.merchantHint),
-      serviceHint: String(item.serviceHint || item.merchantHint),
       trialStartDate: item.trialStartDate ?? null,
       trialEndDate: item.trialEndDate ?? null,
       expectedAmount: Number(item.expectedAmount || 0),
       currency: String(item.currency || 'INR'),
-      paymentRail: item.paymentRail || 'UPI_AUTOPAY',
-      mandateRef: String(item.mandateRef || `MND-${item.id}`),
-      rawSummary: String(item.rawSummary || `${item.eventType} for ${item.merchantHint}`),
+      relatedCommitmentId: String(item.relatedCommitmentId || ''),
+      sourceType: String(item.sourceType || 'UPLOADED_JSON'),
+      description: String(item.description || item.rawSummary || `${item.eventType} for ${item.merchantHint}`),
     });
     added++;
   }
@@ -1279,7 +2290,7 @@ app.post('/api/import/notifications', async (req, res) => {
     acceptedRecords: added,
     rejectedRecords: rejected,
     duplicateRecords: duplicates,
-    importedAt: new Date().toISOString(),
+  importedAt: new Date().toISOString(),
   };
   importHistory.unshift(batchRecord);
   savePersistentStore();
@@ -1291,6 +2302,109 @@ app.post('/api/import/notifications', async (req, res) => {
     totalNotifications: notificationEvents.length,
     totalCommitments: state.commitments.length,
     totalAlerts: state.alerts.length,
+  });
+});
+
+// Section 22 Judge Demo Scenario: StreamBox ₹499 invoice vs ₹799 actual debit vs ₹999 UPI AutoPay mandate
+app.post('/api/demo/streambox-judge-scenario', async (_req, res) => {
+  // Update TXN-1004 (Sept) and TXN-1005 (Oct) to ₹799 so StreamBox has 3 debits of ₹499 (Jun-Aug) and 2 debits of ₹799 (Sep-Oct)
+  for (const row of rawCsvRows) {
+    if (row.transaction_id === 'TXN-1004' || row.transaction_id === 'TXN-1005') {
+      row.amount = '799';
+    }
+  }
+
+  // Ensure StreamBox service terms are ₹499 (49900 paise) and mandate max is ₹999 (99900 paise)
+  const sbTermsIdx = serviceTermsStore.findIndex((s) => s.commitmentId === 'CMT-STREAMBOX');
+  const sbTerms: ServiceTermsRecord = {
+    id: 'DOC-STREAMBOX-01',
+    commitmentId: 'CMT-STREAMBOX',
+    merchantName: 'StreamBox Media Pvt Ltd',
+    serviceName: 'StreamBox Ultra HD Plan',
+    expectedAmountMinor: 49900,
+    expectedAmount: 499,
+    currency: 'INR',
+    billingFrequency: 'MONTHLY',
+    trialEndDate: null,
+    renewalDate: '2026-11-10',
+    cancellationNoticeDays: 2,
+    documentSource: 'PASTED_INVOICE_TEXT',
+    rawDocumentText:
+      'INVOICE #SB-2026-0891 | StreamBox Media Pvt Ltd | Plan: StreamBox Ultra HD Monthly | Expected Cycle Charge: INR 499.00 (incl. GST) | Billing Cycle: Monthly on the 10th | Cancellation policy: Cancel at least 2 days before next billing date.',
+    extractionConfidence: 98,
+    extractedFields: [
+      {
+        fieldName: 'expectedAmount',
+        extractedValue: 'INR 499.00 (49900 paise)',
+        confidence: 98,
+        sourceSnippet: 'Expected Cycle Charge: INR 499.00 (incl. GST)',
+        userVerified: true,
+      },
+      {
+        fieldName: 'billingFrequency',
+        extractedValue: 'MONTHLY',
+        confidence: 98,
+        sourceSnippet: 'Billing Cycle: Monthly on the 10th',
+        userVerified: true,
+      },
+    ],
+    userVerified: true,
+    createdAt: new Date().toISOString(),
+  };
+  if (sbTermsIdx >= 0) serviceTermsStore[sbTermsIdx] = sbTerms;
+  else serviceTermsStore.push(sbTerms);
+
+  const sbMandateIdx = mandatesStore.findIndex((m) => m.commitmentId === 'CMT-STREAMBOX');
+  const sbMandate: MandateRecord = {
+    id: 'MND-STREAMBOX-01',
+    mandateReference: 'UMN-STREAMBOX-9821@okaxis',
+    commitmentId: 'CMT-STREAMBOX',
+    merchantId: 'MERCH-STREAMBOX',
+    merchantName: 'StreamBox Media Pvt Ltd',
+    paymentRail: 'UPI_AUTOPAY',
+    maxAmountMinor: 99900,
+    maxAmount: 999,
+    currency: 'INR',
+    frequency: 'MONTHLY',
+    startDate: '2026-06-10',
+    endDate: '2028-06-10',
+    mandateStatus: 'ACTIVE',
+    sourceType: 'DEMO_SEED',
+    updatedAt: new Date().toISOString(),
+  };
+  if (sbMandateIdx >= 0) mandatesStore[sbMandateIdx] = sbMandate;
+  else mandatesStore.push(sbMandate);
+
+  userCommitmentOverrides['CMT-STREAMBOX'] = {
+    ...(userCommitmentOverrides['CMT-STREAMBOX'] || {}),
+    entityClass: 'FINANCIAL_COMMITMENT',
+    verificationStatus: 'USER_CONFIRMED',
+    expectedAmountMinorOverride: 49900,
+    typicalAmountOverride: 499,
+  };
+
+  recordAuditEvent({
+    commitmentId: 'CMT-STREAMBOX',
+    eventType: 'RECONCILIATION_EVALUATED',
+    summary:
+      'Activated Section 22 Judge Demo Scenario: StreamBox expected invoice ₹499 vs actual debit ₹799 (+₹300 discrepancy) within ₹999 UPI AutoPay mandate ceiling.',
+    previousState: 'MATCHED',
+    newState: 'AMOUNT_DISCREPANCY',
+  });
+
+  savePersistentStore();
+  const state = computeCurrentState();
+  await syncStateToGraphAsync();
+
+  const finding = state.reconciliationFindings.find((r) => r.commitmentId === 'CMT-STREAMBOX');
+  const commitment = state.commitments.find((c) => c.id === 'CMT-STREAMBOX');
+
+  res.json({
+    message:
+      'Judge Demo Scenario loaded: StreamBox Media expected invoice ₹499.00 vs actual debit ₹799.00 (+₹300.00 discrepancy) within ₹999.00 UPI AutoPay mandate ceiling.',
+    commitment,
+    finding,
+    allFindings: state.reconciliationFindings,
   });
 });
 
@@ -1308,6 +2422,8 @@ app.post('/api/demo/simulate-post-cancel-debit', async (req, res) => {
     ...(userCommitmentOverrides[cmt.id] || {}),
     cancelledAtOverride: '2026-10-10',
     completedStepIds: pb.steps.map((s) => s.id),
+    serviceLifecycleStatus: 'CANCELLATION_EVIDENCE_ATTACHED',
+    mandateLifecycleStatus: 'REVOCATION_EVIDENCE_ATTACHED',
     evidenceRecords: [
       {
         id: `EVID-SIM-${Date.now()}`,
@@ -1316,7 +2432,7 @@ app.post('/api/demo/simulate-post-cancel-debit', async (req, res) => {
         description: `User recorded full Layer A service + Layer B mandate cancellation for ${cmt.serviceName}.`,
         referenceNumber: `CANC-REF-${cmt.id}-20261010`,
         evidenceDate: '2026-10-10',
-        verificationStatus: 'USER_REPORTED',
+        verificationStatus: 'EVIDENCE_ATTACHED',
         createdAt: '2026-10-10T10:00:00Z',
       },
     ],
@@ -1337,6 +2453,15 @@ app.post('/api/demo/simulate-post-cancel-debit', async (req, res) => {
     });
   }
 
+  recordAuditEvent({
+    commitmentId: cmt.id,
+    eventType: 'POST_CANCELLATION_DEBIT_DETECTED',
+    summary: `Simulated post-cancellation debit ${simTxnId} (₹${cmt.latestAmount} on 2026-10-29) after cancellation on 2026-10-10.`,
+    previousState: 'CANCELLED_USER_CONFIRMED',
+    newState: 'POST_CANCEL_ALERT',
+    actor: 'SYSTEM_ENGINE',
+  });
+
   savePersistentStore();
   const updatedState = computeCurrentState();
   await syncStateToGraphAsync();
@@ -1352,7 +2477,7 @@ app.post('/api/demo/reset', async (_req, res) => {
   const state = computeCurrentState();
   await syncStateToGraphAsync();
   res.json({
-    message: 'Synthetic dataset and cancellation sessions reset to initial benchmark state.',
+    message: 'Synthetic dataset, mandates, service terms, and sessions reset to initial benchmark state.',
     commitmentsCount: state.commitments.length,
     transactionsCount: state.transactions.length,
   });

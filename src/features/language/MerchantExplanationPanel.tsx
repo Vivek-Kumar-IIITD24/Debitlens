@@ -142,7 +142,12 @@ export const MerchantExplanationPanel: React.FC<MerchantExplanationPanelProps> =
                 englishText={explanation.englishSource.fullSummary}
                 localizedText={explanation.localizedExplanation.fullSummary}
                 languageLabel={explanation.languageName}
-                mode={explanation.sarvamMeta.mode}
+                mode={
+                  explanation.sarvamMeta.mode === 'LIVE_SARVAM' ||
+                  explanation.sarvamMeta.mode === 'LIVE_SARVAM_API'
+                    ? 'LIVE_SARVAM'
+                    : 'LOCAL_FALLBACK'
+                }
                 modelUsed={`${explanation.sarvamMeta.chatModel} / ${explanation.sarvamMeta.translationModel}`}
               />
             ) : (

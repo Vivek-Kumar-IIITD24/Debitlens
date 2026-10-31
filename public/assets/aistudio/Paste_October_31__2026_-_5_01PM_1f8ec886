@@ -1,0 +1,2882 @@
+# DEBITLENS — FINAL MASTER IMPLEMENTATION PROMPT
+## Transform the Existing Prototype into a Complete Financial Commitment Intelligence & Reconciliation Platform
+
+**Competition:** HackFront India — Fintech  
+**Official Problem Statement:** PS T4.1 — The Auto Debits Nobody Can Find  
+**Partner Track 1:** Neo4j AuraDB  
+**Partner Track 2:** Sarvam AI  
+**Project:** DebitLens  
+**Tagline:** Find it. Understand it. Reconcile it. Verify it.
+
+---
+
+# 0. YOUR ROLE AND FINAL OBJECTIVE
+
+Act as a complete senior software engineering and product development team comprising:
+
+- Senior Fintech Product Architect.
+- Software Architect.
+- Senior React and TypeScript Developer.
+- Senior Node.js and Express Developer.
+- Neo4j Database and Cypher Engineer.
+- Financial Data Engineer.
+- Transaction Intelligence Engineer.
+- Financial Reconciliation Specialist.
+- Sarvam AI Integration Engineer.
+- UI/UX Designer.
+- Security Engineer.
+- QA and Automation Engineer.
+- DevOps Engineer.
+- Technical Documentation Writer.
+
+Your responsibility is to take the existing DebitLens application and upgrade it into a complete, polished, functional and demonstrable financial commitment intelligence and reconciliation platform.
+
+**THIS IS A FINAL UPGRADE OF AN EXISTING APPLICATION. IT IS NOT A NEW PROJECT.**
+
+You must inspect the latest source code, preserve its working functionality, incorporate the additional requirements provided in this prompt, fix existing defects, integrate the technologies correctly, test every major workflow and prepare the final codebase for hackathon submission.
+
+You are not being asked to provide only recommendations or an implementation plan.
+
+You must actually implement the changes in the working project directory wherever filesystem access is available.
+
+Do not stop after producing a theoretical architecture.
+
+Do not ask me to manually explain features that are already described here.
+
+Use the current project, its existing implementation, available environment variables and sample data.
+
+Make sensible engineering decisions without unnecessary clarification.
+
+If an external credential or unavailable service blocks an operation, complete all remaining implementation work, report the exact blocker and provide the precise verification steps.
+
+---
+
+# 1. EXISTING PROJECT CONTEXT — READ THIS FIRST
+
+The existing application has gone through multiple development iterations.
+
+The latest version already contains substantial functionality.
+
+The current active architecture is primarily:
+
+| Layer | Existing technology |
+|---|---|
+| Frontend | React + TypeScript |
+| Build tool | Vite |
+| Backend | Node.js + Express + TypeScript |
+| Graph database | Neo4j AuraDB |
+| Graph driver | Official Neo4j JavaScript Driver |
+| AI | Sarvam AI |
+| Graph UI | `@xyflow/react` |
+| Charts | Recharts |
+| Icons | Lucide React |
+| Persistence | Local JSON persistent store and Neo4j graph synchronisation |
+| Testing | TypeScript Node test runner / tsx |
+
+The current architecture must be inspected rather than blindly recreated.
+
+## 1.1 Existing source files to inspect
+
+Pay special attention to:
+
+```text
+server.ts
+
+src/App.tsx
+
+src/engine/debitlensEngine.ts
+
+src/engine/debitlensEngine.test.ts
+
+src/engine/referenceData.ts
+
+src/services/neo4jPersistenceService.ts
+
+src/services/sarvamService.ts
+
+src/services/apiClient.ts
+
+src/components/graph/CommitmentGraph.tsx
+
+src/components/graph/GraphLegend.tsx
+
+src/components/graph/GraphNodeDetails.tsx
+
+src/components/graph/RelationshipDetails.tsx
+
+src/components/transactions/TransactionSearchHistory.tsx
+
+src/utils/searchHistory.ts
+
+src/utils/searchHistory.test.ts
+
+src/features/cancellation/
+
+src/features/imports/
+
+src/features/language/
+
+src/features/methodology/
+
+src/types/
+```
+
+Also inspect:
+
+```text
+data/synthetic-transactions.csv
+
+data/synthetic-notifications.json
+
+data/ground-truth.json
+
+docs/
+
+README.md
+
+package.json
+
+.env.example
+
+.gitignore
+
+vite.config.ts
+
+tsconfig.json
+```
+
+The previous development report claims:
+
+- Neo4j has 17 node labels and 18 relationship types.
+- Seven graph-query operations are supported.
+- Neo4j AuraDB has passed live connectivity tests.
+- Sarvam Chat Completion has returned a live response.
+- Sarvam translation has returned live Hindi text.
+- Cancellation translation supports both Layer A and Layer B.
+- 28 automated tests pass.
+- The frontend production build succeeds.
+
+Treat these as reported results, not permanent guarantees.
+
+Re-run the tests and verify all functionality against the current files.
+
+Do not trust hardcoded success messages or previous development reports.
+
+## 1.2 Preserve existing functionality
+
+Do not remove these features:
+
+- Dashboard.
+- Transaction Explorer.
+- Raw Statement Descriptor Search History.
+- Merchant Identity Resolver.
+- Recurring-payment detection.
+- Commitment Map.
+- Neo4j integration.
+- Sarvam Bhasha.
+- Smart Alerts.
+- Cancellation Centre.
+- Annual financial analytics.
+- Financial obligation warnings.
+- Import Studio.
+- CSV and JSON import.
+- Synthetic demo dataset.
+- Ground-truth evaluation.
+- Integration monitoring.
+- Methodology page.
+
+Improve and connect them.
+
+Do not replace the existing UI with a generic admin dashboard.
+
+## 1.3 Important architecture decision
+
+The existing active backend is Express + TypeScript.
+
+Continue using it as the single active application backend for this submission.
+
+Do not introduce an incomplete Spring Boot application alongside it.
+
+Your teammates proposed a canonical relational database combined with Neo4j graph projection.
+
+Adopt the underlying architectural principle:
+
+- Financial records must have one canonical source of truth.
+- Neo4j must represent relationships and graph intelligence.
+- Application logic must not be duplicated.
+- Graph data must be synchronised predictably.
+- Every finding must be traceable to source information.
+
+For the current hackathon implementation, preserve the existing durable JSON persistence mechanism as the canonical prototype record store and Neo4j as the graph relationship and query layer.
+
+Create a storage abstraction so that a future PostgreSQL migration is possible.
+
+Do not perform an unnecessary PostgreSQL or Java/Spring Boot migration during the final implementation.
+
+Document PostgreSQL as a future production architecture recommendation, not as an integration that currently exists.
+
+---
+
+# 2. UPDATED PRODUCT VISION
+
+## 2.1 Product name
+
+**DebitLens**
+
+## 2.2 Updated product category
+
+Financial Commitment Intelligence and Reconciliation Platform.
+
+## 2.3 Product positioning
+
+DebitLens is an evidence-backed financial intelligence platform that helps users understand, reconcile, monitor and manage their recurring financial commitments.
+
+It connects financial transactions, merchant identities, payment processors, underlying services, available payment authorisations, service terms and cancellation evidence.
+
+Instead of presenting recurring payments as an isolated list, DebitLens creates a unified view of the financial commitment behind each transaction.
+
+It helps users answer:
+
+1. Which actual merchant is receiving my money?
+2. Which service or financial obligation does this debit represent?
+3. Which of my transactions belong to the same commitment?
+4. Is this payment actually recurring or merely repeated discretionary spending?
+5. Does the actual debit match the expected price?
+6. Does the payment comply with the available authorisation information?
+7. Has the merchant increased the price or changed the billing frequency?
+8. Have I cancelled the underlying service?
+9. Has the associated payment authorisation also been revoked?
+10. Are there possible subsequent debits?
+11. What evidence supports each conclusion?
+12. Can I understand the result in my preferred Indian language?
+
+## 2.4 Central product principle
+
+**No financial conclusion should be stronger than the evidence and data coverage supporting it.**
+
+This principle must govern all algorithms, graph relationships, reconciliation findings, AI explanations, alerts and cancellation workflows.
+
+---
+
+# 3. THE NEW CORE CONCEPT — FINANCIAL COMMITMENT
+
+This is the most important addition to our original architecture.
+
+The earlier product was largely transaction-centred.
+
+The upgraded product must be commitment-centred.
+
+A Financial Commitment represents an underlying service, obligation or financial arrangement that can generate one or more financial transactions.
+
+Examples:
+
+- OTT subscription.
+- Music subscription.
+- Cloud storage subscription.
+- Software subscription.
+- Insurance premium.
+- Loan EMI.
+- Electricity bill.
+- Internet bill.
+- Membership.
+- Monthly service payment.
+- Instalment.
+- Variable recurring service.
+
+## 3.1 Introduce two separate concepts
+
+### A. RecurringCandidate
+
+This is a possible recurring payment pattern discovered from imported transactions.
+
+It has not necessarily been confirmed as a real subscription or contractual commitment.
+
+Example:
+
+Three payments from the same merchant at approximately monthly intervals.
+
+Expected state:
+
+`PENDING_REVIEW`
+
+### B. FinancialCommitment
+
+This represents a commitment that has been confirmed by sufficient evidence or explicit user confirmation.
+
+Examples of supporting evidence:
+
+- A verified merchant identity.
+- A user-confirmed service.
+- An imported invoice.
+- A service agreement.
+- An available mandate record.
+- A merchant confirmation.
+- User-provided payment details.
+
+Expected state:
+
+`CONFIRMED`
+
+The user must be able to:
+
+- Confirm a candidate.
+- Reject a candidate.
+- Correct its merchant identity.
+- Edit expected billing information.
+- Provide missing evidence.
+- Create a commitment manually.
+
+Do not automatically classify every recurring transaction pattern as a confirmed subscription.
+
+## 3.2 Commitment record structure
+
+At minimum, support:
+
+```text
+commitmentId
+
+userId
+
+merchantId
+
+serviceId
+
+displayName
+
+commitmentType
+
+category
+
+expectedAmountMinor
+
+currency
+
+expectedFrequency
+
+observedFrequency
+
+firstObservedDate
+
+lastPaymentDate
+
+nextExpectedDate
+
+paymentRail
+
+commitmentStatus
+
+verificationStatus
+
+identityConfidence
+
+recurrenceConfidence
+
+reconciliationStatus
+
+usageStatus
+
+evidenceReferences
+
+createdAt
+
+updatedAt
+```
+
+Store money in integer minor units.
+
+For INR:
+
+₹499 = 49900 paise.
+
+Use a single currency-aware formatting utility.
+
+Avoid floating-point financial calculations.
+
+---
+
+# 4. PRIORITY 0 — IMPROVE DATA INGESTION AND PROVENANCE
+
+Preserve the existing import system.
+
+Extend it to support the information needed for financial commitment reconciliation.
+
+## 4.1 Supported data sources
+
+Implement or preserve:
+
+1. Bank statement CSV.
+2. Synthetic bank statement.
+3. Payment notification JSON.
+4. Synthetic mandate records.
+5. User-entered service terms.
+6. Uploaded invoice or agreement.
+7. User-entered cancellation confirmation.
+8. Merchant confirmation information.
+
+Do not claim real bank or payment network access.
+
+Do not access actual SMS inboxes.
+
+Do not request bank credentials.
+
+Do not perform actual financial transactions.
+
+## 4.2 Transaction normalisation
+
+For every imported transaction, preserve:
+
+- Original raw descriptor.
+- Normalised descriptor.
+- Transaction date.
+- Transaction amount.
+- Currency.
+- Debit or credit direction.
+- Transaction status.
+- Payment mechanism.
+- Processor identity, when established.
+- Merchant identity, when established.
+- Import source.
+- Import batch.
+- External reference, if available.
+- Original source row reference.
+
+Never overwrite the original descriptor with a normalised descriptor.
+
+## 4.3 Import validation
+
+Implement:
+
+- File type validation.
+- File size validation.
+- CSV header mapping.
+- Quoted-field support.
+- Different date formats.
+- Invalid amount handling.
+- Missing required field handling.
+- Debit and credit distinction.
+- Refund and reversal treatment.
+- Duplicate transaction detection.
+- Import previews.
+- Detailed error reports.
+
+Preserve the existing RFC-4180 CSV parser if its tests pass.
+
+Do not replace it with an inferior manual comma-splitting implementation.
+
+## 4.4 Import idempotency
+
+Importing the same file twice must not accidentally duplicate transactions or commitments.
+
+Use stable source identifiers when available.
+
+When no stable identifier exists, use a documented composite matching strategy.
+
+Record import statistics:
+
+```text
+totalRecords
+
+acceptedRecords
+
+invalidRecords
+
+duplicateRecords
+
+manuallyReviewedRecords
+
+importedAt
+```
+
+## 4.5 Data source tracking
+
+Add a Data Coverage service.
+
+For each available source record:
+
+- Source name.
+- Source type.
+- Imported date range.
+- Last update.
+- Record count.
+- Import status.
+- Missing periods.
+- Validation errors.
+
+The application must never imply that it has searched every bank or every payment account when only one statement was uploaded.
+
+---
+
+# 5. PRIORITY 0 — IDENTITY INTELLIGENCE AND NEO4J
+
+Neo4j is a mandatory partner technology.
+
+It must perform actual graph operations that provide measurable value.
+
+Do not use it only to draw nodes and lines.
+
+## 5.1 Merchant and processor separation
+
+Maintain three independent concepts:
+
+**Merchant identity**
+
+The business actually providing the service.
+
+**Processor identity**
+
+The payment gateway or financial service processing the transaction.
+
+**Payment mechanism**
+
+The payment method, such as UPI, card, NACH or a standing instruction.
+
+Example:
+
+```text
+Raw descriptor:
+
+RAZORPAY*STREAMBOX
+
+Processor:
+
+Razorpay
+
+Merchant:
+
+StreamBox
+
+Service:
+
+StreamBox Premium
+
+Payment mechanism:
+
+UPI AutoPay
+```
+
+This is an illustrative synthetic mapping, not a universal rule.
+
+A descriptor containing only `RAZORPAY` must not automatically be assigned to StreamBox.
+
+Do not recreate the earlier generic mappings:
+
+```text
+UPI/DR/ → Razorpay
+
+SI- → BillDesk
+```
+
+These are unsafe assumptions.
+
+## 5.2 Matching hierarchy
+
+Implement:
+
+1. Exact verified merchant alias.
+2. Specific merchant descriptor.
+3. Verified processor-plus-merchant pattern.
+4. Known processor identification.
+5. Generic payment-mechanism identification.
+6. Candidate merchant suggestion.
+7. Unresolved identity.
+
+Every match must retain:
+
+- Match method.
+- Confidence score.
+- Evidence references.
+- Verification state.
+- Creation timestamp.
+- User review history.
+
+The user must be able to accept or reject uncertain identity suggestions.
+
+## 5.3 Neo4j graph model
+
+Inspect the existing 17 node labels and 18 relationship types.
+
+Preserve working schema elements.
+
+Extend only where necessary.
+
+The graph must support:
+
+```text
+User
+
+Account
+
+Transaction
+
+Descriptor
+
+Merchant
+
+PaymentProcessor
+
+Service
+
+FinancialCommitment
+
+RecurringCandidate
+
+Mandate
+
+PaymentRail
+
+Document
+
+Evidence
+
+ReconciliationFinding
+
+CancellationSession
+
+CancellationStep
+
+CancellationEvidence
+
+DetectionAlert
+
+ImportBatch
+```
+
+Use consistent node identity and relationship naming.
+
+Suggested relationships:
+
+```text
+USER_OWNS_ACCOUNT
+
+ACCOUNT_HAS_TRANSACTION
+
+IMPORT_BATCH_CONTAINS_TRANSACTION
+
+TRANSACTION_HAS_DESCRIPTOR
+
+DESCRIPTOR_RESOLVES_TO_MERCHANT
+
+TRANSACTION_PROCESSED_BY
+
+MERCHANT_OFFERS_SERVICE
+
+TRANSACTION_SUPPORTS_COMMITMENT
+
+COMMITMENT_FOR_SERVICE
+
+COMMITMENT_AUTHORISED_BY
+
+MANDATE_USES_RAIL
+
+COMMITMENT_HAS_EVIDENCE
+
+COMMITMENT_HAS_ALERT
+
+COMMITMENT_HAS_RECONCILIATION
+
+COMMITMENT_HAS_CANCELLATION_SESSION
+
+SESSION_HAS_STEP
+
+SESSION_HAS_EVIDENCE
+
+DOCUMENT_DESCRIBES_COMMITMENT
+```
+
+Adapt these relationship types to the actual current graph schema without unnecessary duplication.
+
+## 5.4 Graph integrity
+
+Every relationship must distinguish:
+
+- Confirmed.
+- Inferred.
+- User-confirmed.
+- Unresolved.
+
+Store confidence, evidence reference, matching rule and timestamp where relevant.
+
+Do not automatically create a confirmed merchant or mandate relationship from an uncertain descriptor.
+
+## 5.5 Real graph operations
+
+Retain the current Neo4j persistence service.
+
+Improve it to support actual graph intelligence queries:
+
+**Query 1 — Alias resolution**
+
+Retrieve all verified descriptors connected to a merchant.
+
+**Query 2 — Cross-source transaction history**
+
+Retrieve transactions connected to the same merchant across different imported sources and statement descriptions.
+
+**Query 3 — Commitment evidence**
+
+Retrieve every supporting transaction, mandate, document and evidence item related to a commitment.
+
+**Query 4 — Irregular recurrence investigation**
+
+Retrieve historical payment events and connected evidence so the deterministic JavaScript engine can analyse intervals and variation.
+
+**Query 5 — Resumed commitment detection**
+
+Find existing commitment histories that have new related transactions after a missed cycle.
+
+**Query 6 — Post-cancellation investigation**
+
+Traverse from a commitment to cancellation events and subsequently imported transactions.
+
+**Query 7 — Unresolved payment investigation**
+
+Identify processor-only transactions that have not been confidently assigned to an actual merchant.
+
+These operations must execute actual parameterised Cypher against AuraDB.
+
+Do not display a Cypher statement as executed when the database was not called.
+
+Do not combine locally generated explanation metadata with live query results and label the whole response as fully live.
+
+## 5.6 Graph seeding and graph coverage
+
+Persist the complete relevant synthetic demo dataset.
+
+Ensure that all three unresolved processor-only examples from the current test fixtures can be represented independently.
+
+Do not restrict unresolved examples to the first item using `.slice(0, 1)`.
+
+Define explicitly whether the Commitment Map is:
+
+- A full transaction graph.
+- A commitment-focused graph.
+- A selected merchant subgraph.
+
+For the final application, use a commitment-focused graph with expandable connected transaction histories.
+
+The graph must accurately represent the imported records relevant to the current view.
+
+## 5.7 Truthful Neo4j status
+
+Use explicit modes:
+
+```text
+LIVE_NEO4J
+
+LOCAL_PREVIEW
+
+NOT_CONFIGURED
+
+CONNECTION_FAILED
+
+EMPTY_LIVE_RESULT
+
+QUERY_FAILED
+```
+
+Only return `LIVE_NEO4J` for results retrieved successfully from the connected database.
+
+Verify constraints by querying the actual database schema, not merely by checking whether the driver is connected.
+
+Show actual database node and relationship counts.
+
+If a graph query fails, show which query failed and do not silently substitute local results.
+
+## 5.8 Graph UX
+
+Preserve the existing React Flow Commitment Map.
+
+Improve it to show:
+
+- Selected commitment.
+- Merchant.
+- Service.
+- Payment processor.
+- Supporting transactions.
+- Mandate.
+- Payment rail.
+- Reconciliation findings.
+- Cancellation records.
+- Evidence.
+
+Allow:
+
+- Node selection.
+- Relationship inspection.
+- Node expansion.
+- Merchant filtering.
+- Payment-rail filtering.
+- Confidence filtering.
+- Unresolved relationship filtering.
+- Evidence inspection.
+- Graph refresh.
+
+Avoid displaying too many unrelated nodes at once.
+
+The graph must be powered by actual Neo4j-returned data.
+
+---
+
+# 6. PRIORITY 0 — COMMITMENT DETECTION ENGINE
+
+Preserve the existing deterministic recurrence engine in:
+
+`src/engine/debitlensEngine.ts`
+
+Do not replace it with an LLM.
+
+Refactor it only where necessary to distinguish recurring candidates from confirmed financial commitments.
+
+## 6.1 Supported patterns
+
+- Weekly.
+- Fortnightly.
+- Monthly.
+- Quarterly.
+- Half-yearly.
+- Annual.
+- Irregular.
+- Variable amount.
+- Fixed amount.
+- Resumed after a gap.
+- Trial-to-paid, when evidence supports it.
+- Possible duplicate.
+
+## 6.2 False-positive prevention
+
+Repeated spending does not always indicate a financial commitment.
+
+Examples:
+
+- Coffee purchases.
+- Restaurant visits.
+- Grocery shopping.
+- Repeated merchant transactions without a subscription.
+- One-time purchases.
+
+The system must distinguish repeated consumer behaviour from a likely contractual or service commitment.
+
+## 6.3 Candidate output
+
+Every candidate should include:
+
+- Merchant or unresolved merchant.
+- Supporting transactions.
+- Suggested frequency.
+- Interval statistics.
+- Amount variation.
+- Detection explanation.
+- Confidence components.
+- Uncertainty.
+- Suggested category.
+- Evidence references.
+
+## 6.4 User confirmation
+
+Allow the user to:
+
+- Confirm candidate.
+- Reject candidate.
+- Edit frequency.
+- Edit expected amount.
+- Correct merchant.
+- Classify the commitment.
+- Add service information.
+
+Preserve candidate history when the user confirms it.
+
+Do not destroy the original detection result.
+
+## 6.5 Price-change detection
+
+Compare the latest amount with the previous baseline or user-confirmed expected amount.
+
+Example:
+
+Previous payment: ₹499.
+
+New payment: ₹799.
+
+Difference: ₹300.
+
+Percentage increase: approximately 60.12%.
+
+Label it as an observed amount increase.
+
+Do not automatically claim that the merchant silently increased the price until supporting service-term evidence exists.
+
+A tax adjustment, usage charge or changed plan may explain the difference.
+
+---
+
+# 7. PRIORITY 0 — NEW MODULE: FINANCIAL RECONCILIATION ENGINE
+
+This is the most important new feature from the team proposal.
+
+DebitLens must compare three separate forms of financial information.
+
+## 7.1 Three sources of truth
+
+**A. Actual financial transactions**
+
+What money was actually deducted from the imported statement?
+
+**B. Available payment authorisations**
+
+What mandate, standing instruction or authorisation information is available?
+
+**C. Expected service or contractual terms**
+
+What amount, frequency and renewal conditions are documented by the merchant, invoice or user-confirmed service agreement?
+
+These sources are related but are not interchangeable.
+
+## 7.2 Example reconciliation case
+
+Input:
+
+```text
+Merchant:
+
+StreamBox
+
+Invoice:
+
+Expected price = ₹499/month
+
+Imported mandate:
+
+Maximum amount = ₹999
+
+Actual transaction:
+
+₹799
+
+Previous transactions:
+
+₹499
+```
+
+Expected finding:
+
+```text
+Status:
+
+AMOUNT_DISCREPANCY
+
+Expected service price:
+
+₹499
+
+Actual debit:
+
+₹799
+
+Available mandate maximum:
+
+₹999
+
+Difference from expected:
+
+₹300
+
+Mandate-limit status:
+
+Within imported mandate maximum
+
+Explanation:
+
+The actual payment exceeds the price stated
+in the uploaded service invoice.
+
+The transaction remains within the supplied
+mandate maximum.
+
+The available evidence does not establish
+why the service amount changed.
+```
+
+IMPORTANT:
+
+A mandate maximum is not necessarily the merchant's expected subscription price.
+
+A transaction within the mandate limit can still differ from the documented service price.
+
+Do not conclude fraud merely from the discrepancy.
+
+## 7.3 Reconciliation outcomes
+
+Implement the following states:
+
+```text
+MATCHED
+
+AMOUNT_DISCREPANCY
+
+FREQUENCY_DISCREPANCY
+
+TRANSACTION_WITHOUT_VISIBLE_MANDATE
+
+MANDATE_WITHOUT_RECENT_TRANSACTION
+
+SERVICE_TERMS_UNAVAILABLE
+
+POSSIBLE_DUPLICATE
+
+CONFLICTING_EVIDENCE
+
+UNRESOLVED
+```
+
+## 7.4 Reconciliation logic
+
+For each confirmed financial commitment:
+
+1. Retrieve its actual transaction history.
+2. Retrieve available mandate information.
+3. Retrieve documented or user-confirmed service terms.
+4. Determine whether each source is available.
+5. Compare actual and expected amount.
+6. Compare observed and expected frequency.
+7. Compare transaction dates with billing dates.
+8. Examine the available mandate limit.
+9. Detect multiple overlapping records.
+10. Identify missing or conflicting evidence.
+11. Generate a structured reconciliation finding.
+12. Store the result.
+13. Expose supporting evidence to the UI.
+
+## 7.5 Reconciliation result schema
+
+```text
+findingId
+
+commitmentId
+
+status
+
+severity
+
+actualAmount
+
+expectedAmount
+
+mandateMaximum
+
+currency
+
+frequencyComparison
+
+supportingTransactionIds
+
+supportingMandateIds
+
+supportingDocumentIds
+
+evidenceReferences
+
+explanation
+
+missingInformation
+
+knownLimitations
+
+createdAt
+
+```
+
+Preserve historical reconciliation runs.
+
+Do not overwrite a previous finding when new evidence arrives.
+
+Create a new reconciliation run linked to the same commitment.
+
+---
+
+# 8. PRIORITY 0 — SERVICE TERMS AND DOCUMENT INTELLIGENCE
+
+Introduce a lightweight but functional Service and Document Intelligence module.
+
+Do not create a complex document-AI platform.
+
+## 8.1 Supported documents
+
+- Subscription invoice.
+- Renewal invoice.
+- Service agreement.
+- Membership confirmation.
+- Insurance schedule.
+- Payment confirmation.
+- Cancellation confirmation.
+
+## 8.2 Minimum viable implementation
+
+Support:
+
+1. Uploading a document.
+2. Validating its file type and size.
+3. Extracting text from text-based PDFs where feasible.
+4. Manual entry of important service terms.
+5. Showing extracted information for user review.
+6. Saving the confirmed terms.
+7. Linking the document to a Financial Commitment.
+
+If scanned PDF OCR cannot be reliably implemented within the existing project, provide a transparent manual-entry path.
+
+Do not fabricate extracted text.
+
+Do not claim OCR works when only PDF text extraction is implemented.
+
+## 8.3 Extract or capture these fields
+
+```text
+merchantName
+
+serviceName
+
+planName
+
+expectedAmountMinor
+
+currency
+
+billingFrequency
+
+renewalDate
+
+trialEndDate
+
+priceEffectiveDate
+
+cancellationTerms
+
+sourceDocument
+
+sourcePage
+
+verificationStatus
+```
+
+All extracted values must initially be marked as:
+
+`NEEDS_REVIEW`
+
+The user must be able to confirm or correct them.
+
+## 8.4 Evidence references
+
+For extracted information, save:
+
+- Document ID.
+- File name.
+- Source page.
+- Text reference.
+- Extraction timestamp.
+- User confirmation status.
+
+A financial reconciliation finding must be able to link back to the supporting document and source location.
+
+---
+
+# 9. PRIORITY 0 — EVIDENCE CASEBOOK AND AUDIT TIMELINE
+
+Introduce a new module:
+
+**DebitLens Evidence Casebook.**
+
+The objective is to make every important result understandable and traceable.
+
+## 9.1 Evidence categories
+
+- Imported transaction.
+- Merchant alias.
+- Processor identification.
+- Recurring detection result.
+- User-confirmed commitment.
+- Imported mandate.
+- Service document.
+- Invoice term.
+- Reconciliation result.
+- Cancellation request.
+- Merchant confirmation.
+- Mandate revocation confirmation.
+- Subsequent transaction.
+- User note.
+
+## 9.2 Evidence structure
+
+```text
+evidenceId
+
+commitmentId
+
+evidenceType
+
+sourceType
+
+sourceRecordId
+
+documentId
+
+sourcePage
+
+observationDate
+
+verificationStatus
+
+description
+
+contentHash
+
+createdAt
+```
+
+Use a content hash where appropriate for integrity checking, without storing unnecessary sensitive file content in the graph.
+
+## 9.3 Evidence UI
+
+Create an Evidence Casebook view linked to each commitment.
+
+A user must be able to answer:
+
+- Why was this merchant identified?
+- Which transactions support this commitment?
+- Which records prove the price?
+- Which mandate information was imported?
+- Why was this reconciliation finding produced?
+- What cancellation evidence was provided?
+- What transaction caused the post-cancellation alert?
+
+Evidence should be shown in chronological order.
+
+Preserve previous findings and user actions as an audit timeline.
+
+Do not silently delete historical evidence when a record is updated.
+
+---
+
+# 10. PRIORITY 0 — CANCELLATION AND FINANCIAL LIFECYCLE
+
+Preserve the existing Two-Layer Cancellation Centre.
+
+Extend it to support the larger commitment model.
+
+## 10.1 Two independent lifecycle states
+
+### Service lifecycle
+
+```text
+UNKNOWN
+
+ACTIVE
+
+CANCELLATION_REQUESTED
+
+CANCELLED
+
+CANCELLATION_REJECTED
+
+CANCELLATION_DISPUTED
+
+EXPIRED
+```
+
+### Payment authorisation lifecycle
+
+```text
+UNKNOWN
+
+ACTIVE
+
+PAUSED
+
+REVOCATION_REQUESTED
+
+REVOKED
+
+REVOCATION_FAILED
+
+EXPIRED
+```
+
+The two states must be stored independently.
+
+Cancelling a merchant service does not prove that its payment mandate was revoked.
+
+Revoking a payment mandate does not prove that the underlying service contract has ended.
+
+## 10.2 Cancellation records
+
+Maintain:
+
+- Commitment ID.
+- Merchant.
+- Service cancellation date.
+- Service cancellation confirmation.
+- Merchant reference.
+- Mandate revocation request date.
+- Mandate revocation confirmation date.
+- Payment mechanism.
+- Confirmation notes.
+- Evidence references.
+- Current lifecycle state.
+- Monitoring status.
+
+## 10.3 Post-cancellation monitoring
+
+When new transaction data arrives:
+
+1. Identify the merchant or commitment.
+2. Check whether service cancellation was recorded.
+3. Check whether mandate revocation was recorded.
+4. Compare transaction date with cancellation date.
+5. Consider delayed billing and settlement.
+6. Exclude refunds and reversals.
+7. Check for possible new or unrelated commitments.
+8. Create a review finding.
+9. Link the finding to transaction and cancellation evidence.
+
+Display:
+
+"Possible debit after recorded cancellation. Review the billing period and available confirmation evidence."
+
+Never automatically declare the debit fraudulent.
+
+## 10.4 Financial obligation safety
+
+Retain prominent warnings for:
+
+- Loans.
+- EMI.
+- Insurance.
+- Contractual instalments.
+
+Stopping automatic payment does not eliminate the financial obligation.
+
+The system must direct the user to the actual institution for contractual closure.
+
+---
+
+# 11. PRIORITY 1 — DATA COVERAGE AND UNCERTAINTY INTELLIGENCE
+
+Introduce a new module called:
+
+**Data Coverage & Financial Visibility.**
+
+This is important because the product must not pretend it has inspected information that was never uploaded.
+
+## 11.1 Data coverage examples
+
+```text
+Bank account statement:
+
+Imported through 30 October.
+
+Credit card:
+
+No data imported.
+
+UPI mandate records:
+
+Manually imported.
+
+Service invoices:
+
+2 documents uploaded.
+
+Additional bank accounts:
+
+Not available.
+```
+
+## 11.2 Required information
+
+Show:
+
+- Imported source names.
+- Source type.
+- Date range covered.
+- Last import date.
+- Number of records.
+- Import errors.
+- Available mandate records.
+- Available documents.
+- Missing data categories.
+- Last successful reconciliation.
+
+## 11.3 Language rules
+
+Use precise language.
+
+Say:
+
+"No matching mandate was found in the available imported records."
+
+Do not say:
+
+"No mandate exists."
+
+Say:
+
+"No matching debit was observed in the imported records after cancellation."
+
+Do not say:
+
+"The subscription has permanently stopped."
+
+Every conclusion must acknowledge its data limitations.
+
+---
+
+# 12. PRIORITY 1 — FINANCIAL GUARDRAILS AND ALERT MANAGEMENT
+
+Add user-configurable financial guardrails.
+
+Example:
+
+```text
+Commitment:
+
+StreamBox
+
+Expected monthly price:
+
+₹499
+
+Alert threshold:
+
+₹600
+
+Expected billing:
+
+Monthly
+
+Price change alerts:
+
+Enabled
+
+Duplicate payment alerts:
+
+Enabled
+
+Post-cancellation monitoring:
+
+Enabled
+```
+
+## Alert types
+
+### Action required
+
+- Possible post-cancellation debit.
+- Significant payment discrepancy.
+- Possible duplicate charge.
+- Conflicting financial evidence.
+
+### Review required
+
+- Price increase.
+- Billing frequency change.
+- Unknown merchant.
+- Missing mandate information.
+- Missing service terms.
+
+### Information
+
+- New recurring candidate.
+- Upcoming renewal.
+- Normal expected payment.
+
+Allow alert dismissal and review status.
+
+Do not call a payment fraudulent automatically.
+
+Do not claim that the guardrail can block a payment.
+
+Do not claim that DebitLens can revoke a real mandate.
+
+---
+
+# 13. PRIORITY 0 — UPGRADE SARVAM BHASHA
+
+Preserve the existing Sarvam integration.
+
+Evolve it from a merchant-explanation tool into a contextual financial explanation assistant.
+
+## 13.1 New capability
+
+The user should be able to ask:
+
+- Why was ₹799 deducted?
+- Which service does this payment belong to?
+- Why did the amount change?
+- Why is my commitment flagged as a discrepancy?
+- What is the difference between the invoice price and the mandate maximum?
+- Has service cancellation been recorded?
+- Has the payment authorisation been marked as revoked?
+- Which evidence supports this finding?
+- Was there a subsequent debit after cancellation?
+
+## 13.2 Grounded assistant workflow
+
+```text
+User question
+     |
+     v
+Identify relevant commitment
+     |
+     v
+Retrieve source transactions
+     |
+     v
+Retrieve mandate information
+     |
+     v
+Retrieve service terms
+     |
+     v
+Retrieve reconciliation findings
+     |
+     v
+Retrieve relevant evidence
+     |
+     v
+Build structured explanation context
+     |
+     v
+Sarvam AI
+     |
+     v
+Explanation in selected language
+     |
+     v
+Display evidence references
+```
+
+Sarvam must not be allowed to make independent financial decisions.
+
+## 13.3 Required safety guardrails
+
+Sarvam must never:
+
+- Invent merchant identities.
+- Invent transaction amounts.
+- Invent missing mandate records.
+- Declare that a mandate is valid without evidence.
+- Claim an invoice is authentic.
+- Declare transactions fraudulent.
+- Change financial records through chat.
+- Perform cancellation actions.
+- Treat missing data as proof of absence.
+
+All answers must cite relevant application record identifiers or evidence references.
+
+If evidence is insufficient, the assistant should say so.
+
+## 13.4 Translation requirements
+
+Preserve:
+
+- All existing supported and tested languages.
+- Full Layer A translation.
+- Full Layer B translation.
+- Financial warnings.
+- Reconciliation explanations.
+- Data-coverage explanations.
+- Alert descriptions.
+
+Use current official Sarvam model and API documentation.
+
+Keep API keys on the backend.
+
+Maintain field-level success and fallback statuses.
+
+Do not expose personal information or account identifiers to Sarvam unnecessarily.
+
+Do not label a partial translation as a fully successful translation.
+
+---
+
+# 14. UPDATED COMMITMENT DETAIL SCREEN
+
+This should become the most informative screen in the application.
+
+When a user opens a Financial Commitment, show the following sections.
+
+### A. Commitment overview
+
+- Merchant.
+- Service.
+- Commitment type.
+- Expected amount.
+- Expected billing frequency.
+- Current status.
+- Verification status.
+
+### B. Observed transaction history
+
+- Supporting transactions.
+- Dates.
+- Descriptors.
+- Actual amounts.
+- Processor.
+- Payment mechanism.
+
+### C. Payment authorisation
+
+- Imported mandate.
+- Maximum amount.
+- Billing limits.
+- Payment rail.
+- Mandate reference, appropriately masked.
+- Verification state.
+
+### D. Service terms
+
+- Uploaded invoice.
+- Expected price.
+- Billing interval.
+- Renewal date.
+- Cancellation conditions.
+- Verification status.
+
+### E. Reconciliation
+
+- Current reconciliation status.
+- Expected amount.
+- Actual amount.
+- Mandate maximum.
+- Financial difference.
+- Evidence.
+- Explanation.
+
+### F. Evidence Casebook
+
+A chronological list of every supporting source.
+
+### G. Lifecycle and cancellation
+
+- Service lifecycle.
+- Payment-authorisation lifecycle.
+- Confirmation records.
+- Subsequent payment monitoring.
+
+### H. Bhasha explanation
+
+An action to explain the entire commitment in the selected language.
+
+Do not overload the screen.
+
+Use clear sections, tabs or expandable evidence panels.
+
+---
+
+# 15. REQUIRED API AND BACKEND FUNCTIONALITY
+
+Inspect the current Express endpoints before making changes.
+
+Reuse existing endpoints wherever possible.
+
+Do not create duplicate endpoints unnecessarily.
+
+Required functional capabilities:
+
+## Transaction imports
+
+```text
+POST /api/import/transactions
+
+POST /api/import/notifications
+
+GET /api/import/history
+
+GET /api/import/coverage
+```
+
+## Commitment management
+
+```text
+GET /api/commitments
+
+GET /api/commitments/:id
+
+POST /api/commitments/:id/confirm
+
+PATCH /api/commitments/:id
+
+POST /api/commitments/:id/reject
+```
+
+## Merchant identity
+
+```text
+POST /api/identity-matches/:id/review
+
+GET /api/merchants/:id/relationships
+```
+
+## Mandates and service terms
+
+```text
+POST /api/mandates/import
+
+POST /api/service-documents
+
+POST /api/service-terms
+
+GET /api/commitments/:id/service-terms
+```
+
+## Reconciliation
+
+```text
+POST /api/commitments/:id/reconcile
+
+GET /api/commitments/:id/reconciliation
+
+GET /api/reconciliation/findings
+```
+
+## Evidence
+
+```text
+GET /api/commitments/:id/evidence
+
+POST /api/commitments/:id/evidence
+```
+
+## Cancellation
+
+```text
+POST /api/commitments/:id/cancellation
+
+PATCH /api/cancellations/:id/service-status
+
+PATCH /api/cancellations/:id/mandate-status
+
+GET /api/cancellations/:id/monitoring
+```
+
+## Neo4j
+
+Preserve existing graph endpoints.
+
+Ensure they execute actual Cypher queries and return actual Neo4j results.
+
+## Sarvam
+
+Preserve existing Sarvam and language endpoints.
+
+Add grounded explanation endpoints where necessary.
+
+## General rules
+
+- Validate requests.
+- Use central exception handling.
+- Return meaningful HTTP status codes.
+- Mask sensitive identifiers.
+- Never expose API keys.
+- Keep important financial decisions on the backend.
+- Persist state changes.
+- Maintain source provenance.
+
+---
+
+# 16. PERSISTENCE AND DATA ARCHITECTURE
+
+This is a prototype implementation, not a live banking platform.
+
+Preserve the existing persistent local data store and Neo4j integration.
+
+Establish clear separation between:
+
+### A. Canonical application records
+
+Financial transactions, commitments, user confirmations, mandates, service terms, evidence, findings and cancellation events.
+
+For the current hackathon version, use the existing persistent JSON store through a storage abstraction.
+
+Ensure atomic writes or safe write replacement.
+
+Ensure data survives restart.
+
+### B. Neo4j graph projection
+
+Graph nodes and relationships representing the canonical record relationships.
+
+Ensure graph projection is idempotent.
+
+When a canonical record changes:
+
+1. Update the canonical record.
+2. Synchronise the graph.
+3. Record success or failure.
+4. Support a retry or rebuild operation.
+5. Never falsely report synchronisation success.
+
+Keep the architecture ready for a future PostgreSQL canonical store.
+
+Do not introduce a mandatory PostgreSQL server or an additional Java runtime for this submission.
+
+### C. Audit events
+
+Important actions must be recorded:
+
+- Import.
+- Merchant correction.
+- Commitment confirmation.
+- Reconciliation.
+- Cancellation request.
+- Service cancellation confirmation.
+- Mandate revocation confirmation.
+- Post-cancellation finding.
+- User review.
+
+Do not silently overwrite historical financial findings.
+
+---
+
+# 17. SYNTHETIC DATA AND EVALUATION
+
+Preserve the existing dataset and its existing ground truth.
+
+Expand it to support the new reconciliation capabilities.
+
+## Required new sample records
+
+### Example 1 — Matching commitment
+
+Expected service price: ₹499.
+
+Actual debit: ₹499.
+
+Mandate maximum: ₹999.
+
+Expected status:
+
+MATCHED.
+
+### Example 2 — Amount discrepancy
+
+Expected service price: ₹499.
+
+Actual debit: ₹799.
+
+Mandate maximum: ₹999.
+
+Expected status:
+
+AMOUNT_DISCREPANCY.
+
+### Example 3 — Transaction without visible mandate
+
+Actual debit exists.
+
+No matching mandate in imported records.
+
+Expected status:
+
+TRANSACTION_WITHOUT_VISIBLE_MANDATE.
+
+### Example 4 — Mandate without recent transaction
+
+An imported mandate exists.
+
+No matching debit during the available statement period.
+
+Expected status:
+
+MANDATE_WITHOUT_RECENT_TRANSACTION.
+
+Do not assume the service has been cancelled.
+
+### Example 5 — Missing service terms
+
+Actual recurring debits exist.
+
+No invoice or contract information is available.
+
+Expected status:
+
+SERVICE_TERMS_UNAVAILABLE.
+
+### Example 6 — Possible duplicate
+
+Two apparently overlapping debits exist.
+
+Expected status:
+
+POSSIBLE_DUPLICATE.
+
+### Example 7 — Cancellation verification
+
+Service cancelled.
+
+Mandate still marked active.
+
+Expected behaviour:
+
+Display separate lifecycle statuses and suggest the relevant next step.
+
+### Example 8 — Post-cancellation debit
+
+A later transaction is imported.
+
+Expected status:
+
+Possible debit after recorded cancellation.
+
+Link the finding to all relevant evidence.
+
+## Dataset expansion
+
+Preserve the existing 45 transactions.
+
+Target at least 200 labelled synthetic transaction and commitment examples if achievable without destabilising the application.
+
+Add:
+
+- Habitual-spending examples.
+- Ambiguous merchants.
+- Multiple processors.
+- Unmatched mandates.
+- Variable payments.
+- Conflicting invoices.
+- Refunded transactions.
+- Reversals.
+- Annual subscriptions.
+- Financial obligations.
+- Post-cancellation activity.
+
+Use ground truth exclusively for evaluation.
+
+Never use ground-truth labels to generate production detection decisions.
+
+## Evaluation
+
+Calculate:
+
+- Merchant matching precision.
+- Merchant matching coverage.
+- Processor separation accuracy.
+- Recurring detection precision and recall.
+- Commitment confirmation results.
+- Reconciliation accuracy.
+- False positive rate.
+- Possible duplicate precision.
+- Post-cancellation alert precision.
+- Evidence completeness.
+
+Compare with simple keyword and date/amount baselines where feasible.
+
+Do not claim that DebitLens outperforms commercial platforms without a fair comparative study.
+
+Clearly label all measurements as synthetic-dataset results.
+
+---
+
+# 18. FINAL UI STRUCTURE
+
+Retain the current branding and interface.
+
+Extend the existing navigation to support these logical areas:
+
+1. Overview.
+2. Transactions Explorer.
+3. Merchant Identity Resolver.
+4. Commitments.
+5. Commitment Map.
+6. Reconciliation Centre.
+7. Evidence Casebook.
+8. Cancellation Centre.
+9. Smart Alerts.
+10. Financial Insights.
+11. Data Coverage.
+12. DebitLens Bhasha.
+13. Methodology.
+14. Settings.
+
+If the sidebar becomes too long, group related sections.
+
+Prioritise the following visual experience:
+
+**Overview**
+
+Financial commitments, important alerts and reconciliation summary.
+
+**Transactions Explorer**
+
+Raw descriptors, search history, transaction detail and merchant identification.
+
+**Commitments**
+
+Recurring candidates and confirmed financial commitments.
+
+**Commitment Map**
+
+Actual Neo4j graph relationships.
+
+**Reconciliation Centre**
+
+Amount, frequency, mandate and service-term discrepancies.
+
+**Evidence Casebook**
+
+Source-backed timeline of important findings.
+
+**Cancellation Centre**
+
+Independent service and payment-authorisation lifecycles.
+
+**Data Coverage**
+
+What information is available and what remains missing.
+
+**Bhasha**
+
+Natural-language explanations grounded in real application records.
+
+Use responsive layouts.
+
+Use consistent status labels.
+
+Distinguish:
+
+- Verified.
+- User confirmed.
+- Inferred.
+- Needs review.
+- Missing information.
+- Not available.
+
+Do not use misleading success badges.
+
+---
+
+# 19. SECURITY, PRIVACY AND FINANCIAL SAFETY
+
+This application deals with financial information.
+
+Even though the hackathon uses synthetic data, design the product responsibly.
+
+Mandatory requirements:
+
+1. Never request banking passwords.
+2. Never request UPI PINs.
+3. Never collect payment credentials.
+4. Never execute real payments.
+5. Never revoke real mandates.
+6. Never claim live bank integration without authorisation.
+7. Never expose account numbers in logs.
+8. Never send unnecessary personal information to Sarvam.
+9. Never store API keys in frontend code.
+10. Never include `.env` in the GitHub repository or source ZIP.
+11. Never infer a confirmed commitment from weak evidence.
+12. Never classify every recurring debit as a subscription.
+13. Never label a normal amount discrepancy as fraud.
+14. Never claim a mandate does not exist merely because it was absent from imported records.
+15. Never conflate a payment processor with the actual merchant.
+
+Use synthetic financial data during the demonstration.
+
+Clearly identify synthetic records.
+
+Maintain clear limitations.
+
+---
+
+# 20. FIX THE CURRENT PROJECT'S KNOWN ENGINEERING ISSUES
+
+Before adding major capabilities, correct the following known issues in the latest source.
+
+## A. Environment configuration
+
+The existing `.env.example` uses placeholder strings such as:
+
+```text
+<PASTE_YOUR_AURA_URI_HERE>
+
+<PASTE_YOUR_SARVAM_API_KEY_HERE>
+```
+
+Ensure configuration validation rejects all unreplaced placeholder strings.
+
+An empty or placeholder value must never be treated as a valid credential.
+
+Preserve real credentials only in the local environment.
+
+## B. Neo4j status consistency
+
+Fix cases where local graph data or failed graph queries can be labelled `LIVE_NEO4J`.
+
+Use truthful execution modes.
+
+Calculate graph counts and constraint status from actual database queries.
+
+Report each graph-query failure separately.
+
+## C. Unresolved transactions
+
+Fix the local-only unresolved transaction endpoint.
+
+Make the production path execute the intended Cypher query against Neo4j.
+
+Ensure all unresolved synthetic records are represented.
+
+## D. Sarvam field-level success
+
+Track the translation status of every field.
+
+Do not label a partially translated cancellation playbook as fully live.
+
+Do not call untranslated English pass-through content a successful translation.
+
+Add appropriate concurrency limiting and timeout handling.
+
+## E. Test scripts
+
+The current `package.json` has no convenient test command.
+
+Add:
+
+```json
+{
+  "scripts": {
+    "dev": "tsx server.ts",
+    "test": "tsx --test src/utils/searchHistory.test.ts src/engine/debitlensEngine.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build"
+  }
+}
+```
+
+Adapt the exact scripts to the installed versions.
+
+Review the existing production startup command.
+
+Ensure it works with the actual TypeScript runtime or a proper compiled JavaScript output.
+
+Do not claim successful production startup merely because Vite built.
+
+## F. Documentation
+
+The existing README still refers to the earlier 22-test result.
+
+Update it to accurately reflect the current search-history tests and all newly added tests.
+
+Update every documentation file that describes the old product architecture.
+
+Do not claim that features are complete when their implementation is only partial.
+
+## G. Unused files
+
+Identify and exclude unused AI Studio paste artifacts and old attachments from the final release ZIP.
+
+Do not delete any asset that is actually referenced by the application.
+
+---
+
+# 21. TESTING AND ACCEPTANCE REQUIREMENTS
+
+Retain all existing tests.
+
+At the beginning:
+
+1. Run the current 28 tests.
+2. Record their results.
+3. Preserve them as regression tests.
+4. Add tests for each new module.
+
+## Required testing groups
+
+### Transaction ingestion
+
+- Valid CSV.
+- Invalid CSV.
+- Quoted descriptors.
+- Duplicate records.
+- Refunds.
+- Reversals.
+- Incorrect currency.
+- Date normalisation.
+
+### Identity
+
+- Exact merchant aliases.
+- Same processor, different merchants.
+- Unknown merchant.
+- User-confirmed mapping.
+- Rejected match.
+- Ambiguous descriptor.
+
+### Commitment detection
+
+- Monthly.
+- Quarterly.
+- Annual.
+- Irregular.
+- Variable amount.
+- Habitual spending.
+- Resumed payment.
+- Trial conversion.
+- One-time purchase.
+
+### Reconciliation
+
+- Fully matched sources.
+- Amount discrepancy.
+- Mandate maximum comparison.
+- Missing mandate.
+- Missing service terms.
+- Frequency discrepancy.
+- Conflicting invoices.
+- Possible duplicate.
+- Insufficient data coverage.
+
+### Evidence
+
+- Supporting transaction.
+- Supporting invoice.
+- Supporting mandate.
+- Merchant review.
+- Cancellation confirmation.
+- Historical reconciliation retention.
+- Evidence timeline.
+
+### Cancellation
+
+- Service cancellation only.
+- Mandate revocation only.
+- Both recorded.
+- Rejected cancellation.
+- Subsequent debit.
+- Refund after cancellation.
+- Delayed settlement.
+
+### Sarvam
+
+- English explanation.
+- Hindi explanation.
+- Unknown merchant.
+- Amount discrepancy explanation.
+- Missing mandate explanation.
+- Complete cancellation translation.
+- Privacy masking.
+- Partial API failure.
+- Timeout.
+- Rate limit.
+
+### Neo4j
+
+- Graph seed.
+- Idempotent graph rebuild.
+- Merchant relationship query.
+- Commitment evidence query.
+- Unresolved descriptor query.
+- Reconciliation relationship query.
+- Cancellation traversal.
+- Graph counts.
+- Constraint verification.
+- Connection failure.
+- Empty live result.
+
+### Browser testing
+
+Verify:
+
+- All navigation works.
+- Every core form works.
+- Search history works.
+- CSV import works.
+- JSON import works.
+- Reconciliation actions work.
+- Graph node selection works.
+- Bhasha explanations work.
+- Evidence panels work.
+- Cancellation progress works.
+- Data survives restart.
+- No browser console errors.
+- No primary button is decorative or inert.
+
+---
+
+# 22. EXACT END-TO-END JUDGE DEMONSTRATION
+
+The application must demonstrate a complete, connected financial commitment workflow.
+
+Use this synthetic case.
+
+## Initial transactions
+
+```text
+15 July
+
+RZP*STREAMBOX
+
+₹499
+
+15 August
+
+STREAMBOX*BILL
+
+₹499
+
+15 September
+
+RAZORPAY*STREAMBOX
+
+₹799
+
+15 October
+
+RZP*STREAMBOX
+
+₹799
+```
+
+Additional transaction:
+
+```text
+RAZORPAY*99812-MUM
+```
+
+Do not automatically assign the last transaction to StreamBox.
+
+## Step 1 — Import
+
+The user imports the synthetic CSV statement.
+
+The application shows:
+
+- Accepted records.
+- Invalid records.
+- Duplicate records.
+- Import period.
+- Available sources.
+
+## Step 2 — Identity
+
+The identity resolver connects supported StreamBox aliases.
+
+It distinguishes Razorpay as the processor.
+
+It leaves the unsupported merchant descriptor unresolved.
+
+## Step 3 — Candidate detection
+
+The deterministic engine discovers the recurring payment candidate.
+
+The system explains the date intervals, amount changes and supporting transactions.
+
+## Step 4 — Commitment confirmation
+
+The user confirms the StreamBox subscription as a Financial Commitment.
+
+The application records the confirmation.
+
+## Step 5 — Service term import
+
+The user uploads or enters a service invoice.
+
+Expected price:
+
+₹499/month.
+
+The extracted information is shown for review.
+
+The user confirms it.
+
+## Step 6 — Mandate information
+
+The user imports a synthetic mandate:
+
+Maximum amount: ₹999.
+
+Payment rail: UPI AutoPay.
+
+Clearly mark it as synthetic or manually imported.
+
+## Step 7 — Financial reconciliation
+
+DebitLens discovers:
+
+- Expected service price: ₹499.
+- Actual latest debit: ₹799.
+- Mandate maximum: ₹999.
+
+It creates an amount discrepancy finding.
+
+It explains that the debit is within the imported mandate maximum but exceeds the documented subscription price.
+
+It does not declare fraud.
+
+## Step 8 — Neo4j inspection
+
+The user opens the Commitment Map.
+
+The graph displays:
+
+- Actual transactions.
+- Descriptor relationships.
+- Processor.
+- Merchant.
+- Service.
+- Commitment.
+- Mandate.
+- Service document.
+- Reconciliation finding.
+
+The judge can inspect real Neo4j records.
+
+## Step 9 — Sarvam explanation
+
+The user asks:
+
+"Why did StreamBox deduct ₹799?"
+
+Sarvam retrieves the evidence-backed reconciliation context and explains the discrepancy in Hindi.
+
+## Step 10 — Cancellation
+
+The user records:
+
+- Service cancellation requested.
+- Service cancellation confirmation.
+- Payment authorisation revocation requested.
+- Payment authorisation revocation confirmation.
+
+All states remain independent.
+
+## Step 11 — Evidence Casebook
+
+The user opens the commitment timeline and sees:
+
+- Original transactions.
+- Invoice.
+- Mandate information.
+- Reconciliation finding.
+- Service cancellation evidence.
+- Payment authorisation evidence.
+
+## Step 12 — Post-cancellation monitoring
+
+A subsequent matching synthetic debit is imported.
+
+DebitLens creates a possible post-cancellation finding.
+
+The user can inspect the evidence and record an investigation outcome.
+
+**The entire workflow must work inside the existing application.**
+
+---
+
+# 23. FINAL IMPLEMENTATION PRIORITIES
+
+Do not try to build everything in an uncontrolled manner.
+
+Implement in the following order.
+
+## P0 — Submission-critical product completion
+
+1. Audit and preserve the current project.
+2. Fix environment configuration.
+3. Fix misleading graph statuses.
+4. Fix actual graph-query execution and graph coverage.
+5. Establish the Financial Commitment model.
+6. Separate RecurringCandidate from confirmed FinancialCommitment.
+7. Improve identity relationships.
+8. Preserve and improve the recurring detection engine.
+9. Implement structured mandate data import.
+10. Implement service-term entry and basic document evidence.
+11. Implement the three-way reconciliation engine.
+12. Implement evidence-linked findings.
+13. Extend cancellation lifecycle states.
+14. Implement post-cancellation evidence investigation.
+15. Integrate reconciliation and evidence into the frontend.
+16. Improve Sarvam explanations using reconciliation results.
+17. Update the documentation.
+18. Run all unit tests, builds and integration checks.
+19. Prepare the final demo scenario.
+
+## P1 — High-value enhancements
+
+Complete these if the P0 workflow is stable:
+
+1. Better document text extraction.
+2. Improved Data Coverage interface.
+3. User-defined financial guardrails.
+4. Reconciliation history dashboard.
+5. Evidence export.
+6. Larger synthetic evaluation dataset targeting 200 labelled examples.
+7. Improved detection baseline comparisons.
+8. Better alert prioritisation.
+9. Additional language testing.
+10. Improved graph exploration.
+
+## P2 — Future production development
+
+Do not make these blockers for hackathon submission:
+
+1. PostgreSQL production persistence migration.
+2. Authorised Account Aggregator integrations.
+3. Live bank integrations.
+4. Real mandate retrieval partnerships.
+5. Direct merchant cancellation integrations.
+6. OCR for every scanned document format.
+7. Advanced GraphRAG.
+8. Multi-user production authentication infrastructure.
+9. Mobile application.
+10. Advanced statistical learning models.
+
+Do not sacrifice a fully working P0 workflow to partially implement a P1 or P2 feature.
+
+---
+
+# 24. SUBMISSION READINESS AND RELEASE PREPARATION
+
+The final output must be suitable for the HackFront source-code ZIP requirement.
+
+## 24.1 Update README
+
+The README must clearly explain:
+
+- Product overview.
+- Problem statement.
+- Main features.
+- Technology stack.
+- Architecture.
+- Neo4j integration.
+- Sarvam integration.
+- Financial Commitment model.
+- Reconciliation engine.
+- Evidence Casebook.
+- Synthetic demo data.
+- Setup instructions.
+- `.env` configuration.
+- Installation.
+- Running.
+- Testing.
+- Demo walkthrough.
+- Limitations.
+
+## 24.2 Create final documentation
+
+Create or update:
+
+```text
+docs/
+
+FINAL_PRODUCT_OVERVIEW.md
+
+FINAL_SYSTEM_ARCHITECTURE.md
+
+FINANCIAL_COMMITMENT_MODEL.md
+
+NEO4J_IMPLEMENTATION.md
+
+SARVAM_IMPLEMENTATION.md
+
+RECONCILIATION_METHODOLOGY.md
+
+DOCUMENT_INTELLIGENCE.md
+
+EVIDENCE_AND_AUDIT_MODEL.md
+
+CANCELLATION_LIFECYCLE.md
+
+DATA_COVERAGE_AND_LIMITATIONS.md
+
+TESTING_REPORT.md
+
+DEMO_SCRIPT.md
+
+FINAL_SUBMISSION_CHECKLIST.md
+```
+
+Only document functionality that actually exists.
+
+## 24.3 Create a clean submission ZIP
+
+Prepare a release-packaging script.
+
+The final ZIP should include:
+
+- Frontend source.
+- Backend source.
+- Tests.
+- Documentation.
+- Synthetic datasets.
+- Ground-truth fixtures.
+- Package configuration.
+- Required lockfile.
+- `.env.example`.
+- README.
+- Necessary public assets.
+
+Exclude:
+
+```text
+.env
+
+.env.local
+
+node_modules/
+
+dist/
+
+data/persistent-store.json
+
+unneeded .aistudio files
+
+unused pasted attachments
+
+temporary browser recordings
+
+debug logs
+
+private credentials
+
+```
+
+Do not delete the original project data to prepare the ZIP.
+
+Create a separate submission archive.
+
+Validate that the archive opens and has the expected root folder and files.
+
+## 24.4 GitHub preparation
+
+Prepare the source code so it can be pushed to GitHub.
+
+Do not publish real credentials or private persistence files.
+
+Make the README sufficient for an external reviewer to understand the project.
+
+The repository must be made publicly accessible by the team when ready.
+
+Do not claim that the repository is public until this has been verified.
+
+---
+
+# 25. REQUIRED FINAL REPORT
+
+After implementation, provide a detailed report.
+
+Use the following status values:
+
+- Complete.
+- Partial.
+- Not implemented.
+- Blocked.
+
+Report:
+
+| Module | Status | Evidence |
+|---|---|---|
+| Transaction ingestion | | |
+| Merchant identity intelligence | | |
+| Neo4j Commitment Graph | | |
+| Recurring candidate detection | | |
+| Financial Commitment confirmation | | |
+| Mandate import | | |
+| Service term/document intake | | |
+| Reconciliation engine | | |
+| Evidence Casebook | | |
+| Cancellation lifecycle | | |
+| Post-cancellation monitoring | | |
+| Data Coverage | | |
+| Financial Guardrails | | |
+| Sarvam Bhasha | | |
+| Frontend integration | | |
+| Persistent storage | | |
+| Tests | | |
+| Production build | | |
+| Submission packaging | | |
+
+Also report:
+
+1. Original project condition.
+2. Changes made.
+3. New files.
+4. Modified files.
+5. Removed files, with reasons.
+6. Actual tests executed.
+7. Actual build output.
+8. Neo4j integration test evidence.
+9. Sarvam integration test evidence.
+10. Reconciliation example results.
+11. Known limitations.
+12. Remaining blockers.
+13. Exact run commands.
+14. Exact demo instructions.
+15. Location of final submission ZIP.
+
+Do not report a test as passing unless it was actually executed.
+
+Do not report a feature as complete merely because its screen exists.
+
+---
+
+# 26. HOW YOU MUST WORK
+
+Follow this execution process.
+
+### Step 1 — Inspect
+
+Inspect the full repository and verify the latest state.
+
+Do not assume it matches an old audit.
+
+### Step 2 — Backup
+
+Create a backup or Git checkpoint before making changes.
+
+### Step 3 — Validate the current build
+
+Run the available commands and establish a baseline.
+
+Preserve all existing passing tests.
+
+### Step 4 — Implement the new domain model
+
+Introduce recurring candidates, confirmed commitments, service terms, mandates and evidence.
+
+Maintain compatibility with existing data and screens.
+
+### Step 5 — Implement reconciliation
+
+Build and test the three-source comparison.
+
+Use deterministic rules.
+
+### Step 6 — Connect Neo4j
+
+Persist and query actual commitment relationships.
+
+Do not show local-preview results as live data.
+
+### Step 7 — Extend cancellation and evidence
+
+Implement independent lifecycles and post-cancellation monitoring.
+
+### Step 8 — Extend Sarvam
+
+Ground explanations in retrieved evidence.
+
+Do not permit AI to modify financial truth.
+
+### Step 9 — Complete the UI
+
+Connect every new module to actual backend data.
+
+Do not build decorative screens.
+
+### Step 10 — Test the entire workflow
+
+Execute the StreamBox demonstration from import through post-cancellation investigation.
+
+### Step 11 — Prepare the release
+
+Update documentation, environment configuration, package scripts and submission ZIP.
+
+### Step 12 — Report truthfully
+
+Provide a comprehensive final report with evidence and remaining limitations.
+
+Do not ask me what feature to implement next when that feature is already specified in this prompt.
+
+Do not stop at a plan.
+
+**Actually implement, integrate, run, test, fix and prepare the application.**
+
+---
+
+# 27. FINAL PRODUCT DEFINITION
+
+DebitLens is not simply a subscription manager.
+
+It is an evidence-backed financial commitment intelligence and reconciliation platform.
+
+Its central process is:
+
+**INGEST**
+
+Understand imported financial transactions and available documents.
+
+↓
+
+**IDENTIFY**
+
+Connect payment descriptors, processors, merchants and services.
+
+↓
+
+**DETECT**
+
+Identify possible recurring financial patterns and create recurring candidates.
+
+↓
+
+**CONFIRM**
+
+Turn supported candidates into verified Financial Commitments.
+
+↓
+
+**RECONCILE**
+
+Compare actual debits, available payment authorisations and documented service terms.
+
+↓
+
+**EXPLAIN**
+
+Show why findings were generated and provide multilingual explanations through Sarvam.
+
+↓
+
+**ACT**
+
+Guide the user through separate service cancellation and payment-authorisation revocation procedures.
+
+↓
+
+**VERIFY**
+
+Record evidence and investigate possible subsequent payments.
+
+The system should allow users to understand not only where their money went, but what underlying obligation caused it, what they were expected to pay, what evidence supports the conclusion and what actions remain incomplete.
+
+**NEO4J** connects the financial relationships.
+
+**DETERMINISTIC INTELLIGENCE** analyses financial patterns and reconciliation rules.
+
+**SARVAM AI** explains evidence-backed findings in the user's preferred Indian language.
+
+**DEBITLENS** brings the entire financial commitment lifecycle into one coherent platform.
+
+---
+
+# FINAL INSTRUCTION TO THE CODING AGENT
+
+Build the final version of the existing DebitLens application using the actual codebase.
+
+Preserve working functionality.
+
+Incorporate the improved Financial Commitment model, three-way reconciliation, service and mandate lifecycle, Evidence Casebook, Data Coverage, and grounded multilingual intelligence.
+
+Do not introduce unnecessary architecture or technologies.
+
+Do not simulate missing capabilities.
+
+Do not make unsupported financial conclusions.
+
+Do not compromise the existing Neo4j or Sarvam integrations.
+
+Do not prioritise new features over a complete and reliable end-to-end demonstration.
+
+The primary goal is to produce a coherent, working, evidence-backed financial intelligence product that fully addresses HackFront India Fintech PS T4.1 while genuinely demonstrating both partner technologies.
+
+**BUILD THE FINAL DEBITLENS PROTOTYPE.**
+
+**MAKE IT TESTED. MAKE IT EXPLAINABLE. MAKE IT SUBMISSION-READY.**

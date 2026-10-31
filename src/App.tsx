@@ -18,11 +18,12 @@ import {
   ShieldX,
   BellRing,
   FileSpreadsheet,
-  Search,
   ArrowUpRight,
   Database,
   ShieldAlert,
   CheckCircle2,
+  Scale,
+  FolderKanban,
 } from 'lucide-react';
 import {
   apiClient,
@@ -42,9 +43,23 @@ import {
   LanguageCode,
   SupportedLanguage,
   MerchantRecord,
+  MandateRecord,
+  ServiceTermsRecord,
+  ReconciliationFindingRecord,
 } from './types/debitlens';
 import { formatINR, formatDateIN } from './utils/currency';
+import {
+  SearchHistoryEntry,
+  DEFAULT_DESCRIPTOR_SEARCH_HISTORY,
+  SEARCH_HISTORY_STORAGE_KEY,
+  addSearchHistoryEntry,
+  removeSearchHistoryEntry,
+  clearSearchHistory,
+  filterTransactionsByQuery,
+  countDescriptorMatches,
+} from './utils/searchHistory';
 import { CommitmentGraph } from './components/graph/CommitmentGraph';
+import { TransactionSearchHistory } from './components/transactions/TransactionSearchHistory';
 import { LanguageSelector } from './features/language/LanguageSelector';
 import { MerchantExplanationPanel } from './features/language/MerchantExplanationPanel';
 import { CancellationExplanation } from './features/language/CancellationExplanation';
@@ -52,9 +67,14 @@ import { MultilingualAlert } from './features/language/MultilingualAlert';
 import { CancellationCentreView } from './features/cancellation/CancellationCentreView';
 import { ImportStudioView } from './features/imports/ImportStudioView';
 import { MethodologyMetricsView } from './features/methodology/MethodologyMetricsView';
+import { ReconciliationCentreView } from './features/reconciliation/ReconciliationCentreView';
+import { EvidenceCasebookView } from './features/evidence/EvidenceCasebookView';
+import { ContextualBhashaAskPanel } from './features/language/ContextualBhashaAskPanel';
 
 type ActiveSection =
   | 'overview'
+  | 'reconciliation'
+  | 'casebook'
   | 'graph'
   | 'bhasha'
   | 'commitments'
@@ -134,6 +154,11 @@ export default function App() {
     }[]
   >([]);
   const [metrics, setMetrics] = useState<DetectionMetricsData | null>(null);
+  const [mandates, setMandates] = useState<MandateRecord[]>([]);
+  const [serviceTerms, setServiceTerms] = useState<ServiceTermsRecord[]>([]);
+  const [reconciliationFindings, setReconciliationFindings] = useState<
+    ReconciliationFindingRecord[]
+  >([]);
 
   const [selectedCommitmentId, setSelectedCommitmentId] = useState<string>('CMT-STREAMBOX');
   const [selectedTransactionId, setSelectedTransactionId] = useState<string>('TXN-1003');
@@ -143,7 +168,29 @@ export default function App() {
   const [commitmentFilter, setCommitmentFilter] = useState<CommitmentFilter>('ALL');
   const [txnSearch, setTxnSearch] = useState<string>('');
   const [txnStatusFilter, setTxnStatusFilter] = useState<'ALL' | 'CONFIRMED' | 'UNRESOLVED'>('ALL');
+  const [txnSearchHistory, setTxnSearchHistory] = useState<SearchHistoryEntry[]>(() => {
+    try {
+      const saved = window.localStorage.getItem(SEARCH_HISTORY_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return DEFAULT_DESCRIPTOR_SEARCH_HISTORY;
+  });
   const [assignMerchantSelect, setAssignMerchantSelect] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(txnSearchHistory));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [txnSearchHistory]);
 
   const loadAllData = useCallback(async () => {
     const [
@@ -158,6 +205,9 @@ export default function App() {
       impHist,
       detMetrics,
       langData,
+      mnds,
+      terms,
+      recFindings,
     ] = await Promise.all([
       apiClient.getIntegrationsStatus(),
       apiClient.getDashboardSummary(),
@@ -170,6 +220,9 @@ export default function App() {
       apiClient.getImportHistory(),
       apiClient.getDetectionMetrics(),
       sarvamService.getSupportedLanguages(),
+      apiClient.getMandates(),
+      apiClient.getServiceTerms(),
+      apiClient.getReconciliationFindings(),
     ]);
 
     setIntegrations(intStatus);
@@ -183,6 +236,9 @@ export default function App() {
     setMerchantsCatalogue(merchData.merchants);
     setImportHistory(impHist);
     setMetrics(detMetrics);
+    setMandates(mnds);
+    setServiceTerms(terms);
+    setReconciliationFindings(recFindings);
     if (langData.languages.length > 0) {
       setSupportedLanguages(langData.languages);
     }
@@ -225,21 +281,38 @@ export default function App() {
   }, [commitments, commitmentFilter]);
 
   const filteredTransactions = useMemo(() => {
-    return transactions.filter((t) => {
-      if (txnStatusFilter === 'CONFIRMED' && t.resolutionStatus === 'UNRESOLVED') return false;
-      if (txnStatusFilter === 'UNRESOLVED' && t.resolutionStatus !== 'UNRESOLVED') return false;
-      if (txnSearch.trim()) {
-        const q = txnSearch.toLowerCase();
-        return (
-          t.rawDescription.toLowerCase().includes(q) ||
-          (t.merchantName || '').toLowerCase().includes(q) ||
-          (t.processorName || '').toLowerCase().includes(q) ||
-          t.id.toLowerCase().includes(q)
-        );
-      }
-      return true;
-    });
+    return filterTransactionsByQuery(transactions, txnSearch, txnStatusFilter);
   }, [transactions, txnStatusFilter, txnSearch]);
+
+  const handleCommitSearchQuery = useCallback(
+    (query: string) => {
+      setTxnSearch(query);
+      const matches = countDescriptorMatches(transactions, query);
+      setTxnSearchHistory((prev) => addSearchHistoryEntry(prev, query, matches));
+    },
+    [transactions]
+  );
+
+  const handleSelectHistoryQuery = useCallback(
+    (query: string) => {
+      setTxnSearch(query);
+      const matches = countDescriptorMatches(transactions, query);
+      setTxnSearchHistory((prev) => addSearchHistoryEntry(prev, query, matches));
+    },
+    [transactions]
+  );
+
+  const handleRemoveHistoryQuery = useCallback((query: string) => {
+    setTxnSearchHistory((prev) => removeSearchHistoryEntry(prev, query));
+  }, []);
+
+  const handleClearSearchHistory = useCallback(() => {
+    setTxnSearchHistory(clearSearchHistory());
+  }, []);
+
+  const handleRestoreDefaultSearchHistory = useCallback(() => {
+    setTxnSearchHistory(DEFAULT_DESCRIPTOR_SEARCH_HISTORY);
+  }, []);
 
   const handleInspectTransactionInBhasha = (txnId: string) => {
     setSelectedTransactionId(txnId);
@@ -258,6 +331,18 @@ export default function App() {
 
   const sidebarItems: { id: ActiveSection; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'overview', label: 'Overview Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+    {
+      id: 'reconciliation',
+      label: '3-Way Reconciliation',
+      icon: <Scale className="w-4 h-4" />,
+      count: reconciliationFindings.length,
+    },
+    {
+      id: 'casebook',
+      label: 'Evidence Casebook',
+      icon: <FolderKanban className="w-4 h-4" />,
+      count: commitments.length,
+    },
     {
       id: 'graph',
       label: 'Commitment Map (Neo4j)',
@@ -386,10 +471,10 @@ export default function App() {
           <div className="space-y-5">
             <div className="px-2">
               <div className="text-xs font-semibold text-teal-800">
-                Find it. Understand it. Stop it.
+                Find it. Understand it. Reconcile it. Verify it.
               </div>
               <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                Evidence-Backed Financial Commitment Intelligence · HackFront Fintech T4.1 + Neo4j + Sarvam AI
+                Financial Commitment Intelligence & Reconciliation Platform · HackFront Fintech T4.1 + Neo4j + Sarvam AI
               </p>
             </div>
 
@@ -460,6 +545,16 @@ export default function App() {
                 className="px-2.5 py-1 font-medium text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-md transition-colors whitespace-nowrap"
               >
                 Demo B: Sarvam Bhasha (Hindi / Tamil)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedCommitmentId('CMT-STREAMBOX');
+                  setActiveSection('reconciliation');
+                }}
+                className="px-2.5 py-1 font-medium text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md transition-colors whitespace-nowrap"
+              >
+                3-Way Reconciliation & Judge Demo
               </button>
               <button
                 type="button"
@@ -616,7 +711,7 @@ export default function App() {
                         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
                         <YAxis tick={{ fontSize: 12 }} />
                         <Tooltip
-                          formatter={(value: number) => [formatINR(value), 'Spend']}
+                          formatter={(value: unknown) => [formatINR(Number(value || 0)), 'Spend']}
                         />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
                         <Bar
@@ -795,6 +890,66 @@ export default function App() {
             </div>
           )}
 
+          {/* SECTION 1B: THREE-WAY FINANCIAL RECONCILIATION CENTRE */}
+          {activeSection === 'reconciliation' && (
+            <ReconciliationCentreView
+              commitments={commitments}
+              mandates={mandates}
+              serviceTerms={serviceTerms}
+              findings={reconciliationFindings}
+              selectedCommitmentId={selectedCommitmentId}
+              onSelectCommitment={setSelectedCommitmentId}
+              onUpsertServiceDocument={async (payload) => {
+                await apiClient.upsertServiceDocument(payload);
+                sarvamService.clearCache();
+                await loadAllData();
+              }}
+              onImportMandate={async (payload) => {
+                await apiClient.importMandates({ mandate: payload });
+                sarvamService.clearCache();
+                await loadAllData();
+              }}
+              onLoadStreamBoxJudgeScenario={async () => {
+                await apiClient.loadStreamBoxJudgeScenario();
+                sarvamService.clearCache();
+                await loadAllData();
+              }}
+              onNavigateToGraph={(id) => {
+                setSelectedCommitmentId(id);
+                setActiveSection('graph');
+              }}
+              onNavigateToCasebook={(id) => {
+                setSelectedCommitmentId(id);
+                setActiveSection('casebook');
+              }}
+              onNavigateToCancellation={(id) => {
+                setSelectedCommitmentId(id);
+                setActiveSection('cancellation');
+              }}
+              onNavigateToBhasha={(id) => {
+                setSelectedCommitmentId(id);
+                setActiveSection('bhasha');
+              }}
+            />
+          )}
+
+          {/* SECTION 1C: EVIDENCE CASEBOOK, DATA COVERAGE & GUARDRAILS */}
+          {activeSection === 'casebook' && (
+            <EvidenceCasebookView
+              commitments={commitments}
+              selectedCommitmentId={selectedCommitmentId}
+              onSelectCommitment={setSelectedCommitmentId}
+              onConfirmCandidate={async (id) => {
+                await apiClient.confirmCommitmentCandidate(id);
+                await loadAllData();
+              }}
+              onRejectCandidate={async (id) => {
+                await apiClient.rejectCommitmentCandidate(id);
+                await loadAllData();
+              }}
+            />
+          )}
+
           {/* SECTION 2: NEO4J COMMITMENT GRAPH */}
           {activeSection === 'graph' && (
             <CommitmentGraph
@@ -817,7 +972,7 @@ export default function App() {
                     DebitLens Bhasha — Financial Intelligence in Your Language (Sarvam AI)
                   </h2>
                   <p className="text-xs text-slate-600 mt-0.5">
-                    Communicates verified graph evidence, cryptic merchant descriptors, financial alerts, and two-layer cancellation playbooks in Indian languages without hallucinating unverified merchants or removing contractual safety warnings.
+                    Communicates verified graph evidence, cryptic merchant descriptors, three-way reconciliation findings, financial alerts, and two-layer cancellation playbooks in Indian languages without hallucinating unverified merchants or removing contractual safety warnings.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -845,6 +1000,13 @@ export default function App() {
                   </button>
                 </div>
               </div>
+
+              <ContextualBhashaAskPanel
+                commitments={commitments}
+                selectedCommitmentId={selectedCommitmentId}
+                onSelectCommitmentId={setSelectedCommitmentId}
+                language={language}
+              />
 
               <MerchantExplanationPanel
                 transactions={transactions}
@@ -919,6 +1081,16 @@ export default function App() {
                         <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-slate-500">
                           <span>{cmt.id}</span>
                           <span aria-hidden="true">·</span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              cmt.entityClass === 'RECURRING_CANDIDATE'
+                                ? 'bg-amber-100 text-amber-900'
+                                : 'bg-teal-100 text-teal-900'
+                            }`}
+                          >
+                            {cmt.entityClass} ({cmt.verificationStatus})
+                          </span>
+                          <span aria-hidden="true">·</span>
                           <span>{cmt.category.replace(/_/g, ' ')}</span>
                           <span aria-hidden="true">·</span>
                           <span>{cmt.recurrenceType}</span>
@@ -951,6 +1123,29 @@ export default function App() {
                         </div>
 
                         <div className="flex flex-col gap-2">
+                          {cmt.entityClass === 'RECURRING_CANDIDATE' &&
+                            cmt.verificationStatus !== 'USER_CONFIRMED' && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await apiClient.confirmCommitmentCandidate(cmt.id);
+                                  await loadAllData();
+                                }}
+                                className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap"
+                              >
+                                <span>Confirm Candidate</span>
+                              </button>
+                            )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCommitmentId(cmt.id);
+                              setActiveSection('reconciliation');
+                            }}
+                            className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors whitespace-nowrap"
+                          >
+                            <span>3-Way Reconciliation</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleOpenCommitmentGraph(cmt.id)}
@@ -1020,53 +1215,30 @@ export default function App() {
           {activeSection === 'transactions' && (
             <div className="space-y-6">
               <div className="border border-slate-200 bg-white rounded-xl p-5 space-y-4">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
                   <div>
                     <h2 className="text-lg font-semibold text-slate-900">
                       Transactions Explorer & Merchant Identity Resolver ({filteredTransactions.length} rows)
                     </h2>
                     <p className="text-xs text-slate-600 mt-0.5">
-                      Inspect how raw statement strings are normalised, separated into Payment Processor vs Canonical Merchant, or kept isolated when processor-only (`RAZORPAY*99812-MUM`).
+                      Inspect how raw statement strings are normalised, separated into Payment Processor vs Canonical Merchant, or kept isolated when processor-only (`RAZORPAY*99812-MUM`). Click any recent descriptor query or statement string to filter immediately.
                     </p>
                   </div>
-
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="relative">
-                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="text"
-                        aria-label="Search Transactions"
-                        placeholder="Search descriptor, merchant, ID..."
-                        value={txnSearch}
-                        onChange={(e) => setTxnSearch(e.target.value)}
-                        className="pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg text-slate-900"
-                      />
-                    </div>
-
-                    <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
-                      {(
-                        [
-                          { id: 'ALL', label: 'All Rows' },
-                          { id: 'CONFIRMED', label: 'Resolved Merchants' },
-                          { id: 'UNRESOLVED', label: 'Unresolved / Review Queue' },
-                        ] as const
-                      ).map((f) => (
-                        <button
-                          key={f.id}
-                          type="button"
-                          onClick={() => setTxnStatusFilter(f.id)}
-                          className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-                            txnStatusFilter === f.id
-                              ? 'bg-white text-slate-900 shadow-xs'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          {f.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                 </div>
+
+                <TransactionSearchHistory
+                  searchQuery={txnSearch}
+                  onSearchQueryChange={setTxnSearch}
+                  onCommitSearchQuery={handleCommitSearchQuery}
+                  searchHistory={txnSearchHistory}
+                  onSelectHistoryQuery={handleSelectHistoryQuery}
+                  onRemoveHistoryQuery={handleRemoveHistoryQuery}
+                  onClearHistory={handleClearSearchHistory}
+                  onRestoreDefaultHistory={handleRestoreDefaultSearchHistory}
+                  transactions={transactions}
+                  statusFilter={txnStatusFilter}
+                  onStatusFilterChange={setTxnStatusFilter}
+                />
 
                 <div className="overflow-x-auto border border-slate-200 rounded-lg">
                   <table className="w-full text-left border-collapse text-xs">
@@ -1082,109 +1254,141 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredTransactions.map((t) => (
-                        <tr
-                          key={t.id}
-                          className={
-                            t.resolutionStatus === 'UNRESOLVED'
-                              ? 'bg-amber-50/30 hover:bg-amber-50/60'
-                              : 'hover:bg-slate-50'
-                          }
-                        >
-                          <td className="py-2.5 px-3 font-mono tabular-nums">
-                            <div className="font-semibold text-slate-900">{t.id}</div>
-                            <div className="text-[11px] text-slate-500">{t.transactionDate}</div>
-                          </td>
-                          <td className="py-2.5 px-3 font-mono">
-                            <div className="font-semibold text-slate-900">{t.rawDescription}</div>
-                            <div className="text-[11px] text-slate-500">
-                              Acct: {t.accountAlias} · {t.paymentRail}
+                      {filteredTransactions.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-8 px-4 text-center space-y-2">
+                            <div className="text-sm font-semibold text-slate-800">
+                              No transactions match &ldquo;{txnSearch}&rdquo;
                             </div>
-                          </td>
-                          <td className="py-2.5 px-3 text-slate-700">
-                            <div className="font-medium text-slate-900">{t.processorName || '—'}</div>
-                            <div className="text-[11px] font-mono text-slate-500">
-                              Mechanism: {t.paymentMechanism || t.paymentRail}
-                            </div>
-                          </td>
-                          <td className="py-2.5 px-3">
-                            {t.merchantName ? (
-                              <div>
-                                <div className="font-semibold text-slate-900">{t.merchantName}</div>
-                                <div className="text-[11px] text-slate-500">{t.serviceName}</div>
-                              </div>
-                            ) : (
-                              <div className="space-y-1.5">
-                                <div className="font-mono text-[11px] font-semibold text-amber-800">
-                                  UNRESOLVED — Not Merged
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                  <select
-                                    aria-label={`Assign Merchant for ${t.rawDescription}`}
-                                    value={assignMerchantSelect[t.id] || ''}
-                                    onChange={(e) =>
-                                      setAssignMerchantSelect((prev) => ({
-                                        ...prev,
-                                        [t.id]: e.target.value,
-                                      }))
-                                    }
-                                    className="px-2 py-1 text-[11px] bg-white border border-slate-300 rounded text-slate-800"
-                                  >
-                                    <option value="">Assign Merchant...</option>
-                                    {merchantsCatalogue.map((m) => (
-                                      <option key={m.id} value={m.id}>
-                                        {m.canonicalName}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  {assignMerchantSelect[t.id] && (
-                                    <button
-                                      type="button"
-                                      onClick={async () => {
-                                        await apiClient.confirmMerchantDescriptor(
-                                          assignMerchantSelect[t.id],
-                                          t.rawDescription
-                                        );
-                                        sarvamService.clearCache();
-                                        await loadAllData();
-                                      }}
-                                      className="px-2 py-1 text-[11px] font-medium text-white bg-teal-700 hover:bg-teal-800 rounded"
-                                    >
-                                      Confirm
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600 tabular-nums">
-                            <div>{t.matchingMethod}</div>
+                            <p className="text-xs text-slate-500">
+                              Try selecting one of the recent raw statement descriptor queries above or clearing the active filter.
+                            </p>
                             <div>
-                              {t.resolutionStatus} · {t.confidenceScore}%
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTxnSearch('');
+                                  setTxnStatusFilter('ALL');
+                                }}
+                                className="px-3 py-1.5 text-xs font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors"
+                              >
+                                Reset Search Filter
+                              </button>
                             </div>
-                          </td>
-                          <td className="py-2.5 px-3 font-mono tabular-nums text-right font-semibold">
-                            <span
-                              className={
-                                t.direction === 'CREDIT' ? 'text-teal-700' : 'text-slate-900'
-                              }
-                            >
-                              {t.direction === 'CREDIT' ? '+' : ''}
-                              {formatINR(t.amount)}
-                            </span>
-                            <div className="text-[10px] text-slate-500">{t.direction}</div>
-                          </td>
-                          <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                            <button
-                              type="button"
-                              onClick={() => handleInspectTransactionInBhasha(t.id)}
-                              className="px-2.5 py-1 text-xs font-medium text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-md transition-colors"
-                            >
-                              Explain in Bhasha
-                            </button>
                           </td>
                         </tr>
-                      ))}
+                      ) : (
+                        filteredTransactions.map((t) => (
+                          <tr
+                            key={t.id}
+                            className={
+                              t.resolutionStatus === 'UNRESOLVED'
+                                ? 'bg-amber-50/30 hover:bg-amber-50/60'
+                                : 'hover:bg-slate-50'
+                            }
+                          >
+                            <td className="py-2.5 px-3 font-mono tabular-nums">
+                              <div className="font-semibold text-slate-900">{t.id}</div>
+                              <div className="text-[11px] text-slate-500">{t.transactionDate}</div>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono">
+                              <button
+                                type="button"
+                                aria-label={`Filter by descriptor ${t.rawDescription}`}
+                                onClick={() => handleCommitSearchQuery(t.rawDescription)}
+                                className="font-semibold text-slate-900 hover:text-teal-800 hover:underline text-left transition-colors"
+                              >
+                                {t.rawDescription}
+                              </button>
+                              <div className="text-[11px] text-slate-500">
+                                Acct: {t.accountAlias} · {t.paymentRail}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-700">
+                              <div className="font-medium text-slate-900">{t.processorName || '—'}</div>
+                              <div className="text-[11px] font-mono text-slate-500">
+                                Mechanism: {t.paymentMechanism || t.paymentRail}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {t.merchantName ? (
+                                <div>
+                                  <div className="font-semibold text-slate-900">{t.merchantName}</div>
+                                  <div className="text-[11px] text-slate-500">{t.serviceName}</div>
+                                </div>
+                              ) : (
+                                <div className="space-y-1.5">
+                                  <div className="font-mono text-[11px] font-semibold text-amber-800">
+                                    UNRESOLVED — Not Merged
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <select
+                                      aria-label={`Assign Merchant for ${t.rawDescription}`}
+                                      value={assignMerchantSelect[t.id] || ''}
+                                      onChange={(e) =>
+                                        setAssignMerchantSelect((prev) => ({
+                                          ...prev,
+                                          [t.id]: e.target.value,
+                                        }))
+                                      }
+                                      className="px-2 py-1 text-[11px] bg-white border border-slate-300 rounded text-slate-800"
+                                    >
+                                      <option value="">Assign Merchant...</option>
+                                      {merchantsCatalogue.map((m) => (
+                                        <option key={m.id} value={m.id}>
+                                          {m.canonicalName}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {assignMerchantSelect[t.id] && (
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          await apiClient.confirmMerchantDescriptor(
+                                            assignMerchantSelect[t.id],
+                                            t.rawDescription
+                                          );
+                                          sarvamService.clearCache();
+                                          await loadAllData();
+                                        }}
+                                        className="px-2 py-1 text-[11px] font-medium text-white bg-teal-700 hover:bg-teal-800 rounded"
+                                      >
+                                        Confirm
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600 tabular-nums">
+                              <div>{t.matchingMethod}</div>
+                              <div>
+                                {t.resolutionStatus} · {t.confidenceScore}%
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono tabular-nums text-right font-semibold">
+                              <span
+                                className={
+                                  t.direction === 'CREDIT' ? 'text-teal-700' : 'text-slate-900'
+                                }
+                              >
+                                {t.direction === 'CREDIT' ? '+' : ''}
+                                {formatINR(t.amount)}
+                              </span>
+                              <div className="text-[10px] text-slate-500">{t.direction}</div>
+                            </td>
+                            <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => handleInspectTransactionInBhasha(t.id)}
+                                className="px-2.5 py-1 text-xs font-medium text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-md transition-colors"
+                              >
+                                Explain in Bhasha
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1211,6 +1415,18 @@ export default function App() {
               }}
               onSimulatePostCancelDebit={async (commitmentId) => {
                 await apiClient.simulatePostCancelDebit(commitmentId);
+                await loadAllData();
+              }}
+              onUpdateServiceStatus={async (commitmentId, serviceLifecycleStatus) => {
+                await apiClient.updateServiceLifecycleStatus(commitmentId, {
+                  serviceLifecycleStatus,
+                });
+                await loadAllData();
+              }}
+              onUpdateMandateStatus={async (commitmentId, mandateLifecycleStatus) => {
+                await apiClient.updateMandateLifecycleStatus(commitmentId, {
+                  mandateLifecycleStatus,
+                });
                 await loadAllData();
               }}
             />

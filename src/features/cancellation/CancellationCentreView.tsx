@@ -4,6 +4,8 @@ import {
   CancellationSessionRecord,
   CommitmentRecord,
   LanguageCode,
+  ServiceLifecycleStatus,
+  MandateLifecycleStatus,
 } from '../../types/debitlens';
 import { formatINR } from '../../utils/currency';
 import { CancellationExplanation } from '../language/CancellationExplanation';
@@ -34,6 +36,14 @@ interface CancellationCentreViewProps {
     }
   ) => Promise<void>;
   onSimulatePostCancelDebit: (commitmentId: string) => Promise<void>;
+  onUpdateServiceStatus?: (
+    commitmentId: string,
+    status: ServiceLifecycleStatus
+  ) => Promise<void>;
+  onUpdateMandateStatus?: (
+    commitmentId: string,
+    status: MandateLifecycleStatus
+  ) => Promise<void>;
 }
 
 export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
@@ -46,6 +56,8 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
   onToggleStep,
   onAddEvidence,
   onSimulatePostCancelDebit,
+  onUpdateServiceStatus,
+  onUpdateMandateStatus,
 }) => {
   const [evidenceType, setEvidenceType] = useState<
     'SERVICE_CONFIRMATION' | 'MANDATE_REVOCATION' | 'SUPPORT_TICKET' | 'MERCHANT_UNRESPONSIVE'
@@ -166,7 +178,7 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
         </div>
       )}
 
-      {/* Workflow State Machine Status Strip */}
+      {/* Workflow State Machine Status Strip with Independent Layer A & Layer B Lifecycle Controls */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="p-4 rounded-xl bg-white border border-slate-200">
           <div className="text-xs text-slate-500">Current State Machine Status</div>
@@ -174,28 +186,64 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
             {activeSession.status}
           </div>
           <div className="text-[11px] text-slate-500 mt-1">
-            Honest Status: User-Reported vs Provider Verified
+            Honest Status: User-Reported vs Evidence Attached
           </div>
         </div>
-        <div className="p-4 rounded-xl bg-white border border-slate-200">
-          <div className="text-xs text-slate-500">Layer A (Service Contract)</div>
-          <div className="text-sm font-semibold text-slate-900 mt-1">
-            {activeSession.serviceCancelledAt
-              ? `User Confirmed (${activeSession.serviceCancelledAt})`
-              : 'Pending User Action'}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-1">
+        <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-1.5">
+          <div className="text-xs text-slate-500">Layer A (Service Lifecycle)</div>
+          <select
+            aria-label="Update Layer A Service Lifecycle Status"
+            value={activeCommitment.serviceLifecycleStatus}
+            onChange={async (e) => {
+              if (onUpdateServiceStatus) {
+                await onUpdateServiceStatus(
+                  activeCommitment.id,
+                  e.target.value as ServiceLifecycleStatus
+                );
+                setStatusMessage(
+                  `Updated Layer A Service Lifecycle Status to ${e.target.value}.`
+                );
+              }
+            }}
+            className="w-full px-2 py-1 text-xs font-mono bg-slate-50 border border-slate-300 rounded text-slate-900"
+          >
+            <option value="ACTIVE">ACTIVE</option>
+            <option value="CANCELLATION_REQUESTED">CANCELLATION_REQUESTED</option>
+            <option value="CANCELLATION_REPORTED_BY_USER">CANCELLATION_REPORTED_BY_USER</option>
+            <option value="CANCELLATION_EVIDENCE_ATTACHED">CANCELLATION_EVIDENCE_ATTACHED</option>
+            <option value="MERCHANT_UNRESPONSIVE">MERCHANT_UNRESPONSIVE</option>
+          </select>
+          <div className="text-[11px] text-slate-500">
             Merchant: {activeCommitment.merchantName}
           </div>
         </div>
-        <div className="p-4 rounded-xl bg-white border border-slate-200">
-          <div className="text-xs text-slate-500">Layer B (Payment Mandate)</div>
-          <div className="text-sm font-semibold text-slate-900 mt-1">
-            {activeSession.paymentAuthorisationRevokedAt
-              ? `User Revoked (${activeSession.paymentAuthorisationRevokedAt})`
-              : 'Pending Mandate Revocation'}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-1">
+        <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-1.5">
+          <div className="text-xs text-slate-500">Layer B (Mandate Lifecycle)</div>
+          <select
+            aria-label="Update Layer B Mandate Lifecycle Status"
+            value={activeCommitment.mandateLifecycleStatus}
+            onChange={async (e) => {
+              if (onUpdateMandateStatus) {
+                await onUpdateMandateStatus(
+                  activeCommitment.id,
+                  e.target.value as MandateLifecycleStatus
+                );
+                setStatusMessage(
+                  `Updated Layer B Mandate Lifecycle Status to ${e.target.value}.`
+                );
+              }
+            }}
+            className="w-full px-2 py-1 text-xs font-mono bg-slate-50 border border-slate-300 rounded text-slate-900"
+          >
+            <option value="ACTIVE">ACTIVE</option>
+            <option value="PAUSED_REPORTED_BY_USER">PAUSED_REPORTED_BY_USER</option>
+            <option value="REVOCATION_REPORTED_BY_USER">REVOCATION_REPORTED_BY_USER</option>
+            <option value="REVOCATION_EVIDENCE_ATTACHED">REVOCATION_EVIDENCE_ATTACHED</option>
+            <option value="MANDATE_NOT_VISIBLE_IN_IMPORTED_DATA">
+              MANDATE_NOT_VISIBLE_IN_IMPORTED_DATA
+            </option>
+          </select>
+          <div className="text-[11px] text-slate-500">
             Rail: {activeCommitment.paymentRail.replace(/_/g, ' ')}
           </div>
         </div>

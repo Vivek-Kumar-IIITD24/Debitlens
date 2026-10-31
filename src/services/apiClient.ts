@@ -9,6 +9,17 @@ import {
   MerchantRecord,
   PaymentProcessorRecord,
   GraphExecutionMode,
+  MandateRecord,
+  ServiceTermsRecord,
+  ReconciliationFindingRecord,
+  EvidenceCasebookEntry,
+  AuditEventRecord,
+  DataCoverageSummary,
+  FinancialGuardrailConfig,
+  ServiceLifecycleStatus,
+  MandateLifecycleStatus,
+  RecurrenceFrequency,
+  ConfidenceScoreBreakdown,
 } from '../types/debitlens';
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
@@ -75,6 +86,28 @@ export const apiClient = {
   getMonthlyTrend: () => fetchJson<MonthlyTrendPoint[]>('/api/dashboard/monthly-trend'),
   getTransactions: () => fetchJson<TransactionRecord[]>('/api/transactions'),
   getCommitments: () => fetchJson<CommitmentRecord[]>('/api/commitments'),
+  confirmCommitmentCandidate: (commitmentId: string) =>
+    fetchJson<CommitmentRecord>(`/api/commitments/${commitmentId}/confirm`, {
+      method: 'POST',
+    }),
+  rejectCommitmentCandidate: (commitmentId: string) =>
+    fetchJson<CommitmentRecord>(`/api/commitments/${commitmentId}/reject`, {
+      method: 'POST',
+    }),
+  updateCommitmentFields: (
+    commitmentId: string,
+    payload: {
+      typicalAmount?: number;
+      expectedAmountMinor?: number;
+      recurrenceType?: RecurrenceFrequency;
+      nextExpectedDate?: string | null;
+      lastUsedDate?: string | null;
+    }
+  ) =>
+    fetchJson<CommitmentRecord>(`/api/commitments/${commitmentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
   getAlerts: () => fetchJson<DetectionAlertRecord[]>('/api/alerts'),
   updateAlertStatus: (id: string, status: 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED') =>
     fetchJson<DetectionAlertRecord>(`/api/alerts/${id}/status`, {
@@ -109,9 +142,12 @@ export const apiClient = {
       transactionsCount: number;
     }>('/api/graph/rebuild-demo', { method: 'POST' }),
   getUnresolvedGraphTransactions: () =>
-    fetchJson<{ count: number; cypherExecuted: string; transactions: TransactionRecord[] }>(
-      '/api/graph/unresolved-transactions'
-    ),
+    fetchJson<{
+      executionMode?: GraphExecutionMode;
+      count: number;
+      cypherExecuted: string;
+      transactions: TransactionRecord[];
+    }>('/api/graph/unresolved-transactions'),
   getCancellationData: () =>
     fetchJson<{ playbooks: CancellationPlaybookRecord[]; sessions: CancellationSessionRecord[] }>(
       '/api/cancellation/sessions'
@@ -140,6 +176,131 @@ export const apiClient = {
         body: JSON.stringify(payload),
       }
     ),
+  updateServiceLifecycleStatus: (
+    sessionOrCommitmentId: string,
+    payload: {
+      serviceLifecycleStatus: ServiceLifecycleStatus;
+      referenceNumber?: string;
+      notes?: string;
+    }
+  ) =>
+    fetchJson<{ commitment: CommitmentRecord; session: CancellationSessionRecord }>(
+      `/api/cancellations/${sessionOrCommitmentId}/service-status`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      }
+    ),
+  updateMandateLifecycleStatus: (
+    sessionOrCommitmentId: string,
+    payload: {
+      mandateLifecycleStatus: MandateLifecycleStatus;
+      referenceNumber?: string;
+      notes?: string;
+    }
+  ) =>
+    fetchJson<{ commitment: CommitmentRecord; session: CancellationSessionRecord }>(
+      `/api/cancellations/${sessionOrCommitmentId}/mandate-status`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      }
+    ),
+  getCancellationMonitoring: (sessionOrCommitmentId: string) =>
+    fetchJson<{
+      sessionId: string;
+      commitmentId: string;
+      serviceLifecycleStatus: ServiceLifecycleStatus;
+      mandateLifecycleStatus: MandateLifecycleStatus;
+      serviceCancelledAt: string | null;
+      paymentAuthorisationRevokedAt: string | null;
+      postCancellationDebitDetected: boolean;
+      postCancellationTransactions: TransactionRecord[];
+      monitoringStatus: string;
+    }>(`/api/cancellations/${sessionOrCommitmentId}/monitoring`),
+  getMandates: () => fetchJson<MandateRecord[]>('/api/mandates'),
+  importMandates: (payload: { mandates?: Partial<MandateRecord>[]; mandate?: Partial<MandateRecord> }) =>
+    fetchJson<{
+      importedCount: number;
+      mandates: MandateRecord[];
+      reconciliationFindings: ReconciliationFindingRecord[];
+    }>('/api/mandates/import', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getServiceTerms: () => fetchJson<ServiceTermsRecord[]>('/api/service-terms'),
+  getCommitmentServiceTerms: (commitmentId: string) =>
+    fetchJson<ServiceTermsRecord | null>(`/api/commitments/${commitmentId}/service-terms`),
+  upsertServiceDocument: (payload: {
+    commitmentId: string;
+    merchantName?: string;
+    serviceName?: string;
+    rawText?: string;
+    expectedAmount?: number;
+    expectedAmountMinor?: number;
+    billingFrequency?: RecurrenceFrequency;
+    trialEndDate?: string | null;
+    renewalDate?: string | null;
+    cancellationNoticeDays?: number | null;
+    userVerified?: boolean;
+  }) =>
+    fetchJson<{
+      serviceTerms: ServiceTermsRecord;
+      reconciliation: ReconciliationFindingRecord;
+      allFindings: ReconciliationFindingRecord[];
+    }>('/api/service-documents', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getReconciliationFindings: () =>
+    fetchJson<ReconciliationFindingRecord[]>('/api/reconciliation/findings'),
+  reconcileCommitment: (commitmentId: string) =>
+    fetchJson<ReconciliationFindingRecord>(`/api/commitments/${commitmentId}/reconcile`, {
+      method: 'POST',
+    }),
+  getCommitmentEvidenceCasebook: (commitmentId: string) =>
+    fetchJson<{
+      commitmentId: string;
+      confidenceBreakdown: ConfidenceScoreBreakdown;
+      supportingTransactions: TransactionRecord[];
+      connectedDescriptors: string[];
+      entries: EvidenceCasebookEntry[];
+      auditEvents: AuditEventRecord[];
+    }>(`/api/commitments/${commitmentId}/evidence`),
+  attachCommitmentEvidence: (
+    commitmentId: string,
+    payload: {
+      category?: EvidenceCasebookEntry['category'];
+      title: string;
+      description: string;
+      sourceReference: string;
+      amountMinor?: number | null;
+    }
+  ) =>
+    fetchJson<{
+      commitmentId: string;
+      entries: EvidenceCasebookEntry[];
+      auditEvents: AuditEventRecord[];
+    }>(`/api/commitments/${commitmentId}/evidence`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getDataCoverage: () => fetchJson<DataCoverageSummary>('/api/import/coverage'),
+  getGuardrails: () => fetchJson<FinancialGuardrailConfig[]>('/api/guardrails'),
+  updateGuardrail: (commitmentId: string, payload: Partial<FinancialGuardrailConfig>) =>
+    fetchJson<FinancialGuardrailConfig>(`/api/guardrails/${commitmentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  loadStreamBoxJudgeScenario: () =>
+    fetchJson<{
+      message: string;
+      commitment: CommitmentRecord;
+      finding: ReconciliationFindingRecord;
+      allFindings: ReconciliationFindingRecord[];
+    }>('/api/demo/streambox-judge-scenario', {
+      method: 'POST',
+    }),
   getImportHistory: () =>
     fetchJson<
       {
