@@ -121,12 +121,13 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
             DebitLens Evidence Casebook, Data Coverage & Financial Guardrails
           </div>
           <h2 className="text-xl font-bold text-white mt-1">
-            Dispute-Ready Evidence Chain & Audit Timeline
+            Dispute-Ready Evidence Chain & Append-Only Application Audit Timeline
           </h2>
           <p className="text-xs text-slate-400 mt-1 max-w-3xl">
             Every recurring candidate, confirmed commitment, service invoice, mandate reference,
             cancellation receipt, and reconciliation outcome is linked into a chronological,
-            export-ready audit trail.
+            append-only application audit timeline distinguishing imported, inferred, user-confirmed,
+            and system-generated records.
           </p>
         </div>
 
@@ -217,7 +218,7 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
           <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5">
             <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              Chronological Evidence Chain ({entries.length} Verified Records)
+              Chronological Evidence Chain ({entries.length} Linked Records)
             </h3>
             <div className="space-y-3">
               {entries.map((entry) => (
@@ -241,7 +242,7 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
                     <span>Ref: {entry.sourceReference}</span>
                     <span>
                       {entry.amountMinor !== null ? `${formatMinorINR(entry.amountMinor)} · ` : ''}
-                      Status: {entry.verificationStatus} · Actor: {entry.actor}
+                      Status: <strong className="text-slate-200">{entry.verificationStatus}</strong> · Actor: {entry.actor}
                     </span>
                   </div>
                 </div>
@@ -253,7 +254,7 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
           <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5">
             <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-3">
               <Clock className="w-4 h-4 text-sky-400" />
-              Commitment Audit Event Log ({auditEvents.length} Events)
+              Append-Only Application Audit Timeline ({auditEvents.length} Events)
             </h3>
             {auditEvents.length === 0 ? (
               <p className="text-xs text-slate-400">

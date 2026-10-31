@@ -25,6 +25,8 @@ export type RelationshipConfidenceStatus =
   | 'CONFIRMED'
   | 'INFERRED'
   | 'USER_CONFIRMED'
+  | 'IMPORTED_RECORD'
+  | 'SYSTEM_GENERATED'
   | 'UNRESOLVED';
 
 export type PaymentRailType =
@@ -344,8 +346,8 @@ export interface ServiceTermsRecord {
   commitmentId: string;
   merchantName: string;
   serviceName: string;
-  expectedAmountMinor: number;
-  expectedAmount: number;
+  expectedAmountMinor: number | null;
+  expectedAmount: number | null;
   currency: string;
   billingFrequency: RecurrenceFrequency;
   trialEndDate: string | null;

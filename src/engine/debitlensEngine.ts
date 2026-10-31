@@ -705,10 +705,12 @@ export function detectCommitmentsAndAlerts(
       continue;
     }
 
-    const intervals: number[] = [];
+    const rawIntervals: number[] = [];
     for (let i = 1; i < sorted.length; i++) {
-      intervals.push(daysBetween(sorted[i - 1].transactionDate, sorted[i].transactionDate));
+      rawIntervals.push(daysBetween(sorted[i - 1].transactionDate, sorted[i].transactionDate));
     }
+    const nonDuplicateIntervals = rawIntervals.filter((d) => d > 2);
+    const intervals = nonDuplicateIntervals.length > 0 ? nonDuplicateIntervals : rawIntervals;
 
     // Reject repeated one-time retail purchases that happen within random short gaps (< 10 days with > 60% variance)
     if (

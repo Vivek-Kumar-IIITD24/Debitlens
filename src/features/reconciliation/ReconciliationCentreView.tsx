@@ -172,15 +172,35 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
     if (!activeCommitment) return;
     setBusy(true);
     try {
+      const hasPastedText = Boolean(invoiceText.trim());
       await onUpsertServiceDocument({
         commitmentId: activeCommitment.id,
-        rawText: invoiceText.trim() || undefined,
+        rawText: hasPastedText ? invoiceText.trim() : undefined,
         expectedAmount: manualExpectedAmount ? Number(manualExpectedAmount) : undefined,
         billingFrequency: manualFrequency,
+        userVerified: hasPastedText ? false : true,
+      });
+      setBannerMsg(
+        hasPastedText
+          ? `Extracted service terms preview for ${activeCommitment.serviceName} (userVerified=false). Review the extracted fields below and click "Confirm & Verify Extracted Terms" to mark them user-confirmed.`
+          : `Saved manual service terms for ${activeCommitment.serviceName} and re-evaluated three-way reconciliation.`
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleConfirmExtractedTerms = async () => {
+    if (!activeCommitment || !activeDoc) return;
+    setBusy(true);
+    try {
+      await onUpsertServiceDocument({
+        commitmentId: activeCommitment.id,
+        billingFrequency: activeDoc.billingFrequency,
         userVerified: true,
       });
       setBannerMsg(
-        `Extracted & attached service terms for ${activeCommitment.serviceName} and re-evaluated three-way reconciliation.`
+        `Confirmed and verified extracted service terms (${activeDoc.id}) for ${activeCommitment.serviceName} (userVerified=true across document and extracted fields).`
       );
     } finally {
       setBusy(false);
@@ -558,14 +578,26 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                 onSubmit={handleSaveDoc}
                 className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 space-y-3"
               >
-                <div className="text-xs font-semibold text-white flex items-center gap-1.5">
-                  <FileText className="w-4 h-4 text-indigo-400" />
-                  Attach / Extract Service Invoice ({activeCommitment.serviceName})
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-white flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-indigo-400" />
+                    Service Terms Intake ({activeCommitment.serviceName})
+                  </div>
+                  {activeDoc && (
+                    <span
+                      data-testid="service-doc-verification-badge"
+                      className={`px-2 py-0.5 text-[10px] font-mono rounded border ${
+                        activeDoc.userVerified
+                          ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700/60'
+                          : 'bg-amber-950/80 text-amber-300 border-amber-700/60'
+                      }`}
+                    >
+                      {activeDoc.userVerified ? 'USER_CONFIRMED' : 'UNVERIFIED PREVIEW'}
+                    </span>
+                  )}
                 </div>
                 <p className="text-[11px] text-slate-400">
-                  Paste an invoice, trial confirmation, or billing receipt to extract{' '}
-                  <code className="text-slate-300">expectedAmountMinor</code> and re-run three-way
-                  reconciliation.
+                  Supports pasted invoice/receipt text and structured/manual service terms (general PDF upload/OCR is not enabled). Extracted fields default to <code className="text-slate-300">userVerified=false</code> until explicitly confirmed.
                 </p>
                 <textarea
                   value={invoiceText}
@@ -605,11 +637,62 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                 <button
                   type="submit"
                   disabled={busy}
+                  data-testid="extract-service-terms-btn"
                   className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  Extract Service Terms & Re-Reconcile
+                  Extract Service Terms Preview & Re-Reconcile
                 </button>
+
+                {/* Extracted-Field Preview & Explicit User Confirmation */}
+                {activeDoc && (
+                  <div
+                    data-testid="extracted-fields-preview"
+                    className="bg-slate-950/90 border border-slate-800 rounded-lg p-3 space-y-2 mt-2"
+                  >
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-slate-200">
+                        Extracted-Field Preview ({activeDoc.id})
+                      </span>
+                      <span className="font-mono text-[10px] text-slate-400">
+                        Confidence: {activeDoc.extractionConfidence}%
+                      </span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {activeDoc.extractedFields.map((field, idx) => (
+                        <div
+                          key={`${field.fieldName}-${idx}`}
+                          className="text-[11px] bg-slate-900/80 border border-slate-800/80 rounded px-2.5 py-1.5 flex items-start justify-between gap-2"
+                        >
+                          <div>
+                            <div className="font-mono text-indigo-300">
+                              {field.fieldName}:{' '}
+                              <span className="text-white font-semibold">{field.extractedValue}</span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate max-w-xs">
+                              Snippet: &ldquo;{field.sourceSnippet}&rdquo;
+                            </div>
+                          </div>
+                          <span className="font-mono text-[10px] text-slate-400 shrink-0">
+                            {field.confidence}% · {field.userVerified ? 'VERIFIED' : 'UNVERIFIED'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {!activeDoc.userVerified && (
+                      <button
+                        type="button"
+                        onClick={handleConfirmExtractedTerms}
+                        disabled={busy}
+                        data-testid="confirm-extracted-terms-btn"
+                        className="w-full py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-semibold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Confirm & Verify Extracted Terms
+                      </button>
+                    )}
+                  </div>
+                )}
               </form>
 
               {/* Mandate Registry Intake */}

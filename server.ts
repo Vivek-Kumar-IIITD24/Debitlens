@@ -120,8 +120,15 @@ function recordAuditEvent(params: {
   return evt;
 }
 
-function savePersistentStore() {
+let lastPersistenceError: string | null = null;
+
+function savePersistentStore(): { saved: boolean; error?: string } {
+  const tmpPath = `${PERSISTENT_STORE_PATH}.tmp.${process.pid}.${Date.now()}`;
   try {
+    const dir = path.dirname(PERSISTENT_STORE_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
     const payload: PersistentAppStore = {
       rawCsvRows,
       notificationEvents,
@@ -135,9 +142,22 @@ function savePersistentStore() {
       auditEvents: auditEventsStore,
       guardrails: guardrailsStore,
     };
-    fs.writeFileSync(PERSISTENT_STORE_PATH, JSON.stringify(payload, null, 2), 'utf-8');
+    fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf-8');
+    fs.renameSync(tmpPath, PERSISTENT_STORE_PATH);
+    lastPersistenceError = null;
+    return { saved: true };
   } catch (err) {
-    console.warn('Warning: could not write persistent-store.json:', err);
+    try {
+      if (fs.existsSync(tmpPath)) {
+        fs.unlinkSync(tmpPath);
+      }
+    } catch {
+      // ignore cleanup error
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    lastPersistenceError = message;
+    console.warn('Warning: could not write persistent-store.json:', message);
+    return { saved: false, error: message };
   }
 }
 
@@ -1042,6 +1062,8 @@ const handleContextualAsk = async (req: express.Request, res: express.Response) 
     state.reconciliationFindings.find((r) => r.commitmentId === cmt.id) || null;
   const session = state.sessions.find((s) => s.commitmentId === cmt.id) || null;
 
+  // Construct deterministic grounded English answer from verified commitment/mandate/invoice facts,
+  // then translate into the target Indian language via Sarvam Translate (sarvam-translate:v1).
   const baseResponse = buildGroundedContextualQuestionResponse({
     commitment: cmt,
     question,
@@ -1073,6 +1095,22 @@ const handleContextualAsk = async (req: express.Request, res: express.Response) 
       );
       return;
     }
+    res.json(
+      buildGroundedContextualQuestionResponse({
+        commitment: cmt,
+        question,
+        language,
+        transactions: state.transactions,
+        mandate,
+        serviceTerms,
+        reconciliation,
+        session,
+        sarvamStatus: transRes.status,
+        sarvamMode: 'CURATED_VERIFIED_FALLBACK',
+        fallbackReason: transRes.error || 'Sarvam Translate request failed; using curated grounded template.',
+      })
+    );
+    return;
   }
 
   res.json(baseResponse);
@@ -1504,14 +1542,14 @@ const handleUpsertServiceDocument = async (req: express.Request, res: express.Re
     trialEndDate,
     renewalDate,
     cancellationNoticeDays,
-    userVerified = true,
+    userVerified,
   } = (req.body || {}) as {
     commitmentId: string;
     merchantName?: string;
     serviceName?: string;
     rawText?: string;
-    expectedAmount?: number;
-    expectedAmountMinor?: number;
+    expectedAmount?: number | null;
+    expectedAmountMinor?: number | null;
     billingFrequency?: RecurrenceFrequency;
     trialEndDate?: string | null;
     renewalDate?: string | null;
@@ -1526,62 +1564,104 @@ const handleUpsertServiceDocument = async (req: express.Request, res: express.Re
 
   const stateBefore = computeCurrentState();
   const targetCmt = stateBefore.commitments.find((c) => c.id === commitmentId);
+  const existingDoc = serviceTermsStore.find((s) => s.commitmentId === commitmentId) || null;
 
   let docRecord: ServiceTermsRecord;
   if (rawText && rawText.trim().length > 0) {
+    // Pasted invoice text defaults to userVerified = false until explicitly confirmed by the user
+    const isVerified = userVerified === true;
     docRecord = extractServiceTermsFromText({
       commitmentId,
       merchantName: merchantName || targetCmt?.merchantName,
       serviceName: serviceName || targetCmt?.serviceName,
       rawText,
       documentSource: 'PASTED_INVOICE_TEXT',
+      userVerified: isVerified,
     });
     if (expectedAmountMinor !== undefined || expectedAmount !== undefined) {
-      const minor =
-        expectedAmountMinor !== undefined
-          ? Number(expectedAmountMinor)
-          : toMinorUnits(Number(expectedAmount));
-      docRecord.expectedAmountMinor = minor;
-      docRecord.expectedAmount = fromMinorUnits(minor);
+      if (expectedAmountMinor === null || expectedAmount === null) {
+        docRecord.expectedAmountMinor = null;
+        docRecord.expectedAmount = null;
+      } else {
+        const minor =
+          expectedAmountMinor !== undefined
+            ? Number(expectedAmountMinor)
+            : toMinorUnits(Number(expectedAmount));
+        docRecord.expectedAmountMinor = minor;
+        docRecord.expectedAmount = fromMinorUnits(minor);
+      }
     }
     if (billingFrequency) {
       docRecord.billingFrequency = billingFrequency;
     }
-    docRecord.userVerified = Boolean(userVerified);
-  } else {
-    const minor =
-      expectedAmountMinor !== undefined
-        ? Number(expectedAmountMinor)
-        : toMinorUnits(Number(expectedAmount || targetCmt?.typicalAmount || 499));
+    docRecord.userVerified = isVerified;
+    docRecord.extractedFields = docRecord.extractedFields.map((f) => ({
+      ...f,
+      userVerified: isVerified,
+    }));
+  } else if (
+    existingDoc &&
+    expectedAmount === undefined &&
+    expectedAmountMinor === undefined &&
+    userVerified !== undefined
+  ) {
+    // Explicit user confirmation / verification toggle of an already-extracted document
+    const isVerified = Boolean(userVerified);
     docRecord = {
-      id: `DOC-${commitmentId}-${Date.now()}`,
+      ...existingDoc,
+      billingFrequency: billingFrequency || existingDoc.billingFrequency,
+      userVerified: isVerified,
+      extractedFields: existingDoc.extractedFields.map((f) => ({
+        ...f,
+        userVerified: isVerified,
+      })),
+    };
+  } else {
+    const isVerified = userVerified !== undefined ? Boolean(userVerified) : true;
+    const minor =
+      expectedAmountMinor !== undefined && expectedAmountMinor !== null
+        ? Number(expectedAmountMinor)
+        : expectedAmount !== undefined && expectedAmount !== null
+        ? toMinorUnits(Number(expectedAmount))
+        : existingDoc?.expectedAmountMinor ?? null;
+    const major = minor !== null ? fromMinorUnits(minor) : null;
+    docRecord = {
+      id: existingDoc?.id || `DOC-${commitmentId}-${Date.now()}`,
       commitmentId,
-      merchantName: merchantName || targetCmt?.merchantName || 'Merchant',
-      serviceName: serviceName || targetCmt?.serviceName || 'Service Plan',
+      merchantName: merchantName || targetCmt?.merchantName || existingDoc?.merchantName || 'Merchant',
+      serviceName: serviceName || targetCmt?.serviceName || existingDoc?.serviceName || 'Service Plan',
       expectedAmountMinor: minor,
-      expectedAmount: fromMinorUnits(minor),
+      expectedAmount: major,
       currency: 'INR',
-      billingFrequency: billingFrequency || targetCmt?.recurrenceType || 'MONTHLY',
-      trialEndDate: trialEndDate ?? null,
-      renewalDate: renewalDate ?? null,
-      cancellationNoticeDays: cancellationNoticeDays ?? null,
+      billingFrequency: billingFrequency || existingDoc?.billingFrequency || targetCmt?.recurrenceType || 'MONTHLY',
+      trialEndDate: trialEndDate ?? existingDoc?.trialEndDate ?? null,
+      renewalDate: renewalDate ?? existingDoc?.renewalDate ?? null,
+      cancellationNoticeDays: cancellationNoticeDays ?? existingDoc?.cancellationNoticeDays ?? null,
       documentSource: 'MANUAL_ENTRY',
       rawDocumentText: `Manual Service Terms Entry for ${
-        serviceName || targetCmt?.serviceName
-      }: Expected billing INR ${fromMinorUnits(minor)} (${minor} paise) per ${
-        billingFrequency || 'MONTHLY'
-      }.`,
-      extractionConfidence: 100,
+        serviceName || targetCmt?.serviceName || 'Service Plan'
+      }: Expected billing ${
+        minor !== null ? `INR ${major} (${minor} paise)` : 'UNAVAILABLE'
+      } per ${billingFrequency || 'MONTHLY'}.`,
+      extractionConfidence: minor !== null ? 100 : 0,
       extractedFields: [
         {
           fieldName: 'expectedAmount',
-          extractedValue: `INR ${fromMinorUnits(minor)} (${minor} paise)`,
+          extractedValue:
+            minor !== null ? `INR ${major} (${minor} paise)` : 'UNAVAILABLE',
+          confidence: minor !== null ? 100 : 0,
+          sourceSnippet: 'Manual structured input',
+          userVerified: isVerified,
+        },
+        {
+          fieldName: 'billingFrequency',
+          extractedValue: billingFrequency || existingDoc?.billingFrequency || targetCmt?.recurrenceType || 'MONTHLY',
           confidence: 100,
           sourceSnippet: 'Manual structured input',
-          userVerified: true,
+          userVerified: isVerified,
         },
       ],
-      userVerified: true,
+      userVerified: isVerified,
       createdAt: new Date().toISOString(),
     };
   }
@@ -1596,12 +1676,16 @@ const handleUpsertServiceDocument = async (req: express.Request, res: express.Re
   recordAuditEvent({
     commitmentId,
     eventType: 'SERVICE_TERMS_ATTACHED',
-    summary: `Attached service terms ${docRecord.id} for ${docRecord.serviceName} (Expected ₹${docRecord.expectedAmount}/${docRecord.billingFrequency}).`,
-    previousState: null,
-    newState: `expectedAmountMinor=${docRecord.expectedAmountMinor}`,
+    summary: `${
+      docRecord.userVerified ? 'Verified' : 'Extracted (pending user confirmation)'
+    } service terms ${docRecord.id} for ${docRecord.serviceName} (Expected ${
+      docRecord.expectedAmount !== null ? `₹${docRecord.expectedAmount}` : 'UNAVAILABLE'
+    }/${docRecord.billingFrequency}).`,
+    previousState: existingDoc ? `userVerified=${existingDoc.userVerified}` : null,
+    newState: `expectedAmountMinor=${docRecord.expectedAmountMinor}, userVerified=${docRecord.userVerified}`,
   });
 
-  savePersistentStore();
+  const persistResult = savePersistentStore();
   const stateAfter = computeCurrentState();
   await syncStateToGraphAsync();
   const reconciliation = stateAfter.reconciliationFindings.find(
@@ -1612,6 +1696,7 @@ const handleUpsertServiceDocument = async (req: express.Request, res: express.Re
     serviceTerms: docRecord,
     reconciliation,
     allFindings: stateAfter.reconciliationFindings,
+    persistenceStatus: persistResult,
   });
 };
 

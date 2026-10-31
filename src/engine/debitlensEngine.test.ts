@@ -982,7 +982,7 @@ test('Three-Way Reconciliation produces accurate outcomes and never claims fraud
 // 13. SERVICE TERMS EXTRACTION, EVIDENCE CASEBOOK, LIFECYCLES & BHASHA Q&A
 // ----------------------------------------------------------------------------
 
-test('Service Terms parser extracts structured billing terms from pasted invoice text', () => {
+test('Service Terms parser extracts structured billing terms from pasted invoice text and never invents a price when currency token is missing', () => {
   const extracted = extractServiceTermsFromText({
     commitmentId: 'CMT-STREAMBOX',
     merchantName: 'StreamBox Media Pvt Ltd',
@@ -997,11 +997,286 @@ test('Service Terms parser extracts structured billing terms from pasted invoice
   assert.equal(extracted.billingFrequency, 'MONTHLY');
   assert.equal(extracted.renewalDate, '2026-11-05');
   assert.equal(extracted.cancellationNoticeDays, 2);
+  assert.equal(extracted.userVerified, false, 'Extracted terms must default to userVerified=false');
+  assert.ok(
+    extracted.extractedFields.every((f) => f.userVerified === false),
+    'Field-level userVerified must match document userVerified=false'
+  );
   assert.ok(extracted.extractedFields.some((f) => f.fieldName === 'expectedAmount'));
   assert.ok(extracted.extractionConfidence >= 75);
+
+  // Missing currency token in pasted text must keep expectedAmountMinor=null and expectedAmount=null (never invent ₹499)
+  const missingPriceDoc = extractServiceTermsFromText({
+    commitmentId: 'CMT-STREAMBOX',
+    merchantName: 'StreamBox Media Pvt Ltd',
+    serviceName: 'StreamBox Plan',
+    documentSource: 'PASTED_INVOICE_TEXT',
+    rawText: 'Subscription Confirmation #INV-0001. Billing Cycle: Quarterly. Cancel 5 days before renewal.',
+  });
+  assert.equal(missingPriceDoc.expectedAmountMinor, null, 'Must not invent ₹499 when no currency token is present');
+  assert.equal(missingPriceDoc.expectedAmount, null);
+  assert.equal(missingPriceDoc.billingFrequency, 'QUARTERLY');
+  assert.equal(missingPriceDoc.cancellationNoticeDays, 5);
 });
 
-test('Evidence Casebook & Independent Cancellation Lifecycles track Layer A and Layer B separately', () => {
+test('All 9 reconciliation outcomes are verified across seed dataset and explicit fixtures (including FREQUENCY_DISCREPANCY and POSSIBLE_DUPLICATE)', () => {
+  const csvPath = path.resolve(process.cwd(), 'data/synthetic-transactions.csv');
+  const notifPath = path.resolve(process.cwd(), 'data/synthetic-notifications.json');
+  const parsedCsv = parseCsvTextRFC4180(fs.readFileSync(csvPath, 'utf-8'));
+  const notifs = JSON.parse(fs.readFileSync(notifPath, 'utf-8'));
+
+  const { transactions } = parseAndNormaliseTransactions(parsedCsv);
+  const { commitments, sessions } = detectCommitmentsAndAlerts(transactions, notifs);
+  const mandates = buildInitialSeedMandates();
+  const serviceTerms = buildInitialSeedServiceTerms();
+
+  const findings = runFullReconciliation({
+    commitments,
+    transactions,
+    mandates,
+    serviceTerms,
+    sessions,
+  });
+
+  // Verify dynamic evaluatedAt (not fixed 2026-10-31T00:00:00Z)
+  for (const f of findings) {
+    assert.notEqual(f.evaluatedAt, '2026-10-31T00:00:00Z');
+    assert.ok(!Number.isNaN(Date.parse(f.evaluatedAt)));
+  }
+
+  // 1. MATCHED (StreamBox, CloudNotes, LearnPro, Bajaj Finance)
+  assert.equal(findings.find((f) => f.commitmentId === 'CMT-STREAMBOX')?.status, 'MATCHED');
+  assert.equal(findings.find((f) => f.commitmentId === 'CMT-CLOUDNOTES')?.status, 'MATCHED');
+  assert.equal(findings.find((f) => f.commitmentId === 'CMT-LEARNPRO')?.status, 'MATCHED');
+  assert.equal(findings.find((f) => f.commitmentId === 'CMT-BAJAJEMI')?.status, 'MATCHED');
+
+  // 2. AMOUNT_DISCREPANCY (MusicFlow: ₹199 documented vs ₹249 actual)
+  assert.equal(findings.find((f) => f.commitmentId === 'CMT-MUSICFLOW')?.status, 'AMOUNT_DISCREPANCY');
+
+  // 3. FREQUENCY_DISCREPANCY (MaxLife: QUARTERLY documented schedule vs IRREGULAR observed cadence)
+  const maxlifeFinding = findings.find((f) => f.commitmentId === 'CMT-MAXLIFE');
+  assert.ok(maxlifeFinding);
+  assert.equal(maxlifeFinding.status, 'FREQUENCY_DISCREPANCY');
+  assert.ok(maxlifeFinding.explanation.includes('QUARTERLY'));
+  assert.ok(maxlifeFinding.explanation.includes('IRREGULAR'));
+
+  // 4. TRANSACTION_WITHOUT_VISIBLE_MANDATE (FitClub)
+  assert.equal(
+    findings.find((f) => f.commitmentId === 'CMT-FITCLUB')?.status,
+    'TRANSACTION_WITHOUT_VISIBLE_MANDATE'
+  );
+
+  // 5. SERVICE_TERMS_UNAVAILABLE (ReadCloud & BESCOM)
+  assert.equal(
+    findings.find((f) => f.commitmentId === 'CMT-READCLOUD')?.status,
+    'SERVICE_TERMS_UNAVAILABLE'
+  );
+  assert.equal(
+    findings.find((f) => f.commitmentId === 'CMT-BESCOM')?.status,
+    'SERVICE_TERMS_UNAVAILABLE'
+  );
+
+  // 6. CONFLICTING_EVIDENCE (DesignVault post-cancellation debit)
+  const dvFinding = findings.find((f) => f.commitmentId === 'CMT-DESIGNVAULT');
+  assert.ok(dvFinding);
+  assert.equal(dvFinding.status, 'CONFLICTING_EVIDENCE');
+  assert.ok(dvFinding.explanation.includes('DV-CANC-20260910-881'));
+  assert.ok(dvFinding.explanation.includes('SIHUB-REV-994012'));
+
+  // 7. MANDATE_WITHOUT_RECENT_TRANSACTION (Dormant NewsPlus mandate)
+  assert.equal(
+    findings.find((f) => f.commitmentId === 'MND-DORMANT-NEWSPLUS')?.status,
+    'MANDATE_WITHOUT_RECENT_TRANSACTION'
+  );
+
+  // Also verify MANDATE_WITHOUT_RECENT_TRANSACTION when an active mandate is linked to an existing commitment with zero recent transactions
+  const streamboxCmt = commitments.find((c) => c.id === 'CMT-STREAMBOX')!;
+  const streamboxMandate = mandates.find((m) => m.commitmentId === 'CMT-STREAMBOX')!;
+  const streamboxTerms = serviceTerms.find((s) => s.commitmentId === 'CMT-STREAMBOX')!;
+  const noRecentTxnFinding = reconcileCommitment({
+    commitment: streamboxCmt,
+    transactions: [], // zero transactions in statement period
+    mandate: streamboxMandate,
+    serviceTerms: streamboxTerms,
+    cancellationSession: null,
+  });
+  assert.equal(noRecentTxnFinding.status, 'MANDATE_WITHOUT_RECENT_TRANSACTION');
+
+  // 8. UNRESOLVED (Processor-only pool)
+  assert.equal(findings.find((f) => f.commitmentId === 'UNRESOLVED-POOL')?.status, 'UNRESOLVED');
+
+  // 9. POSSIBLE_DUPLICATE (Two identical debits within 48 hours without a credit reversal)
+  const dupRows: RawCsvRow[] = [
+    {
+      transaction_id: 'TXN-DUP-0A',
+      transaction_date: '2026-08-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'DUP-0A',
+    },
+    {
+      transaction_id: 'TXN-DUP-0B',
+      transaction_date: '2026-09-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'DUP-0B',
+    },
+    {
+      transaction_id: 'TXN-DUP-1',
+      transaction_date: '2026-10-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'DUP-1',
+    },
+    {
+      transaction_id: 'TXN-DUP-2',
+      transaction_date: '2026-10-06',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'DUP-2',
+    },
+  ];
+  const { transactions: dupTxns } = parseAndNormaliseTransactions(dupRows);
+  const { commitments: dupCmts } = detectCommitmentsAndAlerts(dupTxns, []);
+  const dupFinding = reconcileCommitment({
+    commitment: dupCmts[0],
+    transactions: dupTxns,
+    mandate: streamboxMandate,
+    serviceTerms: streamboxTerms,
+    cancellationSession: null,
+  });
+  assert.equal(dupFinding.status, 'POSSIBLE_DUPLICATE');
+
+  // Verify that when a matching CREDIT reversal exists within 7 days, POSSIBLE_DUPLICATE is NOT raised
+  const reversedDupRows: RawCsvRow[] = [
+    ...dupRows,
+    {
+      transaction_id: 'TXN-DUP-REV',
+      transaction_date: '2026-10-07',
+      raw_description: 'REV-RZP*STREAMBOX-REFUND',
+      amount: 499,
+      currency: 'INR',
+      direction: 'CREDIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'DUP-REV',
+    },
+  ];
+  const { transactions: revDupTxns } = parseAndNormaliseTransactions(reversedDupRows);
+  const { commitments: revDupCmts } = detectCommitmentsAndAlerts(revDupTxns, []);
+  const revDupFinding = reconcileCommitment({
+    commitment: revDupCmts[0],
+    transactions: revDupTxns,
+    mandate: streamboxMandate,
+    serviceTerms: streamboxTerms,
+    cancellationSession: null,
+  });
+  assert.equal(
+    revDupFinding.status,
+    'MATCHED',
+    'Duplicate debit offset by a matching CREDIT reversal must not raise POSSIBLE_DUPLICATE'
+  );
+});
+
+test('Mandate expiry and non-active status prevent three-way reconciliation from marking MATCHED, and post-cancellation explanations respect independent lifecycles', () => {
+  const { transactions } = parseAndNormaliseTransactions(SAMPLE_ROWS);
+  const { commitments } = detectCommitmentsAndAlerts(transactions, SAMPLE_NOTIFICATIONS);
+  const mandates = buildInitialSeedMandates();
+  const serviceTerms = buildInitialSeedServiceTerms();
+
+  const streambox = commitments.find((c) => c.id === 'CMT-STREAMBOX')!;
+  const sbMandate = mandates.find((m) => m.commitmentId === 'CMT-STREAMBOX')!;
+  const sbTerms = serviceTerms.find((s) => s.commitmentId === 'CMT-STREAMBOX')!;
+
+  // Expired mandate check (endDate before latest transaction 2026-08-05)
+  const expiredMandateFinding = reconcileCommitment({
+    commitment: streambox,
+    transactions,
+    mandate: { ...sbMandate, endDate: '2026-07-01' },
+    serviceTerms: sbTerms,
+    cancellationSession: null,
+  });
+  assert.equal(expiredMandateFinding.status, 'CONFLICTING_EVIDENCE');
+  assert.ok(expiredMandateFinding.explanation.includes('expired on 2026-07-01'));
+
+  // Non-active (PAUSED) mandate check
+  const pausedMandateFinding = reconcileCommitment({
+    commitment: streambox,
+    transactions,
+    mandate: { ...sbMandate, mandateStatus: 'PAUSED' },
+    serviceTerms: sbTerms,
+    cancellationSession: null,
+  });
+  assert.equal(pausedMandateFinding.status, 'CONFLICTING_EVIDENCE');
+  assert.ok(pausedMandateFinding.explanation.includes('PAUSED'));
+
+  // Post-cancellation explanation when ONLY service cancellation was recorded (mandate still ACTIVE)
+  const serviceOnlyCancelFinding = reconcileCommitment({
+    commitment: {
+      ...streambox,
+      status: 'POST_CANCEL_ALERT',
+      serviceLifecycleStatus: 'CANCELLATION_EVIDENCE_ATTACHED',
+      mandateLifecycleStatus: 'ACTIVE',
+    },
+    transactions,
+    mandate: sbMandate,
+    serviceTerms: sbTerms,
+    cancellationSession: {
+      id: 'SESS-SB-TEST',
+      commitmentId: 'CMT-STREAMBOX',
+      merchantName: streambox.merchantName,
+      serviceName: streambox.serviceName,
+      paymentRail: streambox.paymentRail,
+      status: 'SERVICE_CANCELLED_PAYMENT_PENDING',
+      initiatedAt: '2026-08-01T10:00:00Z',
+      serviceCancelledAt: '2026-08-01',
+      paymentAuthorisationRevokedAt: null,
+      lastReviewedAt: '2026-08-01',
+      steps: [],
+      evidence: [
+        {
+          id: 'EV-SB-ONLY',
+          cancellationSessionId: 'SESS-SB-TEST',
+          evidenceType: 'SERVICE_CONFIRMATION',
+          referenceNumber: 'SB-TKT-7712',
+          evidenceDate: '2026-08-01',
+          description: 'Cancelled service only',
+          verificationStatus: 'EVIDENCE_ATTACHED',
+          createdAt: '2026-08-01T10:00:00Z',
+        },
+      ],
+      postCancellationTransactionIds: ['TXN-1003'],
+    },
+  });
+  assert.equal(serviceOnlyCancelFinding.status, 'CONFLICTING_EVIDENCE');
+  assert.ok(serviceOnlyCancelFinding.explanation.includes('SB-TKT-7712'));
+  assert.ok(
+    serviceOnlyCancelFinding.explanation.includes('mandate revocation is not recorded'),
+    'Must not claim both service cancellation and mandate revocation were recorded when only Layer A was recorded'
+  );
+  assert.ok(
+    !serviceOnlyCancelFinding.explanation.includes('DV-CANC-20260910-881'),
+    'Must never use fabricated fallback reference DV-CANC-20260910-881'
+  );
+});
+
+test('Evidence Casebook & Independent Cancellation Lifecycles track Layer A and Layer B separately and use accurate verificationStatus labels', () => {
   const { transactions } = parseAndNormaliseTransactions(SAMPLE_ROWS);
   const { commitments, alerts, sessions } = detectCommitmentsAndAlerts(
     transactions,
@@ -1032,6 +1307,21 @@ test('Evidence Casebook & Independent Cancellation Lifecycles track Layer A and 
   assert.ok(
     casebook.entries.length >= 4,
     'Evidence casebook must assemble multi-source evidence chain'
+  );
+
+  // Verify honest verificationStatus labels on casebook entries
+  const mandateEntry = casebook.entries.find((e) => e.category === 'MANDATE_RECORD')!;
+  assert.equal(
+    mandateEntry.verificationStatus,
+    'IMPORTED_RECORD',
+    'Imported/demo-seeded mandate must be labelled IMPORTED_RECORD, not CONFIRMED'
+  );
+
+  const recEntry = casebook.entries.find((e) => e.category === 'RECONCILIATION_FINDING')!;
+  assert.equal(
+    recEntry.verificationStatus,
+    'SYSTEM_GENERATED',
+    'Computed reconciliation finding must be labelled SYSTEM_GENERATED, not CONFIRMED'
   );
 
   // Verify independent Layer A & Layer B statuses
@@ -1102,5 +1392,6 @@ test('Data Coverage summary and Contextual Bhasha Q&A provide grounded, honest r
   assert.ok(qa.localizedAnswer.includes('StreamBox'));
   assert.ok(qa.evidenceRecordIds.length >= 2);
 });
+
 
 

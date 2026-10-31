@@ -34,15 +34,15 @@ Ordinary consumers face opaque bank statement descriptors (`RZP*STREAMBOX`, `SI-
 
 ## 3. Architecture & Technology Stack
 
-- **Backend (`server.ts`):** Node.js + Express + TypeScript API server with official `neo4j-driver` v6 connection pooling, parameterised Cypher queries, `SHOW CONSTRAINTS` verification, Sarvam AI concurrency-limited client (`runWithConcurrencyLimit`, 10s timeout), and atomic local persistence (`data/persistent-store.json`).
+- **Backend (`server.ts`):** Node.js + Express + TypeScript API server with official `neo4j-driver` v6 connection pooling, parameterised Cypher queries, `SHOW CONSTRAINTS` verification, Sarvam AI concurrency-limited client (`runWithConcurrencyLimit`, 10s timeout), and atomic local persistence (`data/persistent-store.json` written via temporary file + `fs.renameSync` with explicit caller error reporting).
 - **Core Intelligence Engines (`src/engine/`):**
   - `debitlensEngine.ts`: RFC-4180 CSV parser, descriptor normaliser, 6-tier identity resolver, temporal cadence detector, 100-point explainable confidence scorer, ground-truth evaluator, and graph builder.
-  - `reconciliationEngine.ts`: Three-way reconciliation engine, deterministic invoice/receipt term extractor, Evidence Casebook & Audit Timeline builder, Data Coverage analyser, Financial Guardrails, and grounded Contextual Bhasha Q&A builder.
+  - `reconciliationEngine.ts`: Three-way reconciliation engine, deterministic invoice/receipt term extractor (`expectedAmountMinor: null` when no currency token is present, `userVerified: false` until explicitly confirmed), Evidence Casebook & Append-Only Application Audit Timeline builder, Data Coverage analyser, Financial Guardrails, and grounded Contextual Bhasha Q&A builder.
 - **Frontend (`src/`):** React 19 + TypeScript + Tailwind CSS + Lucide Icons + Recharts workspace featuring:
   - **Overview Dashboard & Spend Breakdown**
   - **Commitments & Recurring Candidates Review**
-  - **3-Way Reconciliation Centre & Section 22 Judge Demo**
-  - **Evidence Casebook, Audit Timeline, Data Coverage & Guardrails**
+  - **3-Way Reconciliation Centre, Extracted-Field Preview & Section 22 Judge Demo**
+  - **Evidence Casebook, Append-Only Application Audit Timeline, Data Coverage & Guardrails**
   - **Transactions Explorer with Raw Statement Descriptor Search History**
   - **Neo4j Commitment Map & Live Cypher Inspector**
   - **Sarvam Bhasha Explainer & Contextual Financial Q&A**
@@ -68,12 +68,13 @@ Ordinary consumers face opaque bank statement descriptors (`RZP*STREAMBOX`, `SI-
    SARVAM_TRANSLATE_MODEL=sarvam-translate:v1
    SARVAM_DEFAULT_LANGUAGE=en-IN
    ```
-2. Install dependencies and start the server on port `3000`:
+2. Install dependencies and start the server on port `3000` (both `npm run dev` and `npm start` execute `tsx server.ts`):
    ```bash
    npm install
    npm run dev
+   # or: npm start
    ```
-3. Run automated unit & adversarial tests (34 tests including ground-truth evaluation and three-way reconciliation):
+3. Run automated unit & adversarial tests (36 tests across `src/utils/searchHistory.test.ts` and `src/engine/debitlensEngine.test.ts`, including ground-truth evaluation and all 9 three-way reconciliation outcomes):
    ```bash
    npm test
    ```
