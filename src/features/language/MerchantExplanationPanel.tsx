@@ -54,7 +54,7 @@ export const MerchantExplanationPanel: React.FC<MerchantExplanationPanelProps> =
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-100 pb-4">
           <div>
             <h3 className="text-base font-semibold text-slate-900">
-              A. Cryptic Merchant Descriptor Explanation (Sarvam-105B + Sarvam Translate)
+              Cryptic Merchant Descriptor Explanation — DebitLens Bhasha
             </h3>
             <p className="text-xs text-slate-600 mt-0.5">
               Select any bank statement debit below — including multi-alias merchants (<code className="font-mono text-slate-800">RAZORPAY*STREAMBOX</code>) or unresolved processor-only descriptors (<code className="font-mono text-slate-800">UPI/DR/42571190/RAZORPAY</code>) — to see grounded explanations without hallucination.

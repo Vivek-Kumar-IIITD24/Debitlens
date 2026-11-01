@@ -41,6 +41,7 @@ import {
 } from './reconciliationEngine';
 
 export * from './reconciliationEngine';
+export * from './investigationEngine';
 
 export interface RawCsvRow {
   transaction_id: string;
@@ -61,7 +62,7 @@ export interface NotificationInput {
   eventDate: string;
   trialStartDate: string | null;
   trialEndDate: string | null;
-  expectedAmount: number;
+  expectedAmount: number | null;
   currency: string;
   relatedCommitmentId: string;
   sourceType: string;
@@ -372,6 +373,24 @@ export function resolveTransactionDescriptor(
   };
 }
 
+export function parseStrictAmount(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') {
+    return Number.isNaN(value) || value < 0 ? null : value;
+  }
+  let str = String(value).trim();
+  if (!str) return null;
+  // Clean currency symbols and commas e.g. "₹499.00", "Rs. 1,299", "INR 799"
+  str = str.replace(/^(?:INR|RS\.?|₹)\s*/i, '').replace(/,/g, '').trim();
+  // Strictly validate integer or decimal number
+  // Rejects loose strings such as '200xyz' or '12.34.56'
+  if (!/^\d+(?:\.\d+)?$/.test(str)) {
+    return null;
+  }
+  const num = Number(str);
+  return Number.isNaN(num) || num < 0 ? null : num;
+}
+
 export function parseAndNormaliseTransactions(
   rows: RawCsvRow[],
   importBatchId = 'BATCH-SEED-01',
@@ -392,29 +411,49 @@ export function parseAndNormaliseTransactions(
     const txnId = (row.transaction_id || '').trim();
     const dateStr = (row.transaction_date || '').trim();
     const rawDesc = (row.raw_description || '').trim();
-    const rawAmt = typeof row.amount === 'number' ? row.amount : parseFloat(String(row.amount || ''));
     let direction = (row.direction || 'DEBIT').trim().toUpperCase();
 
-    if (!txnId || !dateStr || !rawDesc || Number.isNaN(rawAmt) || rawAmt === 0) {
+    if (!txnId || !dateStr || !rawDesc) {
       invalidRows.push({
         rowNumber: rowNum,
         raw: row,
-        reason: 'Missing required fields (transaction_id, valid date, non-zero amount, or raw_description).',
+        reason: 'Missing required fields (transaction_id, transaction_date, or raw_description).',
       });
       return;
     }
 
+    const parsedAmt = parseStrictAmount(row.amount);
+    if (parsedAmt === null) {
+      invalidRows.push({
+        rowNumber: rowNum,
+        raw: row,
+        reason: `Invalid numeric amount: "${row.amount}". Must be an explicit, valid number (loose strings like '200xyz' are rejected).`,
+      });
+      return;
+    }
+
+    if (parsedAmt === 0) {
+      invalidRows.push({
+        rowNumber: rowNum,
+        raw: row,
+        reason: 'Zero-value transaction ignored from recurring commitment analysis.',
+      });
+      return;
+    }
+
+    const rawAmt = parsedAmt;
     // Support negative numbers by converting negative DEBIT to CREDIT/reversal or normalising magnitude
     const amt = Math.abs(rawAmt);
     if (rawAmt < 0 && (!row.direction || direction === 'DEBIT')) {
       direction = 'CREDIT';
     }
 
-    if (Number.isNaN(Date.parse(dateStr))) {
+    const parsedMs = Date.parse(dateStr);
+    if (Number.isNaN(parsedMs) || dateStr.length < 8) {
       invalidRows.push({
         rowNumber: rowNum,
         raw: row,
-        reason: `Invalid ISO date format: "${dateStr}"`,
+        reason: `Invalid ISO date format: "${dateStr}". Must be a valid date.`,
       });
       return;
     }

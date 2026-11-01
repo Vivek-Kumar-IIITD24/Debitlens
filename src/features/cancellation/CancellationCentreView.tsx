@@ -64,7 +64,7 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
   >('SERVICE_CONFIRMATION');
   const [referenceNumber, setReferenceNumber] = useState('');
   const [description, setDescription] = useState('');
-  const [evidenceDate, setEvidenceDate] = useState('2026-10-30');
+  const [evidenceDate, setEvidenceDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [formError, setFormError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 

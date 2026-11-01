@@ -440,7 +440,9 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                   <div className="text-[11px] font-mono text-slate-400 mt-0.5">
                     {activeFinding.expectedServiceAmountMinor !== null
                       ? `${activeFinding.expectedServiceAmountMinor} paise · ${
-                          activeDoc?.billingFrequency || 'MONTHLY'
+                          activeDoc?.billingFrequency && activeDoc.billingFrequency !== 'UNKNOWN'
+                            ? activeDoc.billingFrequency
+                            : 'Cadence Unavailable'
                         }`
                       : 'No invoice attached yet'}
                   </div>
@@ -542,7 +544,7 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                     className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 flex items-center gap-1.5 cursor-pointer"
                   >
                     <Network className="w-3.5 h-3.5 text-emerald-400" />
-                    Inspect in Neo4j Commitment Graph
+                    Inspect in Relationship Map
                   </button>
                   <button
                     onClick={() => onNavigateToCasebook(activeCommitment.id)}
@@ -563,7 +565,7 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                     className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 flex items-center gap-1.5 cursor-pointer"
                   >
                     <Languages className="w-3.5 h-3.5 text-sky-400" />
-                    Explain in Bhasha (Sarvam AI)
+                    Explain in DebitLens Bhasha
                   </button>
                 </div>
               )}
@@ -631,6 +633,9 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                       <option value="MONTHLY">MONTHLY</option>
                       <option value="QUARTERLY">QUARTERLY</option>
                       <option value="YEARLY">YEARLY</option>
+                      <option value="WEEKLY">WEEKLY</option>
+                      <option value="FORTNIGHTLY">FORTNIGHTLY</option>
+                      <option value="UNKNOWN">UNKNOWN / NOT SPECIFIED</option>
                     </select>
                   </div>
                 </div>

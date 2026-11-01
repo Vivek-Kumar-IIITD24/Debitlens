@@ -24,6 +24,14 @@ import {
   buildDataCoverageSummary,
   buildInitialSeedGuardrails,
   buildGroundedContextualQuestionResponse,
+  parseStrictAmount,
+  generateMerchantCandidates,
+  buildUnrecognizedDebitCase,
+  buildReviewQueue,
+  generateCommitmentPassport,
+  generateEvidencePackData,
+  generatePrintableEvidencePackHtml,
+  previewCsvMapping,
 } from './src/engine/debitlensEngine';
 import {
   MERCHANT_CATALOGUE,
@@ -44,6 +52,10 @@ import {
   MandateLifecycleStatus,
   RecurrenceFrequency,
   PaymentRailType,
+  UnrecognizedDebitCase,
+  UnrecognizedDebitCaseStatus,
+  ReviewQueueStatus,
+  CsvMappingConfig,
 } from './src/types/debitlens';
 import { toMinorUnits, fromMinorUnits } from './src/utils/currency';
 import {
@@ -84,6 +96,8 @@ interface PersistentAppStore {
   customCasebookEntries: EvidenceCasebookEntry[];
   auditEvents: AuditEventRecord[];
   guardrails: FinancialGuardrailConfig[];
+  investigationCases?: UnrecognizedDebitCase[];
+  reviewQueueStatusOverrides?: Record<string, ReviewQueueStatus>;
 }
 
 let rawCsvRows: RawCsvRow[] = [];
@@ -97,6 +111,8 @@ let serviceTermsStore: ServiceTermsRecord[] = [];
 let customCasebookEntries: EvidenceCasebookEntry[] = [];
 let auditEventsStore: AuditEventRecord[] = [];
 let guardrailsStore: FinancialGuardrailConfig[] = [];
+let investigationCasesStore: UnrecognizedDebitCase[] = [];
+let reviewQueueStatusOverrides: Record<string, ReviewQueueStatus> = {};
 
 function recordAuditEvent(params: {
   commitmentId: string | null;
@@ -104,7 +120,7 @@ function recordAuditEvent(params: {
   summary: string;
   previousState?: string | null;
   newState?: string | null;
-  actor?: 'SYSTEM_ENGINE' | 'USER_ACTION';
+  actor?: 'SYSTEM_ENGINE' | 'USER_ACTION' | 'DEMO_SEED_SCENARIO';
 }) {
   const evt: AuditEventRecord = {
     id: `AUD-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -141,6 +157,8 @@ function savePersistentStore(): { saved: boolean; error?: string } {
       customCasebookEntries,
       auditEvents: auditEventsStore,
       guardrails: guardrailsStore,
+      investigationCases: investigationCasesStore,
+      reviewQueueStatusOverrides,
     };
     fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf-8');
     fs.renameSync(tmpPath, PERSISTENT_STORE_PATH);
@@ -159,6 +177,21 @@ function savePersistentStore(): { saved: boolean; error?: string } {
     console.warn('Warning: could not write persistent-store.json:', message);
     return { saved: false, error: message };
   }
+}
+
+/**
+ * Enforces Part 3.3 persistence failure checking:
+ * Returns false and sends a 500 error if persistence write failed.
+ */
+function persistOrError(res: express.Response): boolean {
+  const result = savePersistentStore();
+  if (!result.saved) {
+    res.status(500).json({
+      error: `Failed to persist application state: ${result.error || 'Disk write error'}`,
+    });
+    return false;
+  }
+  return true;
 }
 
 function loadSeedData(forceReset = false) {
@@ -183,6 +216,8 @@ function loadSeedData(forceReset = false) {
         customCasebookEntries = saved.customCasebookEntries || [];
         auditEventsStore = saved.auditEvents || [];
         guardrailsStore = saved.guardrails || [];
+        investigationCasesStore = saved.investigationCases || [];
+        reviewQueueStatusOverrides = saved.reviewQueueStatusOverrides || {};
         return;
       }
     } catch {
@@ -207,20 +242,20 @@ function loadSeedData(forceReset = false) {
       commitmentId: 'CMT-DESIGNVAULT',
       timestamp: '2026-09-10T14:20:00Z',
       eventType: 'SERVICE_STATUS_UPDATED',
-      summary: 'User attached DesignVault service cancellation confirmation DV-CANC-20260910-881.',
+      summary: 'Demonstration seed: DesignVault service cancellation confirmation DV-CANC-20260910-881.',
       previousState: 'ACTIVE',
       newState: 'CANCELLATION_EVIDENCE_ATTACHED',
-      actor: 'USER_ACTION',
+      actor: 'DEMO_SEED_SCENARIO',
     },
     {
       id: 'AUD-SEED-02',
       commitmentId: 'CMT-DESIGNVAULT',
       timestamp: '2026-09-10T14:35:00Z',
       eventType: 'MANDATE_STATUS_UPDATED',
-      summary: 'User recorded ICICI SIHub mandate revocation SIHUB-REV-994012.',
+      summary: 'Demonstration seed: ICICI SIHub mandate revocation SIHUB-REV-994012.',
       previousState: 'ACTIVE',
       newState: 'REVOCATION_EVIDENCE_ATTACHED',
-      actor: 'USER_ACTION',
+      actor: 'DEMO_SEED_SCENARIO',
     },
   ];
   importHistory = [
@@ -1307,7 +1342,7 @@ const handleConfirmIdentityMatch = async (req: express.Request, res: express.Res
     previousState: 'UNRESOLVED',
     newState: targetMerchantId,
   });
-  savePersistentStore();
+  if (!persistOrError(res)) return;
   const state = computeCurrentState();
   await syncStateToGraphAsync();
   res.json({
@@ -1369,7 +1404,7 @@ app.post('/api/commitments/:id/confirm', async (req, res) => {
     previousState: prev,
     newState: 'USER_CONFIRMED',
   });
-  savePersistentStore();
+  if (!persistOrError(res)) return;
   const state = computeCurrentState();
   await syncStateToGraphAsync();
   const updated = state.commitments.find((c) => c.id === id);
@@ -1392,7 +1427,7 @@ app.post('/api/commitments/:id/reject', async (req, res) => {
     previousState: prev,
     newState: 'REJECTED',
   });
-  savePersistentStore();
+  if (!persistOrError(res)) return;
   const state = computeCurrentState();
   await syncStateToGraphAsync();
   const updated = state.commitments.find((c) => c.id === id);
@@ -1436,7 +1471,7 @@ app.patch('/api/commitments/:id', async (req, res) => {
     newState: JSON.stringify(req.body),
   });
 
-  savePersistentStore();
+  if (!persistOrError(res)) return;
   const state = computeCurrentState();
   await syncStateToGraphAsync();
   res.json(state.commitments.find((c) => c.id === id));
@@ -1449,7 +1484,7 @@ app.patch('/api/commitments/:id/usage', async (req, res) => {
     ...(userCommitmentOverrides[id] || {}),
     lastUsedDate,
   };
-  savePersistentStore();
+  if (!persistOrError(res)) return;
   const state = computeCurrentState();
   await syncStateToGraphAsync();
   const updated = state.commitments.find((c) => c.id === id);
@@ -1474,33 +1509,98 @@ app.post('/api/mandates/import', async (req, res) => {
     return;
   }
 
-  let added = 0;
+  const totalRows = incoming.length;
+  let acceptedRows = 0;
+  let rejectedRows = 0;
+  let incompleteRecords = 0;
+  let duplicateRecords = 0;
+  const fieldsRequiringVerification: string[] = [];
+  const seenRefs = new Set(mandatesStore.map((m) => m.mandateReference));
+
   for (const item of incoming) {
-    if (!item.mandateReference || !item.merchantName) continue;
-    const maxMinor =
-      item.maxAmountMinor !== undefined
-        ? Number(item.maxAmountMinor)
-        : toMinorUnits(Number(item.maxAmount || 500));
+    if (!item.mandateReference) {
+      rejectedRows++;
+      continue;
+    }
+    const cleanRef = String(item.mandateReference).trim();
+    if (!cleanRef) {
+      rejectedRows++;
+      continue;
+    }
+
+    if (seenRefs.has(cleanRef)) {
+      duplicateRecords++;
+    } else {
+      seenRefs.add(cleanRef);
+    }
+
+    // Strictly DO NOT default missing financial details!
+    let maxMinor: number | null = null;
+    let maxAmount: number | null = null;
+    if (item.maxAmountMinor !== undefined && item.maxAmountMinor !== null) {
+      maxMinor = Number(item.maxAmountMinor);
+      maxAmount = fromMinorUnits(maxMinor);
+    } else if (item.maxAmount !== undefined && item.maxAmount !== null && item.maxAmount !== '') {
+      const parsed = parseStrictAmount(item.maxAmount);
+      if (parsed !== null && parsed > 0) {
+        maxMinor = toMinorUnits(parsed);
+        maxAmount = parsed;
+      }
+    }
+
+    const paymentRail: PaymentRailType | 'UNKNOWN' =
+      (item.paymentRail as PaymentRailType) || 'UNKNOWN';
+
+    const frequency: RecurrenceFrequency | 'UNKNOWN' =
+      (item.frequency as RecurrenceFrequency) || 'UNKNOWN';
+
+    const startDate: string | null = item.startDate ? String(item.startDate).trim() : null;
+    const endDate: string | null = item.endDate ? String(item.endDate).trim() : null;
+    const mandateStatus = item.mandateStatus || 'UNKNOWN';
+
+    const missingFields: string[] = [];
+    if (maxMinor === null) missingFields.push('maxAmount');
+    if (paymentRail === 'UNKNOWN') missingFields.push('paymentRail');
+    if (frequency === 'UNKNOWN') missingFields.push('frequency');
+    if (!startDate) missingFields.push('startDate');
+    if (mandateStatus === 'UNKNOWN' || mandateStatus === 'PENDING_VERIFICATION') {
+      missingFields.push('mandateStatus');
+    }
+
+    const isIncomplete = missingFields.length > 0;
+    if (isIncomplete) {
+      incompleteRecords++;
+      missingFields.forEach((f) => {
+        if (!fieldsRequiringVerification.includes(f)) {
+          fieldsRequiringVerification.push(f);
+        }
+      });
+    }
+
     const newMandate: MandateRecord = {
-      id: item.id || `MND-${Date.now()}-${added}`,
-      mandateReference: item.mandateReference,
+      id: item.id || `MND-${Date.now()}-${acceptedRows}`,
+      mandateReference: cleanRef,
       commitmentId: item.commitmentId ?? null,
       merchantId: item.merchantId ?? null,
-      merchantName: item.merchantName,
-      paymentRail: (item.paymentRail as PaymentRailType) || 'UPI_AUTOPAY',
+      merchantName: item.merchantName || 'Unresolved Merchant',
+      paymentRail,
       maxAmountMinor: maxMinor,
-      maxAmount: fromMinorUnits(maxMinor),
+      maxAmount,
       currency: item.currency || 'INR',
-      frequency: (item.frequency as RecurrenceFrequency) || 'MONTHLY',
-      startDate: item.startDate || '2026-06-01',
-      endDate: item.endDate ?? null,
-      mandateStatus: item.mandateStatus || 'ACTIVE',
+      frequency,
+      startDate,
+      endDate,
+      mandateStatus,
       sourceType: 'USER_IMPORTED',
       updatedAt: new Date().toISOString(),
+      isIncomplete,
+      missingFields,
     };
+
     const existingIdx = mandatesStore.findIndex(
       (m) =>
         m.id === newMandate.id ||
+        m.mandateReference === newMandate.mandateReference ||
         (newMandate.commitmentId && m.commitmentId === newMandate.commitmentId)
     );
     if (existingIdx >= 0) {
@@ -1508,14 +1608,22 @@ app.post('/api/mandates/import', async (req, res) => {
     } else {
       mandatesStore.push(newMandate);
     }
-    added++;
+    acceptedRows++;
   }
 
-  savePersistentStore();
+  if (!persistOrError(res)) return;
+
   const state = computeCurrentState();
   await syncStateToGraphAsync();
+
   res.json({
-    importedCount: added,
+    totalRows,
+    acceptedRows,
+    rejectedRows,
+    incompleteRecords,
+    duplicateRecords,
+    fieldsRequiringVerification,
+    importedCount: acceptedRows,
     mandates: mandatesStore,
     reconciliationFindings: state.reconciliationFindings,
   });
@@ -1685,7 +1793,7 @@ const handleUpsertServiceDocument = async (req: express.Request, res: express.Re
     newState: `expectedAmountMinor=${docRecord.expectedAmountMinor}, userVerified=${docRecord.userVerified}`,
   });
 
-  const persistResult = savePersistentStore();
+  if (!persistOrError(res)) return;
   const stateAfter = computeCurrentState();
   await syncStateToGraphAsync();
   const reconciliation = stateAfter.reconciliationFindings.find(
@@ -1696,7 +1804,7 @@ const handleUpsertServiceDocument = async (req: express.Request, res: express.Re
     serviceTerms: docRecord,
     reconciliation,
     allFindings: stateAfter.reconciliationFindings,
-    persistenceStatus: persistResult,
+    persistenceStatus: { saved: true },
   });
 };
 
@@ -1822,7 +1930,7 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
     newState: sourceReference,
   });
 
-  savePersistentStore();
+  if (!persistOrError(res)) return;
   await syncStateToGraphAsync();
 
   const state = computeCurrentState();
@@ -1862,7 +1970,7 @@ app.get('/api/alerts', (_req, res) => {
 app.patch('/api/alerts/:id/status', async (req, res) => {
   const { status } = req.body as { status: 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED' };
   alertStatusOverrides[req.params.id] = status;
-  savePersistentStore();
+  if (!persistOrError(res)) return;
   const state = computeCurrentState();
   await syncStateToGraphAsync();
   res.json(state.alerts.find((a) => a.id === req.params.id));
@@ -1906,7 +2014,7 @@ app.post('/api/commitments/:id/cancellation', async (req, res) => {
     previousState: cmt.serviceLifecycleStatus,
     newState: 'CANCELLATION_REQUESTED',
   });
-  savePersistentStore();
+  if (!persistOrError(res)) return;
   const updatedState = computeCurrentState();
   await syncStateToGraphAsync();
   res.json({
@@ -1968,7 +2076,7 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
     newState: serviceLifecycleStatus,
   });
 
-  savePersistentStore();
+  if (!persistOrError(res)) return;
   const updatedState = computeCurrentState();
   await syncStateToGraphAsync();
   res.json({
@@ -2041,7 +2149,7 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
     newState: mandateLifecycleStatus,
   });
 
-  savePersistentStore();
+  if (!persistOrError(res)) return;
   const updatedState = computeCurrentState();
   await syncStateToGraphAsync();
   res.json({
@@ -2269,12 +2377,12 @@ app.post('/api/import/transactions', async (req, res) => {
   let rejected = 0;
 
   for (const r of parsedRows) {
-    const amt = parseFloat(String(r.amount || ''));
+    const amt = parseStrictAmount(r.amount);
     if (
       !r.transaction_id ||
       !r.transaction_date ||
       !r.raw_description ||
-      Number.isNaN(amt) ||
+      amt === null ||
       amt <= 0
     ) {
       rejected++;
@@ -2301,7 +2409,7 @@ app.post('/api/import/transactions', async (req, res) => {
     importedAt: new Date().toISOString(),
   };
   importHistory.unshift(batchRecord);
-  savePersistentStore();
+  if (!persistOrError(res)) return;
 
   const state = computeCurrentState();
   await syncStateToGraphAsync();
@@ -2351,6 +2459,12 @@ app.post('/api/import/notifications', async (req, res) => {
       continue;
     }
     existingIds.add(String(item.id));
+
+    const parsedNotifAmt =
+      item.expectedAmount !== undefined && item.expectedAmount !== null && item.expectedAmount !== ''
+        ? parseStrictAmount(item.expectedAmount)
+        : null;
+
     notificationEvents.push({
       id: String(item.id),
       eventDate: String(item.eventDate),
@@ -2358,7 +2472,7 @@ app.post('/api/import/notifications', async (req, res) => {
       merchantHint: String(item.merchantHint),
       trialStartDate: item.trialStartDate ?? null,
       trialEndDate: item.trialEndDate ?? null,
-      expectedAmount: Number(item.expectedAmount || 0),
+      expectedAmount: parsedNotifAmt,
       currency: String(item.currency || 'INR'),
       relatedCommitmentId: String(item.relatedCommitmentId || ''),
       sourceType: String(item.sourceType || 'UPLOADED_JSON'),
@@ -2375,16 +2489,388 @@ app.post('/api/import/notifications', async (req, res) => {
     acceptedRecords: added,
     rejectedRecords: rejected,
     duplicateRecords: duplicates,
-  importedAt: new Date().toISOString(),
+    importedAt: new Date().toISOString(),
   };
   importHistory.unshift(batchRecord);
-  savePersistentStore();
+  if (!persistOrError(res)) return;
 
   const state = computeCurrentState();
   await syncStateToGraphAsync();
   res.json({
     batch: batchRecord,
     totalNotifications: notificationEvents.length,
+    totalCommitments: state.commitments.length,
+    totalAlerts: state.alerts.length,
+  });
+});
+
+// ============================================================================
+// REST API ENDPOINTS — COMMITMENT PASSPORT & EVIDENCE PACK (Phase 3)
+// ============================================================================
+app.get('/api/commitments/:id/passport', (req, res) => {
+  const state = computeCurrentState();
+  const cmt = state.commitments.find((c) => c.id === req.params.id);
+  if (!cmt) {
+    res.status(404).json({ error: 'Commitment not found' });
+    return;
+  }
+  const mandate =
+    mandatesStore.find(
+      (m) => m.commitmentId === cmt.id || (cmt.mandateRef && m.mandateReference === cmt.mandateRef)
+    ) || null;
+  const serviceTerms = serviceTermsStore.find((s) => s.commitmentId === cmt.id) || null;
+  const finding = state.reconciliationFindings.find((r) => r.commitmentId === cmt.id) || null;
+  const alerts = state.alerts.filter((a) => a.commitmentId === cmt.id);
+  const session = state.sessions.find((s) => s.commitmentId === cmt.id) || null;
+  const casebook = buildCommitmentEvidenceCasebook({
+    commitment: cmt,
+    transactions: state.transactions,
+    mandate,
+    serviceTerms,
+    reconciliation: finding,
+    alerts: state.alerts,
+    session,
+    customEntries: customCasebookEntries,
+    auditEvents: auditEventsStore,
+  });
+
+  const passport = generateCommitmentPassport({
+    commitment: cmt,
+    transactions: state.transactions,
+    mandate,
+    serviceTerms,
+    reconciliation: finding,
+    alerts,
+    casebookEntries: casebook.entries,
+    auditEvents: casebook.auditEvents,
+  });
+  res.json(passport);
+});
+
+app.get('/api/commitments/:id/evidence-pack', (req, res) => {
+  const state = computeCurrentState();
+  const cmt = state.commitments.find((c) => c.id === req.params.id);
+  if (!cmt) {
+    res.status(404).json({ error: 'Commitment not found' });
+    return;
+  }
+  const mandate =
+    mandatesStore.find(
+      (m) => m.commitmentId === cmt.id || (cmt.mandateRef && m.mandateReference === cmt.mandateRef)
+    ) || null;
+  const serviceTerms = serviceTermsStore.find((s) => s.commitmentId === cmt.id) || null;
+  const finding = state.reconciliationFindings.find((r) => r.commitmentId === cmt.id) || null;
+  const alerts = state.alerts.filter((a) => a.commitmentId === cmt.id);
+  const session = state.sessions.find((s) => s.commitmentId === cmt.id) || null;
+  const casebook = buildCommitmentEvidenceCasebook({
+    commitment: cmt,
+    transactions: state.transactions,
+    mandate,
+    serviceTerms,
+    reconciliation: finding,
+    alerts: state.alerts,
+    session,
+    customEntries: customCasebookEntries,
+    auditEvents: auditEventsStore,
+  });
+
+  const pack = generateEvidencePackData({
+    commitment: cmt,
+    transactions: state.transactions,
+    mandate,
+    serviceTerms,
+    reconciliation: finding,
+    alerts,
+    casebookEntries: casebook.entries,
+    auditEvents: casebook.auditEvents,
+  });
+  res.json(pack);
+});
+
+app.get('/api/commitments/:id/evidence-pack/print', (req, res) => {
+  const state = computeCurrentState();
+  const cmt = state.commitments.find((c) => c.id === req.params.id);
+  if (!cmt) {
+    res.status(404).send('<h1>Commitment not found</h1>');
+    return;
+  }
+  const mandate =
+    mandatesStore.find(
+      (m) => m.commitmentId === cmt.id || (cmt.mandateRef && m.mandateReference === cmt.mandateRef)
+    ) || null;
+  const serviceTerms = serviceTermsStore.find((s) => s.commitmentId === cmt.id) || null;
+  const finding = state.reconciliationFindings.find((r) => r.commitmentId === cmt.id) || null;
+  const alerts = state.alerts.filter((a) => a.commitmentId === cmt.id);
+  const session = state.sessions.find((s) => s.commitmentId === cmt.id) || null;
+  const casebook = buildCommitmentEvidenceCasebook({
+    commitment: cmt,
+    transactions: state.transactions,
+    mandate,
+    serviceTerms,
+    reconciliation: finding,
+    alerts: state.alerts,
+    session,
+    customEntries: customCasebookEntries,
+    auditEvents: auditEventsStore,
+  });
+
+  const pack = generateEvidencePackData({
+    commitment: cmt,
+    transactions: state.transactions,
+    mandate,
+    serviceTerms,
+    reconciliation: finding,
+    alerts,
+    casebookEntries: casebook.entries,
+    auditEvents: casebook.auditEvents,
+  });
+  const html = generatePrintableEvidencePackHtml(pack);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
+// ============================================================================
+// REST API ENDPOINTS — UNRECOGNIZED DEBIT INVESTIGATION WORKFLOW (Phase 2)
+// ============================================================================
+app.get('/api/investigations', (_req, res) => {
+  res.json(investigationCasesStore);
+});
+
+app.post('/api/investigations', async (req, res) => {
+  const { transactionId } = req.body as { transactionId: string };
+  const state = computeCurrentState();
+  const txn = state.transactions.find((t) => t.id === transactionId);
+  if (!txn) {
+    res.status(404).json({ error: 'Transaction not found' });
+    return;
+  }
+  let existing = investigationCasesStore.find((c) => c.transactionId === transactionId);
+  if (!existing) {
+    existing = buildUnrecognizedDebitCase({
+      transaction: txn,
+      allTransactions: state.transactions,
+      userMerchantOverrides,
+      existingCases: investigationCasesStore,
+    });
+    investigationCasesStore.push(existing);
+    recordAuditEvent({
+      commitmentId: null,
+      eventType: 'INVESTIGATION_OPENED',
+      summary: `User opened investigation ${existing.id} for unrecognized debit ${txn.id} (${txn.rawDescription}).`,
+      previousState: null,
+      newState: 'OPEN',
+      actor: 'USER_REPORTED',
+    });
+    if (!persistOrError(res)) return;
+  }
+  res.json(existing);
+});
+
+app.post('/api/investigations/:id/action', async (req, res) => {
+  const id = req.params.id;
+  const { actionType, notes, targetStatus } = req.body as {
+    actionType: string;
+    notes?: string;
+    targetStatus?: UnrecognizedDebitCaseStatus;
+  };
+  const caseItem = investigationCasesStore.find((c) => c.id === id);
+  if (!caseItem) {
+    res.status(404).json({ error: 'Investigation case not found' });
+    return;
+  }
+  const prevState = caseItem.status;
+  if (targetStatus) {
+    caseItem.status = targetStatus;
+  }
+  if (notes) {
+    caseItem.notes = (caseItem.notes ? caseItem.notes + '\n' : '') + notes;
+  }
+  caseItem.actionsTaken.push({
+    actionId: `ACT-${Date.now()}`,
+    actionType,
+    takenAt: new Date().toISOString(),
+    notes: notes || `Action ${actionType} recorded by user.`,
+    actor: 'USER',
+  });
+  caseItem.updatedAt = new Date().toISOString();
+
+  recordAuditEvent({
+    commitmentId: null,
+    eventType: 'INVESTIGATION_UPDATED',
+    summary: `Investigation ${caseItem.id} updated with action ${actionType} (Status: ${caseItem.status}).`,
+    previousState: prevState,
+    newState: caseItem.status,
+    actor: 'USER_ACTION',
+  });
+
+  if (!persistOrError(res)) return;
+  res.json(caseItem);
+});
+
+app.post('/api/investigations/:id/confirm-merchant', async (req, res) => {
+  const id = req.params.id;
+  const { merchantId, rawDescription } = req.body as {
+    merchantId: string;
+    rawDescription: string;
+  };
+  const caseItem = investigationCasesStore.find((c) => c.id === id);
+  if (!caseItem) {
+    res.status(404).json({ error: 'Investigation case not found' });
+    return;
+  }
+  userMerchantOverrides[rawDescription] = merchantId;
+  caseItem.confirmedMerchantId = merchantId;
+  caseItem.status = 'IDENTIFIED';
+  caseItem.updatedAt = new Date().toISOString();
+  caseItem.actionsTaken.push({
+    actionId: `ACT-${Date.now()}`,
+    actionType: 'CONFIRM_MERCHANT',
+    takenAt: new Date().toISOString(),
+    notes: `Confirmed descriptor "${rawDescription}" matches merchant ${merchantId}.`,
+    actor: 'USER',
+  });
+
+  recordAuditEvent({
+    commitmentId: null,
+    eventType: 'IDENTITY_MATCH_CONFIRMED',
+    summary: `Investigation ${caseItem.id}: Confirmed descriptor "${rawDescription}" maps to ${merchantId}.`,
+    previousState: 'UNRESOLVED',
+    newState: merchantId,
+    actor: 'USER_ACTION',
+  });
+
+  if (!persistOrError(res)) return;
+  const state = computeCurrentState();
+  await syncStateToGraphAsync();
+
+  res.json({
+    case: caseItem,
+    transactions: state.transactions,
+    commitments: state.commitments,
+  });
+});
+
+// ============================================================================
+// REST API ENDPOINTS — REVIEW & RESOLVE QUEUE (Phase 2)
+// ============================================================================
+app.get('/api/review-queue', (_req, res) => {
+  const state = computeCurrentState();
+  const queue = buildReviewQueue({
+    investigations: investigationCasesStore,
+    reconciliationFindings: state.reconciliationFindings,
+    alerts: state.alerts,
+    commitments: state.commitments,
+    statusOverrides: reviewQueueStatusOverrides,
+  });
+  res.json(queue);
+});
+
+app.post('/api/review-queue/:id/status', async (req, res) => {
+  const id = req.params.id;
+  const { status } = req.body as { status: ReviewQueueStatus };
+  if (!status) {
+    res.status(400).json({ error: 'status is required' });
+    return;
+  }
+  reviewQueueStatusOverrides[id] = status;
+  if (!persistOrError(res)) return;
+  const state = computeCurrentState();
+  const queue = buildReviewQueue({
+    investigations: investigationCasesStore,
+    reconciliationFindings: state.reconciliationFindings,
+    alerts: state.alerts,
+    commitments: state.commitments,
+    statusOverrides: reviewQueueStatusOverrides,
+  });
+  res.json(queue);
+});
+
+// ============================================================================
+// REST API ENDPOINTS — SMART CSV COLUMN MAPPING WIZARD (Phase 4)
+// ============================================================================
+app.post('/api/import/transactions/preview-mapping', (req, res) => {
+  const { csvContent, config } = req.body as {
+    csvContent: string;
+    config?: Partial<CsvMappingConfig>;
+  };
+  if (!csvContent || typeof csvContent !== 'string') {
+    res.status(400).json({ error: 'csvContent string is required' });
+    return;
+  }
+  const result = previewCsvMapping(csvContent, config);
+  res.json(result);
+});
+
+app.post('/api/import/transactions/apply-mapped', async (req, res) => {
+  const { csvContent, config } = req.body as {
+    csvContent: string;
+    config: CsvMappingConfig;
+  };
+  if (!csvContent || !config) {
+    res.status(400).json({ error: 'csvContent and config are required' });
+    return;
+  }
+  const preview = previewCsvMapping(csvContent, config);
+  const validRows = preview.previewRows.filter((r) => r.isValid && r.mappedRow);
+  if (validRows.length === 0) {
+    res.status(400).json({
+      error: 'No valid transaction rows could be parsed using the supplied column mapping.',
+      preview,
+    });
+    return;
+  }
+
+  const newRawRows: RawCsvRow[] = [];
+  const existingIds = new Set(rawCsvRows.map((r) => r.transaction_id));
+
+  for (let i = 0; i < validRows.length; i++) {
+    const vr = validRows[i];
+    const m = vr.mappedRow!;
+    let txnId = m.transaction_id || `TXN-MAP-${Date.now()}-${i + 1}`;
+    if (existingIds.has(txnId)) {
+      txnId = `${txnId}-DUP${Date.now().toString().slice(-4)}`;
+    }
+    existingIds.add(txnId);
+    newRawRows.push({
+      transaction_id: txnId,
+      transaction_date: m.transaction_date,
+      raw_description: m.raw_description,
+      amount: m.amount,
+      currency: m.currency || 'INR',
+      direction: (m.direction as any) || 'DEBIT',
+      payment_rail: (m.payment_rail as any) || 'UNKNOWN',
+      account_alias: m.account_alias || 'MAPPED-ACCOUNT',
+      external_reference: m.external_reference || `MAP-${Date.now()}-${i + 1}`,
+    });
+  }
+
+  rawCsvRows.push(...newRawRows);
+  const batchRecord = {
+    batchId: `BATCH-MAP-${Date.now()}`,
+    sourceType: 'CSV_UPLOAD' as const,
+    recordCount: newRawRows.length,
+    timestamp: new Date().toISOString(),
+    status: 'COMPLETED' as const,
+  };
+  importHistory.unshift(batchRecord);
+
+  recordAuditEvent({
+    commitmentId: null,
+    eventType: 'IMPORT_COMPLETED',
+    summary: `Mapped CSV import: Successfully parsed and committed ${newRawRows.length} valid transaction rows.`,
+    previousState: null,
+    newState: batchRecord.batchId,
+    actor: 'USER_ACTION',
+  });
+
+  if (!persistOrError(res)) return;
+  const state = computeCurrentState();
+  await syncStateToGraphAsync();
+
+  res.json({
+    message: `Successfully imported ${newRawRows.length} transactions via Smart Mapping Wizard.`,
+    batch: batchRecord,
+    totalTransactions: state.transactions.length,
     totalCommitments: state.commitments.length,
     totalAlerts: state.alerts.length,
   });

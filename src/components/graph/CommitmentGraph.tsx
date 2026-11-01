@@ -232,10 +232,10 @@ export const CommitmentGraph: React.FC<CommitmentGraphProps> = ({
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
               <h3 className="text-base font-semibold text-slate-900">
-                Interactive Neo4j Commitment Map
+                Financial Relationship Map
               </h3>
               <span
-                className={`text-[11px] font-mono font-medium px-2 py-0.5 rounded border ${
+                className={`text-[11px] font-mono font-medium px-2.5 py-0.5 rounded-full border ${
                   executionMode === 'LIVE_NEO4J'
                     ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
                     : executionMode === 'CONNECTION_FAILED'
@@ -243,7 +243,9 @@ export const CommitmentGraph: React.FC<CommitmentGraphProps> = ({
                     : 'bg-amber-50 text-amber-900 border-amber-300'
                 }`}
               >
-                Mode: {executionMode}
+                {executionMode === 'LIVE_NEO4J'
+                  ? 'Financial relationship data synchronised'
+                  : `Graph Mode: ${executionMode}`}
               </span>
             </div>
             <p className="text-xs text-slate-600 mt-1">

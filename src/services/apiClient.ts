@@ -20,6 +20,14 @@ import {
   MandateLifecycleStatus,
   RecurrenceFrequency,
   ConfidenceScoreBreakdown,
+  CommitmentPassport,
+  EvidencePackData,
+  UnrecognizedDebitCase,
+  ReviewQueueItem,
+  ReviewQueueStatus,
+  CsvMappingConfig,
+  CsvMappingPreviewResult,
+  UnrecognizedDebitCaseStatus,
 } from '../types/debitlens';
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
@@ -364,4 +372,60 @@ export const apiClient = {
       '/api/demo/reset',
       { method: 'POST' }
     ),
+  getCommitmentPassport: (commitmentId: string) =>
+    fetchJson<CommitmentPassport>(`/api/commitments/${commitmentId}/passport`),
+  getEvidencePack: (commitmentId: string) =>
+    fetchJson<EvidencePackData>(`/api/commitments/${commitmentId}/evidence-pack`),
+  getEvidencePackPrintUrl: (commitmentId: string) =>
+    `/api/commitments/${commitmentId}/evidence-pack/print`,
+  getInvestigations: () =>
+    fetchJson<UnrecognizedDebitCase[]>('/api/investigations'),
+  createInvestigation: (transactionId: string) =>
+    fetchJson<UnrecognizedDebitCase>('/api/investigations', {
+      method: 'POST',
+      body: JSON.stringify({ transactionId }),
+    }),
+  recordInvestigationAction: (
+    caseId: string,
+    payload: { actionType: string; notes?: string; targetStatus?: UnrecognizedDebitCaseStatus }
+  ) =>
+    fetchJson<UnrecognizedDebitCase>(`/api/investigations/${caseId}/action`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  confirmInvestigationMerchant: (
+    caseId: string,
+    payload: { merchantId: string; rawDescription: string }
+  ) =>
+    fetchJson<{
+      case: UnrecognizedDebitCase;
+      transactions: TransactionRecord[];
+      commitments: CommitmentRecord[];
+    }>(`/api/investigations/${caseId}/confirm-merchant`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getReviewQueue: () =>
+    fetchJson<ReviewQueueItem[]>('/api/review-queue'),
+  updateReviewQueueStatus: (itemId: string, status: ReviewQueueStatus) =>
+    fetchJson<ReviewQueueItem[]>(`/api/review-queue/${itemId}/status`, {
+      method: 'POST',
+      body: JSON.stringify({ status }),
+    }),
+  previewCsvMapping: (csvContent: string, config?: Partial<CsvMappingConfig>) =>
+    fetchJson<CsvMappingPreviewResult>('/api/import/transactions/preview-mapping', {
+      method: 'POST',
+      body: JSON.stringify({ csvContent, config }),
+    }),
+  applyMappedCsv: (csvContent: string, config: CsvMappingConfig) =>
+    fetchJson<{
+      message: string;
+      batch: any;
+      totalTransactions: number;
+      totalCommitments: number;
+      totalAlerts: number;
+    }>('/api/import/transactions/apply-mapped', {
+      method: 'POST',
+      body: JSON.stringify({ csvContent, config }),
+    }),
 };

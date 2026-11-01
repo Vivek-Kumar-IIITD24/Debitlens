@@ -24,6 +24,16 @@ import {
   buildGroundedContextualQuestionResponse,
   RawCsvRow,
   NotificationInput,
+  parseStrictAmount,
+  getEffectiveMandateStatus,
+  getMissingMandateFields,
+  generateMerchantCandidates,
+  buildUnrecognizedDebitCase,
+  buildReviewQueue,
+  generateCommitmentPassport,
+  generateEvidencePackData,
+  generatePrintableEvidencePackHtml,
+  previewCsvMapping,
 } from './debitlensEngine';
 import { toMinorUnits, fromMinorUnits, formatMinorINR } from '../utils/currency';
 import { isPlaceholderEnvValue } from '../services/neo4jPersistenceService';
@@ -1017,6 +1027,26 @@ test('Service Terms parser extracts structured billing terms from pasted invoice
   assert.equal(missingPriceDoc.expectedAmount, null);
   assert.equal(missingPriceDoc.billingFrequency, 'QUARTERLY');
   assert.equal(missingPriceDoc.cancellationNoticeDays, 5);
+
+  // Regression Test (Part 5.1): Missing billing frequency must remain UNKNOWN and never default to MONTHLY
+  const missingFrequencyDoc = extractServiceTermsFromText({
+    commitmentId: 'CMT-STREAMBOX',
+    merchantName: 'StreamBox Media Pvt Ltd',
+    serviceName: 'StreamBox Plan',
+    documentSource: 'PASTED_INVOICE_TEXT',
+    rawText: 'Invoice #INV-7721. Total Amount Paid: Rs. 499.00. Payment method: UPI AutoPay.',
+  });
+  assert.equal(
+    missingFrequencyDoc.billingFrequency,
+    'UNKNOWN',
+    'Missing billing frequency must remain UNKNOWN and never default to MONTHLY'
+  );
+  assert.equal(missingFrequencyDoc.expectedAmount, 499);
+  assert.equal(missingFrequencyDoc.expectedAmountMinor, 49900);
+  const freqField = missingFrequencyDoc.extractedFields.find((f) => f.fieldName === 'billingFrequency');
+  assert.ok(freqField);
+  assert.equal(freqField.confidence, 0);
+  assert.ok(freqField.extractedValue.includes('UNAVAILABLE'));
 });
 
 test('All 9 reconciliation outcomes are verified across seed dataset and explicit fixtures (including FREQUENCY_DISCREPANCY and POSSIBLE_DUPLICATE)', () => {
@@ -1392,6 +1422,331 @@ test('Data Coverage summary and Contextual Bhasha Q&A provide grounded, honest r
   assert.ok(qa.localizedAnswer.includes('StreamBox'));
   assert.ok(qa.evidenceRecordIds.length >= 2);
 });
+
+test('Phase 1 Financial Integrity: Strict Amount Parsing rejects non-numeric and trailing garbage', () => {
+  assert.equal(parseStrictAmount(499), 499);
+  assert.equal(parseStrictAmount('499'), 499);
+  assert.equal(parseStrictAmount('499.50'), 499.5);
+  assert.equal(parseStrictAmount('₹499.00'), 499);
+  assert.equal(parseStrictAmount('Rs. 1,299.00'), 1299);
+  assert.equal(parseStrictAmount('INR 799'), 799);
+
+  // Critical requirement: MUST reject 200xyz which standard parseFloat accepts
+  assert.equal(parseStrictAmount('200xyz'), null);
+  assert.equal(parseStrictAmount('xyz200'), null);
+  assert.equal(parseStrictAmount('499 dollars'), null);
+  assert.equal(parseStrictAmount(''), null);
+  assert.equal(parseStrictAmount(null), null);
+  assert.equal(parseStrictAmount(undefined), null);
+  assert.equal(parseStrictAmount(NaN), null);
+  assert.equal(parseStrictAmount(-50), null);
+});
+
+test('Phase 1 Financial Integrity: Mandate validity & missing fields prevent MATCHED status', () => {
+  const completeMandate = {
+    id: 'MND-TEST-01',
+    mandateReference: 'UMN-TEST-01@okaxis',
+    commitmentId: 'CMT-TEST',
+    merchantName: 'Test Service',
+    paymentRail: 'UPI_AUTOPAY' as const,
+    maxAmountMinor: 50000,
+    maxAmount: 500,
+    frequency: 'MONTHLY' as const,
+    startDate: '2026-01-01',
+    endDate: '2027-01-01',
+    mandateStatus: 'ACTIVE' as const,
+    sourceType: 'IMPORT' as const,
+    updatedAt: '2026-06-01T00:00:00Z',
+  };
+
+  assert.equal(getEffectiveMandateStatus(completeMandate), 'ACTIVE_VALID');
+  assert.deepEqual(getMissingMandateFields(completeMandate), []);
+
+  // Incomplete mandate
+  const incompleteMandate = {
+    ...completeMandate,
+    maxAmountMinor: null,
+    maxAmount: null,
+    frequency: 'UNKNOWN' as any,
+    mandateStatus: 'UNKNOWN' as any,
+  };
+  assert.equal(getEffectiveMandateStatus(incompleteMandate), 'INCOMPLETE');
+  const missing = getMissingMandateFields(incompleteMandate);
+  assert.ok(missing.includes('maxAmount'));
+  assert.ok(missing.includes('frequency'));
+
+  // Expired mandate with ACTIVE label
+  const expiredMandate = {
+    ...completeMandate,
+    endDate: '2025-01-01', // Past date
+    mandateStatus: 'ACTIVE' as const,
+  };
+  assert.equal(getEffectiveMandateStatus(expiredMandate), 'EXPIRED');
+
+  // Verify that incomplete mandate produces UNRESOLVED, never MATCHED
+  const dummyCommitment = {
+    id: 'CMT-TEST',
+    merchantName: 'Test Service',
+    serviceName: 'Test Plan',
+    latestAmount: 500,
+    typicalAmount: 500,
+    expectedAmountMinor: 50000,
+    annualisedAmount: 6000,
+    monthlyEquivalent: 500,
+    recurrenceType: 'MONTHLY' as const,
+    paymentRail: 'UPI_AUTOPAY' as const,
+    status: 'ACTIVE' as const,
+    entityClass: 'FINANCIAL_COMMITMENT' as const,
+    verificationStatus: 'USER_CONFIRMED' as const,
+    confidenceScore: 90,
+    confidenceLabel: 'HIGH' as const,
+    confidenceBreakdown: {
+      temporalScore: 30,
+      amountRegularityScore: 30,
+      descriptorConfidence: 20,
+      mandateAlignmentScore: 10,
+      totalScore: 90,
+      supportingTransactionsCount: 3,
+      relationshipConfidence: 'CONFIRMED_MERCHANT_RELATIONSHIP' as const,
+    },
+    connectedDescriptors: ['TEST*SRV'],
+    supportingTransactionIds: ['TXN-T1', 'TXN-T2'],
+    firstSeenDate: '2026-06-01',
+    latestTransactionDate: '2026-08-01',
+    nextExpectedDate: '2026-09-01',
+    category: 'SOFTWARE_SAAS' as const,
+    detectionExplanation: 'Test explanation',
+    isFinancialObligation: false,
+    usageStatus: 'ACTIVE_IN_USE' as const,
+    serviceLifecycleStatus: 'ACTIVE' as const,
+    mandateLifecycleStatus: 'ACTIVE' as const,
+  };
+
+  const dummyTxns: any[] = [
+    {
+      id: 'TXN-T1',
+      transactionDate: '2026-06-01',
+      amount: 500,
+      commitmentId: 'CMT-TEST',
+      merchantName: 'Test Service',
+      serviceName: 'Test Plan',
+      paymentRail: 'UPI_AUTOPAY',
+      rawDescription: 'TEST*SRV',
+      resolutionStatus: 'CANONICAL_MERCHANT_MATCHED',
+    },
+    {
+      id: 'TXN-T2',
+      transactionDate: '2026-07-01',
+      amount: 500,
+      commitmentId: 'CMT-TEST',
+      merchantName: 'Test Service',
+      serviceName: 'Test Plan',
+      paymentRail: 'UPI_AUTOPAY',
+      rawDescription: 'TEST*SRV',
+      resolutionStatus: 'CANONICAL_MERCHANT_MATCHED',
+    },
+  ];
+
+  const findingWithIncomplete = reconcileCommitment({
+    commitment: dummyCommitment,
+    transactions: dummyTxns,
+    mandate: incompleteMandate,
+    serviceTerms: null,
+    session: null,
+  });
+
+  // Must not be MATCHED
+  assert.notEqual(findingWithIncomplete.status, 'MATCHED');
+  assert.equal(findingWithIncomplete.status, 'UNRESOLVED');
+  assert.ok(findingWithIncomplete.discrepancyDetails.missingMandateFields?.length! >= 1);
+});
+
+test('Phase 2 Product Differentiation: Candidate merchant generation without hallucination', () => {
+  const unresolvedTxn: any = {
+    id: 'TXN-9501',
+    transactionDate: '2026-07-28',
+    rawDescription: 'RAZORPAY*STREAMBOX-MUM',
+    amount: 499,
+    currency: 'INR',
+    direction: 'DEBIT',
+    paymentRail: 'UPI_AUTOPAY',
+    accountAlias: 'HDFC-XX4821',
+    resolutionStatus: 'UNRESOLVED',
+    isPaymentProcessorIsolated: true,
+    processorName: 'Razorpay',
+  };
+
+  const candidates = generateMerchantCandidates(unresolvedTxn, [unresolvedTxn], {});
+  assert.ok(candidates.length >= 1);
+  const streamboxCandidate = candidates.find((c) => c.merchantName.includes('StreamBox'));
+  assert.ok(streamboxCandidate);
+  assert.ok(streamboxCandidate.confidenceScore >= 70);
+  assert.ok(streamboxCandidate.matchReason.length > 5);
+});
+
+test('Phase 2 Product Differentiation: Unrecognized Debit Case lifecycle & Review Queue priority', () => {
+  const txn: any = {
+    id: 'TXN-9502',
+    transactionDate: '2026-08-28',
+    rawDescription: 'PAYU*UNKNOWN-BILL',
+    amount: 799,
+    currency: 'INR',
+    direction: 'DEBIT',
+    paymentRail: 'UPI_AUTOPAY',
+    accountAlias: 'HDFC-XX4821',
+    resolutionStatus: 'UNRESOLVED',
+    isPaymentProcessorIsolated: true,
+    processorName: 'PayU',
+  };
+
+  const newCase = buildUnrecognizedDebitCase({
+    transaction: txn,
+    allTransactions: [txn],
+    userMerchantOverrides: {},
+    existingCases: [],
+  });
+
+  assert.equal(newCase.status, 'OPEN');
+  assert.equal(newCase.transactionId, 'TXN-9502');
+  assert.ok(newCase.candidateMerchants.length >= 0);
+  assert.ok(newCase.guidanceChecklist.length >= 3);
+
+  // Review Queue compilation
+  const mockReconFinding: any = {
+    id: 'REC-01',
+    commitmentId: 'CMT-01',
+    serviceName: 'StreamBox',
+    merchantName: 'StreamBox',
+    status: 'AMOUNT_DISCREPANCY',
+    discrepancyReason: 'Debit ₹799 vs invoice ₹499',
+    severity: 'ACTION_REQUIRED',
+    evaluatedAt: '2026-10-31T00:00:00Z',
+    transactionEvidence: { latestTransactionAmount: 799 },
+    mandateEvidence: { maxAmount: 999 },
+    termsEvidence: { expectedAmount: 499 },
+  };
+
+  const queue = buildReviewQueue({
+    investigations: [newCase],
+    reconciliationFindings: [mockReconFinding],
+    alerts: [],
+    commitments: [],
+    statusOverrides: {},
+  });
+
+  assert.ok(queue.length >= 2);
+  // Reconciliation finding with discrepancy should be P1
+  const reconItem = queue.find((i) => i.category === 'RECONCILIATION_DISCREPANCY');
+  assert.ok(reconItem);
+  assert.equal(reconItem.priority, 'P1');
+
+  // Verify status override applies
+  const overriddenQueue = buildReviewQueue({
+    investigations: [newCase],
+    reconciliationFindings: [mockReconFinding],
+    alerts: [],
+    commitments: [],
+    statusOverrides: { [reconItem.id]: 'RESOLVED' },
+  });
+  const updatedReconItem = overriddenQueue.find((i) => i.id === reconItem.id);
+  assert.equal(updatedReconItem?.status, 'RESOLVED');
+});
+
+test('Phase 3 Evidence Value: Commitment Passport, Evidence Pack & HTML Print View', () => {
+  const { transactions } = parseAndNormaliseTransactions(SAMPLE_ROWS);
+  const { commitments, alerts, sessions } = detectCommitmentsAndAlerts(
+    transactions,
+    SAMPLE_NOTIFICATIONS
+  );
+  const mandates = buildInitialSeedMandates();
+  const serviceTerms = buildInitialSeedServiceTerms();
+  const findings = runFullReconciliation({
+    commitments,
+    transactions,
+    mandates,
+    serviceTerms,
+    sessions,
+  });
+
+  const streambox = commitments.find((c) => c.id === 'CMT-STREAMBOX')!;
+  const mandate = mandates.find((m) => m.commitmentId === 'CMT-STREAMBOX') || null;
+  const terms = serviceTerms.find((t) => t.commitmentId === 'CMT-STREAMBOX') || null;
+  const finding = findings.find((f) => f.commitmentId === 'CMT-STREAMBOX') || null;
+
+  const passport = generateCommitmentPassport({
+    commitment: streambox,
+    transactions,
+    mandate,
+    serviceTerms: terms,
+    reconciliation: finding,
+    alerts: alerts.filter((a) => a.commitmentId === streambox.id),
+    casebookEntries: [],
+    auditEvents: [],
+  });
+
+  assert.equal(passport.commitmentId, 'CMT-STREAMBOX');
+  assert.ok(passport.sectionA_Identity.merchantName.includes('StreamBox'));
+  assert.ok(passport.sectionB_Mandate.mandatePresent);
+  assert.ok(passport.sectionC_Terms.termsPresent);
+  assert.ok(passport.sectionD_History.totalDebitsCount >= 3);
+  assert.ok(passport.dataCoverage.coveragePercent > 50);
+
+  const packData = generateEvidencePackData({
+    commitment: streambox,
+    transactions,
+    mandate,
+    serviceTerms: terms,
+    reconciliation: finding,
+    alerts: alerts.filter((a) => a.commitmentId === streambox.id),
+    casebookEntries: [],
+    auditEvents: [],
+  });
+
+  assert.equal(packData.commitmentId, 'CMT-STREAMBOX');
+  assert.equal(packData.evidencePackVersion, '1.0');
+  assert.ok(packData.exportTimestamp);
+
+  const html = generatePrintableEvidencePackHtml(packData);
+  assert.ok(html.includes('<!DOCTYPE html>'));
+  assert.ok(html.includes('DebitLens Financial Evidence Pack'));
+  assert.ok(html.includes('StreamBox'));
+  assert.ok(html.includes('Section A'));
+  assert.ok(html.includes('@media print'));
+});
+
+test('Phase 4 Usability: Smart Bank Statement CSV Mapping Wizard', () => {
+  const bankCsv = `Date,Narration,Chq/Ref No,Withdrawal Amt,Deposit Amt,Closing Balance
+05/10/2026,UPI-NETFLIX-9812-AUTOPAY,REF9812938,649.00,,45210.50
+10/10/2026,POS 4821 SPOTIFY INDIA MUMBAI,POS-88127,119.00,,45091.50
+15/10/2026,SALARY CREDIT ACME CORP,SAL-99120,,85000.00,126841.50`;
+
+  const preview = previewCsvMapping(bankCsv, {
+    dateColumn: 'Date',
+    descriptionColumn: 'Narration',
+    amountMode: 'SEPARATE_DEBIT_CREDIT',
+    debitAmountColumn: 'Withdrawal Amt',
+    creditAmountColumn: 'Deposit Amt',
+    dateFormat: 'DD/MM/YYYY',
+  });
+
+  assert.equal(preview.headers.length, 6);
+  assert.ok(preview.headers.includes('Date'));
+  assert.ok(preview.headers.includes('Narration'));
+  assert.ok(preview.headers.includes('Withdrawal Amt'));
+
+  // 2 debits (Netflix 649, Spotify 119) and 1 credit (Salary 85000 skipped)
+  assert.equal(preview.validRowsCount, 2);
+  const netflixRow = preview.previewRows.find((r) => r.mappedRow?.raw_description.includes('NETFLIX'));
+  assert.ok(netflixRow);
+  assert.equal(netflixRow.mappedRow?.amount, '649');
+  assert.equal(netflixRow.mappedRow?.transaction_date, '2026-10-05');
+
+  const salaryRow = preview.previewRows.find((r) => r.rowNumber === 3);
+  assert.ok(salaryRow);
+  assert.equal(salaryRow.isValid, false);
+  assert.ok(salaryRow.validationError?.includes('Credit/Deposit row'));
+});
+
 
 
 

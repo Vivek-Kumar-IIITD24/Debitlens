@@ -535,12 +535,14 @@ export function extractServiceTermsFromText(params: {
   const expectedAmount =
     expectedAmountMinor !== null ? fromMinorUnits(expectedAmountMinor) : null;
 
-  // Extract billing frequency
-  let billingFrequency: RecurrenceFrequency = 'MONTHLY';
+  // Extract billing frequency — missing billing frequency must remain UNKNOWN (never default to MONTHLY)
+  let billingFrequency: RecurrenceFrequency = 'UNKNOWN';
   if (/annual|yearly|per\s+year|\/year|\/yr/i.test(text)) {
     billingFrequency = 'YEARLY';
   } else if (/quarter|quarterly|every\s+3\s+months/i.test(text)) {
     billingFrequency = 'QUARTERLY';
+  } else if (/month|monthly|per\s+month|\/month|\/mo/i.test(text)) {
+    billingFrequency = 'MONTHLY';
   } else if (/weekly|per\s+week/i.test(text)) {
     billingFrequency = 'WEEKLY';
   } else if (/fortnight/i.test(text)) {
@@ -580,9 +582,15 @@ export function extractServiceTermsFromText(params: {
     },
     {
       fieldName: 'billingFrequency',
-      extractedValue: billingFrequency,
-      confidence: 92,
-      sourceSnippet: `Detected cadence keyword -> ${billingFrequency}`,
+      extractedValue:
+        billingFrequency !== 'UNKNOWN'
+          ? billingFrequency
+          : 'UNAVAILABLE (no cadence keyword found in text)',
+      confidence: billingFrequency !== 'UNKNOWN' ? 92 : 0,
+      sourceSnippet:
+        billingFrequency !== 'UNKNOWN'
+          ? `Detected cadence keyword -> ${billingFrequency}`
+          : 'No monthly/yearly/quarterly/weekly cadence token found in text',
       userVerified: isVerified,
     },
   ];
@@ -650,14 +658,78 @@ export function extractServiceTermsFromText(params: {
 // - Never claims "no mandate exists" if no mandate was imported; states:
 //   "No matching mandate was found in the available imported records."
 // ============================================================================
+export type EffectiveMandateStatus =
+  | 'ACTIVE_VALID'
+  | 'EXPIRED'
+  | 'REVOKED'
+  | 'PENDING'
+  | 'UNKNOWN'
+  | 'INCOMPLETE';
+
+export function getMissingMandateFields(mandate: MandateRecord | null): string[] {
+  if (!mandate) return ['mandate_record'];
+  const missing: string[] = [];
+  if (!mandate.mandateReference) missing.push('mandateReference');
+  if (mandate.maxAmountMinor === null || mandate.maxAmountMinor === undefined) missing.push('maxAmount');
+  if (!mandate.paymentRail || mandate.paymentRail === 'UNKNOWN') missing.push('paymentRail');
+  if (!mandate.frequency || mandate.frequency === 'UNKNOWN') missing.push('frequency');
+  if (!mandate.startDate) missing.push('startDate');
+  if (!mandate.mandateStatus || mandate.mandateStatus === 'UNKNOWN') missing.push('mandateStatus');
+  return missing;
+}
+
+export function getEffectiveMandateStatus(
+  mandate: MandateRecord | null,
+  evaluationDate: Date = new Date()
+): EffectiveMandateStatus {
+  if (!mandate) return 'UNKNOWN';
+  if (
+    mandate.maxAmountMinor === null ||
+    mandate.maxAmountMinor === undefined ||
+    mandate.maxAmountMinor <= 0 ||
+    mandate.frequency === 'UNKNOWN' ||
+    mandate.paymentRail === 'UNKNOWN' ||
+    mandate.isIncomplete
+  ) {
+    return 'INCOMPLETE';
+  }
+  if (!mandate.mandateReference || mandate.mandateStatus === 'UNKNOWN') {
+    return 'UNKNOWN';
+  }
+  if (mandate.mandateStatus === 'PENDING_VERIFICATION') {
+    return 'PENDING';
+  }
+  if (
+    mandate.mandateStatus === 'REVOKED' ||
+    mandate.mandateStatus === 'REVOCATION_REPORTED'
+  ) {
+    return 'REVOKED';
+  }
+  if (mandate.mandateStatus === 'EXPIRED') {
+    return 'EXPIRED';
+  }
+  if (mandate.endDate) {
+    const endMs = Date.parse(mandate.endDate);
+    if (!isNaN(endMs) && endMs < evaluationDate.getTime()) {
+      return 'EXPIRED';
+    }
+  }
+  if (mandate.mandateStatus === 'ACTIVE') {
+    return 'ACTIVE_VALID';
+  }
+  return 'UNKNOWN';
+}
+
 export function reconcileCommitment(params: {
   commitment: CommitmentRecord;
   transactions: TransactionRecord[];
   mandate: MandateRecord | null;
   serviceTerms: ServiceTermsRecord | null;
-  cancellationSession: CancellationSessionRecord | null;
+  cancellationSession?: CancellationSessionRecord | null;
+  session?: CancellationSessionRecord | null;
 }): ReconciliationFindingRecord {
-  const { commitment, transactions, mandate, serviceTerms, cancellationSession } = params;
+  const { commitment, transactions, mandate, serviceTerms } = params;
+  const cancellationSession = params.cancellationSession ?? params.session ?? null;
   const evaluatedAt = new Date().toISOString();
 
   const cmtTxns = transactions
@@ -686,10 +758,9 @@ export function reconcileCommitment(params: {
 
   // Handle commitment with an active mandate but zero debit transactions in the imported statement period
   if (cmtTxns.length === 0) {
+    const effectiveStatusForZeroTxns = getEffectiveMandateStatus(mandate, new Date(evaluatedAt));
     const isMandateActiveWithNoTxns =
-      Boolean(mandate) &&
-      mandate!.mandateStatus === 'ACTIVE' &&
-      (!mandate!.endDate || Date.parse(mandate!.endDate) >= Date.now());
+      Boolean(mandate) && effectiveStatusForZeroTxns === 'ACTIVE_VALID';
 
     if (isMandateActiveWithNoTxns && mandate) {
       return {
@@ -728,6 +799,11 @@ export function reconcileCommitment(params: {
           ...(serviceTerms ? [serviceTerms.id] : []),
         ],
         evaluatedAt,
+        discrepancyDetails: {
+          missingMandateFields: getMissingMandateFields(mandate),
+          missingTermsFields: !serviceTerms ? ['terms_document'] : expectedServiceAmountMinor === null ? ['expectedAmount'] : [],
+          discrepancyReason: 'Mandate is active without matching debit transactions in imported period.',
+        },
       };
     }
 
@@ -759,6 +835,11 @@ export function reconcileCommitment(params: {
         ...(serviceTerms ? [serviceTerms.id] : []),
       ],
       evaluatedAt,
+      discrepancyDetails: {
+        missingMandateFields: getMissingMandateFields(mandate),
+        missingTermsFields: !serviceTerms ? ['terms_document'] : expectedServiceAmountMinor === null ? ['expectedAmount'] : [],
+        discrepancyReason: `No debit transactions were found in the imported statement period for ${commitment.serviceName}.`,
+      },
     };
   }
 
@@ -826,15 +907,12 @@ export function reconcileCommitment(params: {
     }
   }
 
-  // Verify mandate lifecycle status and expiry date against the latest debit date
-  const isMandateExpired = Boolean(
-    mandate?.endDate &&
-      latestTxnDate &&
-      Date.parse(mandate.endDate) < Date.parse(latestTxnDate)
-  );
-  const isMandateActive = Boolean(
-    mandate && mandate.mandateStatus === 'ACTIVE' && !isMandateExpired
-  );
+  // Verify mandate lifecycle status and effective validity against the latest debit date
+  const evalDate = latestTxnDate ? new Date(latestTxnDate) : new Date(evaluatedAt);
+  const effectiveMandateStatus = getEffectiveMandateStatus(mandate, evalDate);
+  const missingMandateFields = getMissingMandateFields(mandate);
+  const isMandateExpired = effectiveMandateStatus === 'EXPIRED';
+  const isMandateActive = effectiveMandateStatus === 'ACTIVE_VALID';
 
   // Check for Post-Cancellation Debit / Conflicting Evidence (Section 17.4)
   const hasPostCancelDebit =
@@ -924,20 +1002,44 @@ export function reconcileCommitment(params: {
       'DebitLens does not declare this debit to be fraud. A post-cancellation debit may reflect a trailing billing period, delayed settlement, or an unrevoked standing instruction at the bank/card issuer.';
     recommendedAction =
       'Compare the cancellation effective date against the billing cycle cut-off and raise a dispute with your bank/card issuer citing your saved cancellation or mandate references.';
-  } else if (mandate && !isMandateActive) {
+  } else if (mandate && effectiveMandateStatus === 'INCOMPLETE') {
+    status = 'UNRESOLVED';
+    explanation = `Payment mandate ${mandate.mandateReference || 'record'} has incomplete details (${missingMandateFields.join(
+      ', '
+    )}). Incomplete mandate records cannot establish a verified MATCHED outcome.`;
+    epistemicCaveat =
+      'Authorisation requires confirmed ceiling amount, billing frequency, and payment rail before full three-way reconciliation can be verified.';
+    recommendedAction =
+      'Verify missing mandate fields from your banking portal or card account to confirm collection limits.';
+  } else if (mandate && isMandateExpired) {
     status = 'CONFLICTING_EVIDENCE';
-    const reasonClause = isMandateExpired
-      ? `expired on ${mandate.endDate} prior to the debit date (${latestTxnDate})`
-      : `has lifecycle status ${mandate.mandateStatus}`;
     explanation = `Conflicting evidence detected: Debit ${latestTxn.id} of ${formatMinorINR(
       actualTransactionAmountMinor
     )} occurred on ${latestTxnDate}, whereas linked mandate ${
       mandate.mandateReference
-    } ${reasonClause}.`;
+    } expired on ${mandate.endDate} prior to the debit date.`;
     epistemicCaveat =
       'DebitLens flags a conflict between the imported mandate lifecycle/expiry record and the observed statement debit without claiming fraud.';
     recommendedAction =
       'Verify with your bank or UPI app whether the mandate was re-authorised under a new reference or settled from a pre-expiry presentation.';
+  } else if (mandate && (effectiveMandateStatus === 'REVOKED' || mandate.mandateStatus === 'REVOKED' || mandate.mandateStatus === 'REVOCATION_REPORTED')) {
+    status = 'CONFLICTING_EVIDENCE';
+    explanation = `Actual debit occurred on ${latestTxn.transactionDate}, but payment mandate ${mandate.mandateReference} is recorded as ${mandate.mandateStatus}.`;
+    epistemicCaveat =
+      'Debits appearing after recorded mandate revocation represent an authorisation conflict.';
+    recommendedAction =
+      'Initiate a mandate dispute with your bank or contact the merchant to reverse the charge.';
+  } else if (mandate && mandate.mandateStatus !== 'ACTIVE') {
+    status = 'CONFLICTING_EVIDENCE';
+    explanation = `Conflicting evidence detected: Debit ${latestTxn.id} of ${formatMinorINR(
+      actualTransactionAmountMinor
+    )} occurred on ${latestTxnDate}, whereas linked mandate ${
+      mandate.mandateReference
+    } has lifecycle status ${mandate.mandateStatus}.`;
+    epistemicCaveat =
+      'DebitLens flags a conflict between non-active mandate status and observed statement debit.';
+    recommendedAction =
+      'Verify with your bank whether mandate was paused or cancelled.';
   } else if (hasPossibleDuplicate) {
     status = 'POSSIBLE_DUPLICATE';
     explanation = `Detected two debits (${
@@ -958,20 +1060,22 @@ export function reconcileCommitment(params: {
       'Absence of a mandate in DebitLens means no matching mandate record was imported—it does NOT prove that no bank/card authorisation exists.';
     recommendedAction =
       'Import your card standing instruction / UPI AutoPay mandate list or inspect your card issuer SIHub portal to verify active collection authority.';
-  } else if (!serviceTerms || expectedServiceAmountMinor === null) {
+  } else if (!serviceTerms || expectedServiceAmountMinor === null || serviceTerms.billingFrequency === 'UNKNOWN') {
     status = 'SERVICE_TERMS_UNAVAILABLE';
     const missingReason = !serviceTerms
       ? `no invoice or service terms document has been attached for ${commitment.serviceName}`
-      : `attached service document ${serviceTerms.id} does not contain an extractable expected billing amount`;
+      : expectedServiceAmountMinor === null
+      ? `attached service document ${serviceTerms.id} does not contain an extractable expected billing amount`
+      : `attached service document ${serviceTerms.id} does not specify a documented billing frequency`;
     explanation = `Actual debit (${formatMinorINR(
       actualTransactionAmountMinor
     )}) is within active mandate ${mandate.mandateReference} ceiling (${formatMinorINR(
       mandateMaxAmountMinor || 0
     )}), but ${missingReason}.`;
     epistemicCaveat =
-      'Without a documented service price in the invoice/terms record, DebitLens can verify mandate ceiling compliance but cannot verify whether the billed amount matches your contracted plan price.';
+      'Without a documented service price and verified billing frequency in the terms record, DebitLens can verify mandate ceiling compliance but cannot verify whether the billed amount and schedule match your contracted plan terms.';
     recommendedAction =
-      'Attach or confirm a subscription invoice with an explicit plan amount in the Service Terms intake panel to complete three-way reconciliation.';
+      'Attach or verify the contracted plan amount and billing frequency in the Service Terms panel to complete three-way reconciliation.';
   } else if (
     discrepancyAmountMinor !== null &&
     Math.abs(discrepancyAmountMinor) > 0 &&
@@ -1019,6 +1123,33 @@ export function reconcileCommitment(params: {
       'Observed debit intervals differ from the documented billing cadence, which may happen when riders, manual top-ups, or off-cycle NACH presentations occur.';
     recommendedAction =
       'Inspect the policy or billing schedule endorsement with the merchant before altering the NACH/AutoPay mandate.';
+  } else if (effectiveMandateStatus === 'INCOMPLETE') {
+    status = 'UNRESOLVED';
+    explanation = `Payment mandate ${mandate.mandateReference} has incomplete details (${missingMandateFields.join(
+      ', '
+    )}). Incomplete mandate records cannot establish a verified MATCHED outcome.`;
+    epistemicCaveat =
+      'Authorisation requires confirmed ceiling amount, billing frequency, and payment rail before full three-way reconciliation can be verified.';
+    recommendedAction =
+      'Verify missing mandate fields from your banking portal or card account to confirm collection limits.';
+  } else if (effectiveMandateStatus === 'EXPIRED') {
+    status = 'CONFLICTING_EVIDENCE';
+    explanation = `Actual debit of ${formatMinorINR(
+      actualTransactionAmountMinor
+    )} occurred on ${latestTxn.transactionDate}, but payment mandate ${
+      mandate.mandateReference
+    } expired on ${mandate.endDate}. Continued automated debit under an expired authorisation requires immediate review.`;
+    epistemicCaveat =
+      'Expired mandates should not permit automated debit presentations under banking recurring regulations.';
+    recommendedAction =
+      'Verify with your bank/card issuer whether the recurring mandate was renewed or should be revoked.';
+  } else if (effectiveMandateStatus === 'REVOKED') {
+    status = 'CONFLICTING_EVIDENCE';
+    explanation = `Actual debit occurred on ${latestTxn.transactionDate}, but payment mandate ${mandate.mandateReference} is recorded as ${mandate.mandateStatus}.`;
+    epistemicCaveat =
+      'Debits appearing after recorded mandate revocation represent an authorisation conflict.';
+    recommendedAction =
+      'Initiate a mandate dispute with your bank or contact the merchant to reverse the charge.';
   } else {
     status = 'MATCHED';
     explanation = `Three-way reconciliation matched: Actual debit of ${formatMinorINR(
@@ -1057,6 +1188,11 @@ export function reconcileCommitment(params: {
     recommendedAction,
     evidenceRecordIds,
     evaluatedAt,
+    discrepancyDetails: {
+      missingMandateFields,
+      missingTermsFields: !serviceTerms ? ['terms_document'] : expectedServiceAmountMinor === null ? ['expectedAmount'] : [],
+      discrepancyReason: explanation,
+    },
   };
 }
 
@@ -1094,7 +1230,8 @@ export function runFullReconciliation(params: {
   // Also include MANDATE_WITHOUT_RECENT_TRANSACTION for any active mandate either not linked to a commitment
   // or linked to a commitment that had no debit transactions in the imported statement window (Section 17.5)
   for (const mnd of mandates) {
-    if (mnd.mandateStatus !== 'ACTIVE') continue;
+    const effStatus = getEffectiveMandateStatus(mnd, new Date(evaluatedAt));
+    if (effStatus !== 'ACTIVE_VALID') continue;
     const alreadyReported = findings.some(
       (f) =>
         f.mandateReference === mnd.mandateReference &&
@@ -1303,8 +1440,7 @@ export function buildCommitmentEvidenceCasebook(params: {
         description: ev.description,
         sourceReference: ev.referenceNumber,
         amountMinor: null,
-        verificationStatus:
-          ev.verificationStatus === 'EVIDENCE_ATTACHED' ? 'USER_CONFIRMED' : 'INFERRED',
+        verificationStatus: (ev.verificationStatus as any) || 'EVIDENCE_ATTACHED',
         actor: 'USER_EVIDENCE_SUBMISSION',
       });
     }

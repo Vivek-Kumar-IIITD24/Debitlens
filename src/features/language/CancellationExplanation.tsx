@@ -45,7 +45,7 @@ export const CancellationExplanation: React.FC<CancellationExplanationProps> = (
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-100 pb-4">
         <div>
           <h3 className="text-base font-semibold text-slate-900">
-            B. Multilingual Two-Layer Cancellation Playbook (Sarvam Translate)
+            Multilingual Two-Layer Cancellation Playbook — DebitLens Bhasha
           </h3>
           <p className="text-xs text-slate-600 mt-0.5">
             Translates all Layer A and Layer B titles, descriptions, step instructions, escalation guidance, and confirmation messages into Indian languages while strictly preserving action order, official URLs, and loan/insurance contractual warnings.

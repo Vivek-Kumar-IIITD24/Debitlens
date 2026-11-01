@@ -24,6 +24,12 @@ import {
   CheckCircle2,
   Scale,
   FolderKanban,
+  Menu,
+  X,
+  Settings,
+  Inbox,
+  FileCheck,
+  FileQuestion,
 } from 'lucide-react';
 import {
   apiClient,
@@ -70,9 +76,14 @@ import { MethodologyMetricsView } from './features/methodology/MethodologyMetric
 import { ReconciliationCentreView } from './features/reconciliation/ReconciliationCentreView';
 import { EvidenceCasebookView } from './features/evidence/EvidenceCasebookView';
 import { ContextualBhashaAskPanel } from './features/language/ContextualBhashaAskPanel';
+import { SettingsView } from './features/settings/SettingsView';
+import { UnrecognizedDebitInvestigationDrawer } from './features/investigation/UnrecognizedDebitInvestigationDrawer';
+import { ReviewAndResolveView } from './features/review/ReviewAndResolveView';
+import { CommitmentPassportModal } from './features/passport/CommitmentPassportModal';
 
 type ActiveSection =
   | 'overview'
+  | 'review_queue'
   | 'reconciliation'
   | 'casebook'
   | 'graph'
@@ -81,7 +92,8 @@ type ActiveSection =
   | 'transactions'
   | 'cancellation'
   | 'alerts'
-  | 'import_methodology';
+  | 'import_methodology'
+  | 'settings';
 
 type CommitmentFilter =
   | 'ALL'
@@ -96,6 +108,7 @@ type CommitmentFilter =
 
 export default function App() {
   const [activeSection, setActiveSection] = useState<ActiveSection>('overview');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [language, setLanguage] = useState<LanguageCode>('hi-IN');
   const [supportedLanguages, setSupportedLanguages] = useState<SupportedLanguage[]>([
     {
@@ -183,6 +196,10 @@ export default function App() {
     return DEFAULT_DESCRIPTOR_SEARCH_HISTORY;
   });
   const [assignMerchantSelect, setAssignMerchantSelect] = useState<Record<string, string>>({});
+  const [investigationTransaction, setInvestigationTransaction] = useState<TransactionRecord | null>(null);
+  const [isInvestigationDrawerOpen, setIsInvestigationDrawerOpen] = useState(false);
+  const [passportCommitmentId, setPassportCommitmentId] = useState<string | null>(null);
+  const [isPassportModalOpen, setIsPassportModalOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -330,7 +347,15 @@ export default function App() {
   };
 
   const sidebarItems: { id: ActiveSection; label: string; icon: React.ReactNode; count?: number }[] = [
-    { id: 'overview', label: 'Overview Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+    { id: 'overview', label: 'Financial Overview', icon: <LayoutDashboard className="w-4 h-4" /> },
+    {
+      id: 'review_queue',
+      label: 'Review & Resolve',
+      icon: <Inbox className="w-4 h-4" />,
+      count:
+        alerts.filter((a) => a.status === 'OPEN').length +
+        reconciliationFindings.filter((r) => r.status !== 'MATCHED').length,
+    },
     {
       id: 'reconciliation',
       label: '3-Way Reconciliation',
@@ -345,13 +370,13 @@ export default function App() {
     },
     {
       id: 'graph',
-      label: 'Commitment Map (Neo4j)',
+      label: 'Financial Relationship Map',
       icon: <Network className="w-4 h-4" />,
       count: commitments.length,
     },
     {
       id: 'bhasha',
-      label: 'DebitLens Bhasha (Sarvam)',
+      label: 'DebitLens Bhasha',
       icon: <Languages className="w-4 h-4" />,
     },
     {
@@ -362,7 +387,7 @@ export default function App() {
     },
     {
       id: 'transactions',
-      label: 'Transactions & Resolver',
+      label: 'Transactions & Explorer',
       icon: <ReceiptText className="w-4 h-4" />,
       count: transactions.length,
     },
@@ -379,102 +404,219 @@ export default function App() {
     },
     {
       id: 'import_methodology',
-      label: 'Import & Methodology',
+      label: 'Data & Methodology',
       icon: <FileSpreadsheet className="w-4 h-4" />,
+    },
+    {
+      id: 'settings',
+      label: 'Settings & Diagnostics',
+      icon: <Settings className="w-4 h-4" />,
     },
   ];
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
-      {/* Top Bar Contract: Exactly 3 zones separated by gap-8 */}
-      <header className="flex items-center justify-between gap-8 px-6 py-3.5 bg-white border-b border-slate-200 sticky top-0 z-30">
-        {/* Zone 1: Single text element wordmark */}
-        <a
-          href="#overview"
-          onClick={(e) => {
-            e.preventDefault();
-            setActiveSection('overview');
-          }}
-          className="text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
-        >
-          DebitLens
-        </a>
+    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 overflow-x-hidden">
+      {/* Top Header */}
+      <header className="flex items-center justify-between gap-4 px-4 sm:px-6 py-3 bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+        {/* Left: Mobile Menu Toggle + Wordmark */}
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuOpen(true)}
+            aria-label="Open Navigation Menu"
+            className="lg:hidden p-2 -ml-1 text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center cursor-pointer"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <a
+            href="#overview"
+            onClick={(e) => {
+              e.preventDefault();
+              setActiveSection('overview');
+            }}
+            className="text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap"
+          >
+            DebitLens
+          </a>
+          <span className="hidden sm:inline-block text-[11px] font-medium text-teal-800 bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-200">
+            Find it. Understand it. Stop it.
+          </span>
+        </div>
 
-        {/* Zone 2: 5 concise single-line text navigation links */}
+        {/* Center: Desktop Top Navigation Links */}
         <nav
           aria-label="Primary Top Navigation"
-          className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600"
+          className="hidden md:flex items-center gap-5 text-sm font-medium text-slate-600"
         >
           <button
             type="button"
             onClick={() => setActiveSection('overview')}
-            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
-              activeSection === 'overview' ? 'text-slate-900 underline underline-offset-4' : ''
+            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-1 ${
+              activeSection === 'overview' ? 'text-slate-900 font-semibold underline underline-offset-4' : ''
             }`}
           >
             Overview
           </button>
           <button
             type="button"
-            onClick={() => setActiveSection('graph')}
-            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
-              activeSection === 'graph' ? 'text-slate-900 underline underline-offset-4' : ''
+            onClick={() => setActiveSection('review_queue')}
+            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-1 flex items-center gap-1.5 ${
+              activeSection === 'review_queue' ? 'text-slate-900 font-semibold underline underline-offset-4' : ''
             }`}
           >
-            Commitment Map
+            <span>Review & Resolve</span>
+            <span className="px-1.5 py-0.2 bg-amber-100 text-amber-800 text-[10px] font-bold rounded-full">
+              {alerts.filter((a) => a.status === 'OPEN').length +
+                reconciliationFindings.filter((r) => r.status !== 'MATCHED').length}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSection('reconciliation')}
+            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-1 ${
+              activeSection === 'reconciliation' ? 'text-slate-900 font-semibold underline underline-offset-4' : ''
+            }`}
+          >
+            Reconciliation
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSection('graph')}
+            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-1 ${
+              activeSection === 'graph' ? 'text-slate-900 font-semibold underline underline-offset-4' : ''
+            }`}
+          >
+            Relationship Map
           </button>
           <button
             type="button"
             onClick={() => setActiveSection('bhasha')}
-            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
-              activeSection === 'bhasha' ? 'text-slate-900 underline underline-offset-4' : ''
+            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-1 ${
+              activeSection === 'bhasha' ? 'text-slate-900 font-semibold underline underline-offset-4' : ''
             }`}
           >
             DebitLens Bhasha
           </button>
           <button
             type="button"
-            onClick={() => setActiveSection('commitments')}
-            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
-              activeSection === 'commitments' ? 'text-slate-900 underline underline-offset-4' : ''
-            }`}
-          >
-            Commitments
-          </button>
-          <button
-            type="button"
             onClick={() => setActiveSection('cancellation')}
-            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
-              activeSection === 'cancellation' ? 'text-slate-900 underline underline-offset-4' : ''
+            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-1 ${
+              activeSection === 'cancellation' ? 'text-slate-900 font-semibold underline underline-offset-4' : ''
             }`}
           >
-            Cancellation Centre
+            Cancellation
           </button>
         </nav>
 
-        {/* Zone 3: 1 primary action */}
-        <div className="flex items-center gap-3 shrink-0">
+        {/* Right: Settings + Import Action */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => setActiveSection('settings')}
+            title="Settings & System Diagnostics"
+            aria-label="Settings and System Information"
+            className={`p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center cursor-pointer ${
+              activeSection === 'settings'
+                ? 'bg-slate-900 text-white'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Settings className="w-4 h-4" />
+          </button>
           <button
             type="button"
             onClick={() => setActiveSection('import_methodology')}
-            className="px-4 py-2 text-xs font-medium text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+            className="px-3.5 py-2 text-xs font-medium text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 min-h-[44px] flex items-center justify-center cursor-pointer"
           >
-            Import Synthetic Data
+            Import Data
           </button>
         </div>
       </header>
 
+      {/* Slide-over Mobile Navigation Drawer */}
+      {isMobileMenuOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 flex">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity"
+            onClick={() => setIsMobileMenuOpen(false)}
+          />
+
+          {/* Drawer panel */}
+          <div className="relative w-72 max-w-[85vw] bg-white h-full shadow-2xl p-5 flex flex-col justify-between overflow-y-auto z-10">
+            <div className="space-y-6">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div>
+                  <div className="text-base font-bold text-slate-900">DebitLens</div>
+                  <div className="text-[11px] text-teal-800 font-medium">Find it. Understand it. Stop it.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  aria-label="Close Navigation Menu"
+                  className="p-2 text-slate-500 hover:text-slate-900 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <nav aria-label="Mobile Drawer Navigation" className="space-y-1">
+                {sidebarItems.map((item) => {
+                  const isActive = activeSection === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveSection(item.id);
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between gap-3 px-3 py-3 text-xs font-medium rounded-lg transition-colors ${
+                        isActive
+                          ? 'bg-slate-900 text-white'
+                          : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className="flex items-center gap-3 truncate">
+                        {item.icon}
+                        <span className="truncate">{item.label}</span>
+                      </span>
+                      {item.count !== undefined && (
+                        <span
+                          className={`font-mono text-[11px] tabular-nums px-2 py-0.5 rounded ${
+                            isActive ? 'bg-slate-800 text-slate-200' : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {item.count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+
+            <div className="pt-6 border-t border-slate-100 space-y-3 text-[11px] text-slate-500">
+              <div className="font-semibold text-slate-800">Synthetic Safety Boundary</div>
+              <p className="leading-relaxed">
+                DebitLens never asks for UPI PINs, OTPs, or passwords and never executes unauthorized transactions.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Workspace Container: Left Sidebar + Main Viewport */}
       <div className="flex-1 flex flex-col lg:flex-row">
-        {/* Left Navigation Sidebar */}
-        <aside className="w-full lg:w-64 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 p-4 flex flex-col justify-between shrink-0">
+        {/* Left Navigation Sidebar (Desktop only) */}
+        <aside className="hidden lg:flex w-64 bg-white border-r border-slate-200 p-4 flex-col justify-between shrink-0">
           <div className="space-y-5">
             <div className="px-2">
               <div className="text-xs font-semibold text-teal-800">
-                Find it. Understand it. Reconcile it. Verify it.
+                Find it. Understand it. Stop it.
               </div>
               <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                Financial Commitment Intelligence & Reconciliation Platform · HackFront Fintech T4.1 + Neo4j + Sarvam AI
+                Financial Commitment Intelligence & Three-Way Reconciliation Platform
               </p>
             </div>
 
@@ -486,7 +628,7 @@ export default function App() {
                     key={item.id}
                     type="button"
                     onClick={() => setActiveSection(item.id)}
-                    className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
                       isActive
                         ? 'bg-slate-900 text-white'
                         : 'text-slate-700 hover:bg-slate-100'
@@ -511,7 +653,7 @@ export default function App() {
             </nav>
           </div>
 
-          <div className="hidden lg:block pt-6 border-t border-slate-100 space-y-2 px-2 text-[11px] text-slate-500">
+          <div className="pt-6 border-t border-slate-100 space-y-2 px-2 text-[11px] text-slate-500">
             <div className="font-semibold text-slate-800">Synthetic Safety Boundary</div>
             <p className="leading-relaxed">
               100% synthetic dataset. DebitLens never asks for UPI PINs, OTPs, or banking passwords and never executes unauthorised mandate revocations.
@@ -520,20 +662,20 @@ export default function App() {
         </aside>
 
         {/* Main Content Viewport */}
-        <main className="flex-1 min-w-0 p-6 lg:p-8 max-w-[1440px] mx-auto w-full space-y-6">
-          {/* Workspace Context Toolbar with Persistent Sarvam Language Selector & Partner Track Switchers */}
+        <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 pb-24 lg:pb-8 max-w-[1440px] mx-auto w-full space-y-6">
+          {/* Workspace Context Toolbar with Persistent Bhasha Language Selector & Focus Scenarios */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-              <span className="font-semibold text-slate-900">Partner Tracks:</span>
+              <span className="font-semibold text-slate-900">Focus Scenarios:</span>
               <button
                 type="button"
                 onClick={() => {
                   setSelectedCommitmentId('CMT-STREAMBOX');
                   setActiveSection('graph');
                 }}
-                className="px-2.5 py-1 font-medium text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-md transition-colors whitespace-nowrap"
+                className="px-2.5 py-1 font-medium text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-md transition-colors whitespace-nowrap cursor-pointer"
               >
-                Demo A: Neo4j Commitment Graph
+                Financial Relationship Map
               </button>
               <button
                 type="button"
@@ -542,9 +684,9 @@ export default function App() {
                   setLanguage('hi-IN');
                   setActiveSection('bhasha');
                 }}
-                className="px-2.5 py-1 font-medium text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-md transition-colors whitespace-nowrap"
+                className="px-2.5 py-1 font-medium text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-md transition-colors whitespace-nowrap cursor-pointer"
               >
-                Demo B: Sarvam Bhasha (Hindi / Tamil)
+                DebitLens Bhasha (Hindi / Tamil)
               </button>
               <button
                 type="button"
@@ -552,9 +694,9 @@ export default function App() {
                   setSelectedCommitmentId('CMT-STREAMBOX');
                   setActiveSection('reconciliation');
                 }}
-                className="px-2.5 py-1 font-medium text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md transition-colors whitespace-nowrap"
+                className="px-2.5 py-1 font-medium text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md transition-colors whitespace-nowrap cursor-pointer"
               >
-                3-Way Reconciliation & Judge Demo
+                Three-Way Reconciliation
               </button>
               <button
                 type="button"
@@ -562,9 +704,9 @@ export default function App() {
                   setSelectedCommitmentId('CMT-DESIGNVAULT');
                   setActiveSection('cancellation');
                 }}
-                className="px-2.5 py-1 font-medium text-rose-900 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-md transition-colors whitespace-nowrap"
+                className="px-2.5 py-1 font-medium text-rose-900 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-md transition-colors whitespace-nowrap cursor-pointer"
               >
-                Post-Cancellation Case (DesignVault)
+                Post-Cancellation Review (DesignVault)
               </button>
             </div>
 
@@ -578,51 +720,69 @@ export default function App() {
           {/* SECTION 1: OVERVIEW DASHBOARD */}
           {activeSection === 'overview' && summary && (
             <div className="space-y-6">
-              {/* Partner Track Integration Status Strip */}
+              {/* Relationship & Language Intelligence Summary Strip */}
               {integrations && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <div className="p-4 rounded-xl bg-white border border-slate-200 flex items-start justify-between gap-4">
+                  <div className="p-4 rounded-xl bg-white border border-slate-200 flex items-start justify-between gap-4 shadow-xs">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 text-xs font-semibold text-slate-900">
                         <Database className="w-4 h-4 text-teal-700" />
-                        <span>Neo4j Partner Track — Relationship Intelligence Layer</span>
+                        <span>Financial Relationship Intelligence Layer</span>
                       </div>
                       <p className="text-xs text-slate-600 leading-relaxed">
                         {integrations.neo4j.message}
                       </p>
                       <div className="text-[11px] font-mono text-slate-500 tabular-nums pt-0.5">
-                        Mode: {integrations.neo4j.mode} · Active Graph View: {integrations.neo4j.nodeCount} Nodes · {integrations.neo4j.relationshipCount} Edges
+                        State: {integrations.neo4j.mode === 'LIVE_NEO4J' ? 'Persistent Database Connected' : 'Local In-Memory Cache'} · Active Graph View: {integrations.neo4j.nodeCount} Nodes · {integrations.neo4j.relationshipCount} Edges
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setActiveSection('graph')}
-                      className="px-3 py-1.5 text-xs font-medium text-teal-800 bg-teal-50 hover:bg-teal-100 rounded-lg transition-colors whitespace-nowrap shrink-0"
-                    >
-                      Open Graph
-                    </button>
+                    <div className="flex flex-col gap-1 shrink-0 items-end">
+                      <button
+                        type="button"
+                        onClick={() => setActiveSection('graph')}
+                        className="px-3 py-1.5 text-xs font-medium text-teal-800 bg-teal-50 hover:bg-teal-100 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                      >
+                        Open Graph
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveSection('settings')}
+                        className="text-[11px] text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                      >
+                        Diagnostics
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="p-4 rounded-xl bg-white border border-slate-200 flex items-start justify-between gap-4">
+                  <div className="p-4 rounded-xl bg-white border border-slate-200 flex items-start justify-between gap-4 shadow-xs">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 text-xs font-semibold text-slate-900">
                         <Languages className="w-4 h-4 text-indigo-700" />
-                        <span>Sarvam AI Partner Track — DebitLens Bhasha ({language})</span>
+                        <span>Multilingual Financial Intelligence — DebitLens Bhasha ({language})</span>
                       </div>
                       <p className="text-xs text-slate-600 leading-relaxed">
                         {integrations.sarvam.message}
                       </p>
                       <div className="text-[11px] font-mono text-slate-500 pt-0.5">
-                        Status: {integrations.sarvam.status} · Models: {integrations.sarvam.chatModel} + {integrations.sarvam.translationModel}
+                        Status: {integrations.sarvam.status === 'LIVE_SARVAM' ? 'Active Multilingual Engine' : 'Standard Fallback Lexicon'} · 11 Scheduled Languages Supported
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setActiveSection('bhasha')}
-                      className="px-3 py-1.5 text-xs font-medium text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors whitespace-nowrap shrink-0"
-                    >
-                      Open Bhasha
-                    </button>
+                    <div className="flex flex-col gap-1 shrink-0 items-end">
+                      <button
+                        type="button"
+                        onClick={() => setActiveSection('bhasha')}
+                        className="px-3 py-1.5 text-xs font-medium text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                      >
+                        Open Bhasha
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveSection('settings')}
+                        className="text-[11px] text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                      >
+                        Diagnostics
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -806,7 +966,7 @@ export default function App() {
                       Detected Financial Commitments Register ({commitments.length} Total)
                     </h3>
                     <p className="text-xs text-slate-500">
-                      Click any commitment to inspect its Neo4j relationship path, explain in Bhasha ({language}), or launch Two-Layer Cancellation
+                      Click any commitment to inspect its relationship path, explain in Bhasha ({language}), or launch Two-Layer Cancellation
                     </p>
                   </div>
                   <button
@@ -890,6 +1050,26 @@ export default function App() {
             </div>
           )}
 
+          {/* SECTION 1A: REVIEW & RESOLVE QUEUE */}
+          {activeSection === 'review_queue' && (
+            <ReviewAndResolveView
+              onSelectCommitment={(cmtId) => {
+                setSelectedCommitmentId(cmtId);
+                setActiveSection('commitments');
+              }}
+              onSelectTransaction={(txnId) => {
+                const found = transactions.find((t) => t.id === txnId);
+                if (found) {
+                  setInvestigationTransaction(found);
+                  setIsInvestigationDrawerOpen(true);
+                } else {
+                  setActiveSection('transactions');
+                }
+              }}
+              onNavigateSection={(sec) => setActiveSection(sec as ActiveSection)}
+            />
+          )}
+
           {/* SECTION 1B: THREE-WAY FINANCIAL RECONCILIATION CENTRE */}
           {activeSection === 'reconciliation' && (
             <ReconciliationCentreView
@@ -969,7 +1149,7 @@ export default function App() {
               <div className="border border-slate-200 bg-white rounded-xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                   <h2 className="text-lg font-semibold text-slate-900">
-                    DebitLens Bhasha — Financial Intelligence in Your Language (Sarvam AI)
+                    DebitLens Bhasha — Multilingual Financial Intelligence
                   </h2>
                   <p className="text-xs text-slate-600 mt-0.5">
                     Communicates verified graph evidence, cryptic merchant descriptors, three-way reconciliation findings, financial alerts, and two-layer cancellation playbooks in Indian languages without hallucinating unverified merchants or removing contractual safety warnings.
@@ -1136,6 +1316,17 @@ export default function App() {
                                 <span>Confirm Candidate</span>
                               </button>
                             )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPassportCommitmentId(cmt.id);
+                              setIsPassportModalOpen(true);
+                            }}
+                            className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors whitespace-nowrap"
+                          >
+                            <FileCheck className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Commitment Passport</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => {
@@ -1378,13 +1569,27 @@ export default function App() {
                               <div className="text-[10px] text-slate-500">{t.direction}</div>
                             </td>
                             <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                              <button
-                                type="button"
-                                onClick={() => handleInspectTransactionInBhasha(t.id)}
-                                className="px-2.5 py-1 text-xs font-medium text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-md transition-colors"
-                              >
-                                Explain in Bhasha
-                              </button>
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setInvestigationTransaction(t);
+                                    setIsInvestigationDrawerOpen(true);
+                                  }}
+                                  className="px-2.5 py-1 text-xs font-semibold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
+                                  title="I don't recognise this debit - investigate merchant and payment gateway"
+                                >
+                                  <FileQuestion className="w-3.5 h-3.5 text-amber-700" />
+                                  <span>Investigate</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleInspectTransactionInBhasha(t.id)}
+                                  className="px-2.5 py-1 text-xs font-medium text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-md transition-colors cursor-pointer"
+                                >
+                                  Explain in Bhasha
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))
@@ -1485,21 +1690,124 @@ export default function App() {
               <MethodologyMetricsView metrics={metrics} />
             </div>
           )}
+
+          {/* SECTION 9: SETTINGS & SYSTEM INFORMATION */}
+          {activeSection === 'settings' && (
+            <SettingsView
+              integrations={integrations}
+              onRefreshIntegrations={loadAllData}
+              currentLanguage={language}
+              onChangeLanguage={setLanguage}
+              onNavigateToGraph={() => setActiveSection('graph')}
+              onNavigateToBhasha={() => setActiveSection('bhasha')}
+            />
+          )}
         </main>
       </div>
 
-      {/* Quiet Footer */}
-      <footer className="bg-white border-t border-slate-200 px-6 py-4 text-xs text-slate-500 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+      {/* Mobile Bottom Navigation Bar (Visible on mobile/tablet, hidden on desktop) */}
+      <nav
+        aria-label="Mobile Bottom Navigation"
+        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 py-1 shadow-lg flex items-center justify-around"
+      >
+        <button
+          type="button"
+          onClick={() => setActiveSection('overview')}
+          className={`flex flex-col items-center justify-center min-w-[54px] min-h-[48px] py-1 text-[10px] font-medium transition-colors cursor-pointer ${
+            activeSection === 'overview' ? 'text-teal-800 font-semibold' : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <LayoutDashboard className="w-5 h-5 mb-0.5" />
+          <span>Overview</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSection('reconciliation')}
+          className={`flex flex-col items-center justify-center min-w-[54px] min-h-[48px] py-1 text-[10px] font-medium transition-colors cursor-pointer ${
+            activeSection === 'reconciliation' ? 'text-teal-800 font-semibold' : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Scale className="w-5 h-5 mb-0.5" />
+          <span>Reconcile</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSection('graph')}
+          className={`flex flex-col items-center justify-center min-w-[54px] min-h-[48px] py-1 text-[10px] font-medium transition-colors cursor-pointer ${
+            activeSection === 'graph' ? 'text-teal-800 font-semibold' : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Network className="w-5 h-5 mb-0.5" />
+          <span>Map</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSection('bhasha')}
+          className={`flex flex-col items-center justify-center min-w-[54px] min-h-[48px] py-1 text-[10px] font-medium transition-colors cursor-pointer ${
+            activeSection === 'bhasha' ? 'text-teal-800 font-semibold' : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Languages className="w-5 h-5 mb-0.5" />
+          <span>Bhasha</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setIsMobileMenuOpen(true)}
+          className="flex flex-col items-center justify-center min-w-[54px] min-h-[48px] py-1 text-[10px] font-medium text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
+        >
+          <Menu className="w-5 h-5 mb-0.5" />
+          <span>Menu</span>
+        </button>
+      </nav>
+
+      {/* Quiet Consumer Footer */}
+      <footer className="bg-white border-t border-slate-200 px-6 py-4 text-xs text-slate-500 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex items-center gap-2">
-          <CheckCircle2 className="w-3.5 h-3.5 text-teal-700" />
+          <CheckCircle2 className="w-4 h-4 text-teal-700 shrink-0" />
           <span>
-            DebitLens — Evidence-Backed Financial Commitment Intelligence · HackFront India Fintech PS T4.1 + Neo4j + Sarvam AI Partner Tracks
+            DebitLens — Evidence-Backed Financial Commitment Intelligence & Three-Way Reconciliation · Find it. Understand it. Stop it.
           </span>
         </div>
-        <div className="font-mono text-[11px]">
-          Synthetic Prototype · Zero Credentials Collected
+        <div className="flex items-center gap-3 text-[11px] font-mono">
+          <span>Synthetic Demonstration Data</span>
+          <span className="text-slate-300">|</span>
+          <button
+            type="button"
+            onClick={() => setActiveSection('settings')}
+            className="text-slate-600 hover:text-teal-800 underline cursor-pointer"
+          >
+            System Information & Integrations
+          </button>
         </div>
       </footer>
+
+      {/* Unrecognized Debit Investigation Drawer */}
+      <UnrecognizedDebitInvestigationDrawer
+        transaction={investigationTransaction}
+        isOpen={isInvestigationDrawerOpen}
+        onClose={() => {
+          setIsInvestigationDrawerOpen(false);
+          setInvestigationTransaction(null);
+        }}
+        onMerchantConfirmed={async () => {
+          sarvamService.clearCache();
+          await loadAllData();
+        }}
+        onOpenBhasha={() => {
+          setIsInvestigationDrawerOpen(false);
+          setActiveSection('bhasha');
+        }}
+      />
+
+      {/* Commitment Passport Modal */}
+      <CommitmentPassportModal
+        commitmentId={passportCommitmentId}
+        isOpen={isPassportModalOpen}
+        onClose={() => {
+          setIsPassportModalOpen(false);
+          setPassportCommitmentId(null);
+        }}
+      />
     </div>
   );
 }

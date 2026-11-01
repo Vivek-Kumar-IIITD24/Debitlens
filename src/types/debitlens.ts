@@ -27,7 +27,12 @@ export type RelationshipConfidenceStatus =
   | 'USER_CONFIRMED'
   | 'IMPORTED_RECORD'
   | 'SYSTEM_GENERATED'
-  | 'UNRESOLVED';
+  | 'UNRESOLVED'
+  | 'EVIDENCE_ATTACHED'
+  | 'USER_REPORTED'
+  | 'MERCHANT_CONFIRMED'
+  | 'BANK_CONFIRMED'
+  | 'UNKNOWN';
 
 export type PaymentRailType =
   | 'UPI_AUTOPAY'
@@ -51,7 +56,8 @@ export type RecurrenceFrequency =
   | 'IRREGULAR'
   | 'RESUMED'
   | 'TRIAL_CONVERTED'
-  | 'ONE_TIME';
+  | 'ONE_TIME'
+  | 'UNKNOWN';
 
 export type CommitmentCategory =
   | 'OTT_STREAMING'
@@ -329,16 +335,25 @@ export interface MandateRecord {
   commitmentId: string | null;
   merchantId: string | null;
   merchantName: string;
-  paymentRail: PaymentRailType;
-  maxAmountMinor: number;
-  maxAmount: number;
+  paymentRail: PaymentRailType | 'UNKNOWN';
+  maxAmountMinor: number | null;
+  maxAmount: number | null;
   currency: string;
-  frequency: RecurrenceFrequency;
-  startDate: string;
+  frequency: RecurrenceFrequency | 'UNKNOWN';
+  startDate: string | null;
   endDate: string | null;
-  mandateStatus: 'ACTIVE' | 'PAUSED' | 'REVOCATION_REPORTED' | 'REVOKED' | 'EXPIRED';
+  mandateStatus:
+    | 'ACTIVE'
+    | 'PAUSED'
+    | 'REVOCATION_REPORTED'
+    | 'REVOKED'
+    | 'EXPIRED'
+    | 'UNKNOWN'
+    | 'PENDING_VERIFICATION';
   sourceType: 'DEMO_SEED' | 'USER_IMPORTED';
   updatedAt: string;
+  isIncomplete?: boolean;
+  missingFields?: string[];
 }
 
 export interface ServiceTermsRecord {
@@ -388,9 +403,14 @@ export interface ReconciliationFindingRecord {
   serviceDocumentId: string | null;
   explanation: string;
   epistemicCaveat: string;
-  recommendedAction: string;
   evidenceRecordIds: string[];
   evaluatedAt: string;
+  discrepancyDetails?: {
+    missingMandateFields?: string[];
+    missingTermsFields?: string[];
+    discrepancyReason?: string;
+    [key: string]: any;
+  };
 }
 
 export type EvidenceCategoryType =
@@ -822,5 +842,376 @@ export interface IntegrationStatusResponse {
     status: SarvamRuntimeStatus;
     message: string;
   };
+}
+
+// ============================================================================
+// PART 4: UNRECOGNIZED DEBIT INVESTIGATION TYPES
+// ============================================================================
+export interface MerchantCandidate {
+  candidateMerchantId: string;
+  candidateMerchantName: string;
+  candidateServiceName: string;
+  candidateType:
+    | 'EXACT_ALIAS'
+    | 'NORMALISED_ALIAS'
+    | 'PREVIOUS_OVERRIDE'
+    | 'RELATED_HISTORY'
+    | 'CATALOGUE_MATCH'
+    | 'PROCESSOR_RELATIONSHIP'
+    | 'GRAPH_RELATIONSHIP';
+  matchReason: string;
+  evidenceSource: string;
+  confidenceScore: number;
+  confidenceExplanation: string;
+}
+
+export type UnrecognizedDebitCaseStatus =
+  | 'OPEN'
+  | 'UNDER_REVIEW'
+  | 'NEEDS_USER_INPUT'
+  | 'IDENTIFIED'
+  | 'UNRESOLVED'
+  | 'CLOSED';
+
+export interface UnrecognizedDebitCase {
+  id: string;
+  transactionId: string;
+  originalDescriptor: string;
+  amount: number;
+  amountMinor: number;
+  transactionDate: string;
+  currency: string;
+  paymentRail: PaymentRailType;
+  accountAlias: string;
+  externalReference?: string | null;
+  possibleProcessor: string | null;
+  currentAssessment: {
+    merchantIdentity: string | null;
+    serviceName: string | null;
+    resolutionStatus: RelationshipConfidenceStatus;
+    matchingMethod: string;
+    explanation: string;
+  };
+  candidateMerchants: MerchantCandidate[];
+  status: UnrecognizedDebitCaseStatus;
+  userAssessment: 'UNRECOGNIZED' | 'RECOGNIZED' | 'NEEDS_MORE_INFO' | 'UNDER_INVESTIGATION' | null;
+  userNotes: string;
+  evidenceIds: string[];
+  recommendedNextAction: string;
+  createdAt: string;
+  updatedAt: string;
+  resolutionSource: 'USER_CONFIRMED' | 'REJECTED_ALL' | 'KEPT_UNRESOLVED' | 'SYSTEM_DEFAULT' | null;
+  resolvedMerchantId: string | null;
+}
+
+// ============================================================================
+// PART 5: REVIEW & RESOLVE QUEUE TYPES
+// ============================================================================
+export type ReviewQueuePriority =
+  | 'P0'
+  | 'P1'
+  | 'P2'
+  | 'P3'
+  | 'HIGH_ATTENTION'
+  | 'REVIEW_REQUIRED'
+  | 'UPCOMING'
+  | 'INFORMATIONAL';
+
+export type ReviewQueueStatus =
+  | 'OPEN'
+  | 'IN_REVIEW'
+  | 'WAITING_FOR_USER'
+  | 'RESOLVED'
+  | 'DISMISSED';
+
+export type ReviewQueueCategory =
+  | 'POST_CANCEL_DEBIT'
+  | 'PRICE_DISCREPANCY'
+  | 'FREQUENCY_DISCREPANCY'
+  | 'CONFLICTING_EVIDENCE'
+  | 'SERVICE_TERMS_MISSING'
+  | 'MANDATE_EXPIRY_RISK'
+  | 'DORMANT_MANDATE'
+  | 'UNRESOLVED_DEBIT'
+  | 'TRIAL_CONVERSION'
+  | 'UPCOMING_RENEWAL'
+  | 'POSSIBLE_DUPLICATE'
+  | 'MATCHED_RECONCILIATION';
+
+export interface ReviewQueueItem {
+  id: string;
+  dedupKey: string;
+  title: string;
+  priority: ReviewQueuePriority;
+  status: ReviewQueueStatus;
+  category: ReviewQueueCategory;
+  commitmentId: string | null;
+  transactionId: string | null;
+  mandateReference: string | null;
+  serviceName: string;
+  merchantName: string;
+  amount: number | null;
+  amountMinor: number | null;
+  eventDate: string;
+  whyItAppeared: string;
+  supportingEvidenceCount: number;
+  recommendedAction: string;
+  actionType:
+    | 'INVESTIGATE_DEBIT'
+    | 'REVIEW_DISCREPANCY'
+    | 'ADD_SERVICE_TERMS'
+    | 'VERIFY_MANDATE'
+    | 'OPEN_CANCELLATION'
+    | 'VIEW_PASSPORT'
+    | 'INSPECT_EVIDENCE';
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ============================================================================
+// PART 6: COMMITMENT PASSPORT TYPES
+// ============================================================================
+export interface CommitmentPassport {
+  commitmentId: string;
+  generatedAt: string;
+  sectionA_Identity: {
+    serviceName: string;
+    merchantName: string;
+    merchantId?: string;
+    legalEntityName?: string;
+    category?: string;
+    supportContact?: string;
+    grievanceOfficer?: string;
+    website?: string;
+    confidenceScore: number;
+    confidenceLabel: string;
+    connectedDescriptors: string[];
+    processorName: string | null;
+    accountAlias?: string;
+    provenance?: RelationshipConfidenceStatus | string;
+    confirmedAt?: string | null;
+  };
+  sectionB_Mandate: {
+    mandatePresent: boolean;
+    rail?: string;
+    mandateReference?: string | null;
+    maxAmount?: number | null;
+    mandateStatus?: string;
+    frequency?: string;
+    startDate?: string | null;
+    endDate?: string | null;
+  };
+  sectionC_Terms: {
+    termsPresent: boolean;
+    serviceName?: string;
+    expectedAmount?: number | null;
+    billingFrequency?: string;
+    renewalDate?: string | null;
+    userVerified?: boolean;
+    sourceDocument?: string | null;
+  };
+  sectionD_History: {
+    totalDebitsCount: number;
+    totalSpent: number;
+    firstDebitDate?: string | null;
+    latestDebitDate?: string | null;
+    averageDebitAmount?: number;
+    cadence?: string;
+  };
+  sectionE_Reconciliation: {
+    reconciliationStatus: string;
+    amountComparison?: string;
+    cadenceComparison?: string;
+    lifecycleComparison?: string;
+    explanation?: string;
+    outcome?: ReconciliationOutcomeStatus;
+    expectedPrice?: number | null;
+    actualAmount?: number;
+    mandateCap?: number | null;
+    discrepancyAmount?: number | null;
+    discrepancyPercent?: number | null;
+    evidenceRecordIds?: string[];
+    recommendedAction?: string;
+  };
+  sectionF_Cancellation: {
+    serviceLifecycleStatus: string;
+    mandateLifecycleStatus: string;
+    bothCancelled?: boolean;
+    areBothStopped?: boolean;
+    cancellationSummary?: string;
+  };
+  sectionG_Evidence: {
+    evidenceRecordsCount: number;
+    evidenceRecords: {
+      id: string;
+      title: string;
+      description: string;
+      date: string;
+      verificationStatus: string;
+      sourceReference?: string | null;
+    }[];
+  };
+  dataCoverage: {
+    coveragePercent: number;
+    verifiedElementsCount: number;
+    totalElementsCount: number;
+    missingElements?: string[];
+    qualitySummary?: string;
+    statusBreakdown?: Record<string, number>;
+    overallQualityPercent?: number;
+    coverageStatement?: string;
+    missingItems?: string[];
+  };
+  // Backwards compatibility sections
+  sectionB_FinancialPattern?: any;
+  sectionC_Authorisation?: any;
+  sectionD_ServiceTerms?: any;
+  sectionF_Lifecycle?: any;
+  sectionG_EvidenceTimeline?: any;
+}
+
+// ============================================================================
+// PART 7: EVIDENCE PACK DATA EXPORT
+// ============================================================================
+export interface EvidencePackData {
+  commitmentId?: string;
+  evidencePackVersion?: string;
+  exportTimestamp?: string;
+  header: {
+    platformName: string;
+    reportTitle: string;
+    subtitle: string;
+    reportId: string;
+    generatedAt: string;
+    syntheticNotice: string;
+  };
+  commitmentIdentity: {
+    merchantName: string;
+    serviceName: string;
+    commitmentId: string;
+    descriptors: string[];
+    resolutionStatus: RelationshipConfidenceStatus | string;
+    provenance: string;
+  };
+  transactions: {
+    id: string;
+    date: string;
+    description: string;
+    amount: number;
+    direction: string;
+    currency: string;
+    reference: string | null;
+    source: string;
+  }[];
+  serviceTerms: {
+    documentedPrice: number | null;
+    billingFrequency: string;
+    currency: string;
+    documentSource: string | null;
+    documentId: string | null;
+    verificationStatus: string;
+    missingFields: string[];
+  };
+  paymentMandate: {
+    mandateId: string | null;
+    mandateReference: string | null;
+    paymentRail: string;
+    maxAuthorisedAmount: number | null;
+    effectiveStatus: string;
+    startDate: string | null;
+    expiryDate: string | null;
+    provenance: string;
+    missingFields: string[];
+  };
+  reconciliation: {
+    outcome: ReconciliationOutcomeStatus;
+    explanation: string;
+    expectedServicePrice: number | null;
+    actualDebitAmount: number;
+    mandateCap: number | null;
+    discrepancyAmount: number | null;
+    discrepancyPercent: number | null;
+    recommendedAction: string;
+  };
+  cancellationEvidence: {
+    serviceLifecycle: ServiceLifecycleStatus;
+    mandateLifecycle: MandateLifecycleStatus;
+    requestDates: { service?: string | null; mandate?: string | null };
+    confirmationReferences: string[];
+    evidenceSources: string[];
+    verificationStatus: string;
+  };
+  postCancellationActivity: {
+    subsequentDebitsDetected: boolean;
+    subsequentDebits: { id: string; date: string; amount: number; description: string }[];
+    monitoringStatement: string;
+  };
+  dataLimitations: {
+    missingDocuments: boolean;
+    missingMandateDetails: boolean;
+    unconfirmedMerchant: boolean;
+    unverifiedCancellation: boolean;
+    evidenceGaps: string[];
+  };
+  provenanceNotice: string;
+}
+
+// ============================================================================
+// PART 8: CSV MAPPING WIZARD TYPES
+// ============================================================================
+export interface CsvMappingConfig {
+  dateColumn: string;
+  descriptionColumn: string;
+  amountMode: 'SEPARATE_COLUMNS' | 'SINGLE_SIGNED_COLUMN' | 'SEPARATE_DEBIT_CREDIT';
+  debitColumn?: string;
+  creditColumn?: string;
+  debitAmountColumn?: string;
+  creditAmountColumn?: string;
+  singleAmountColumn?: string;
+  signedAmountColumn?: string;
+  dateFormat: 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD';
+  referenceColumn?: string;
+  accountColumn?: string;
+  currencyColumn?: string;
+  defaultRail?: string;
+  defaultAccountAlias?: string;
+}
+
+export interface CsvMappingPreviewRow {
+  rowNumber: number;
+  rawDate: string;
+  parsedDate: string | null;
+  rawDescription: string;
+  rawAmount: string;
+  interpretedAmount: number | null;
+  direction: 'DEBIT' | 'CREDIT';
+  isValid: boolean;
+  rejectReason?: string;
+  validationError?: string;
+  mappedRow?: {
+    transaction_date: string;
+    raw_description: string;
+    amount: string;
+    currency: string;
+    direction: string;
+    account_alias?: string;
+    payment_rail?: string;
+    external_reference?: string;
+  } | null;
+}
+
+export interface CsvMappingPreviewResult {
+  headers: string[];
+  suggestedMappings: CsvMappingConfig;
+  detectedMapping: CsvMappingConfig;
+  previewRows: CsvMappingPreviewRow[];
+  totalRows: number;
+  totalRowsFound?: number;
+  validRowCount: number;
+  validRowsCount: number;
+  rejectedRowCount: number;
+  duplicateRowCount: number;
+  unmappedHeaders: string[];
+  validationErrors: { row: number; reason: string }[];
 }
 

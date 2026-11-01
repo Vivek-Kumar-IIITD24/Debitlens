@@ -1,0 +1,3171 @@
+FINAL PRODUCT ENHANCEMENT & FINANCIAL INTELLIGENCE IMPLEMENTATION MASTER PROMPT
+
+Existing Project Refinement | Financial Integrity | Unknown Debit Investigation | Review & Resolve | Commitment Passport | Evidence Pack | Smart Import | Neo4j | Sarvam Bhasha | Responsive UI | Final Validation
+
+Act as a principal fintech product engineer, senior full-stack software architect, financial data engineer, database engineer, UX/product designer, security reviewer and QA automation engineer.
+
+You are continuing development of the existing DebitLens application in Google AI Studio.
+
+This is an existing, substantially implemented project. Do not rebuild it from scratch.
+
+Your task is to transform the current DebitLens prototype into a more complete, useful, differentiated and professionally demonstrable financial commitment intelligence product.
+
+You must inspect the actual repository, preserve its working functionality, implement the improvements described in this prompt, test the changes and prepare the updated project for final submission.
+
+The deadline is close. Prioritise correctness, user usefulness, differentiation and demonstrability rather than adding unnecessary complexity.
+
+Do not merely provide recommendations. Make the changes in the actual imported project.
+
+PART 1 — PRODUCT VISION AND STRATEGIC DIRECTION
+
+1.1 Understand the problem statement
+
+The selected HackFront India fintech problem statement is:
+
+PS T4.1 — The Auto Debits Nobody Can Find
+
+The underlying consumer problem is that people often see money leaving their accounts without knowing:
+
+Which actual merchant or service initiated the payment.
+
+Why the financial statement description is unfamiliar.
+
+Whether the payment is genuinely recurring.
+
+Whether the merchant is a processor or the underlying service.
+
+What the original service promised to charge.
+
+Whether the payment matches the service price.
+
+What payment authorisation allowed the transaction.
+
+Whether the payment mandate is active, expired or revoked.
+
+How to cancel the service.
+
+Whether the payment mandate must also be revoked separately.
+
+Whether another payment occurred after the reported cancellation.
+
+DebitLens must address this complete consumer journey.
+
+1.2 Product identity
+
+Product name:
+
+DebitLens
+
+Preferred tagline:
+
+Find it. Understand it. Reconcile it. Verify it.
+
+Core product positioning:
+
+DebitLens connects what you paid, what you authorised and what the service promised.
+
+DebitLens should evolve beyond ordinary subscription tracking.
+
+It should become an evidence-backed financial commitment investigation and resolution platform.
+
+1.3 Product differentiation
+
+Do not attempt to differentiate DebitLens merely through:
+
+A recurring-payment list.
+
+A dashboard.
+
+Reminder notifications.
+
+A chatbot.
+
+Subscription categorisation.
+
+More graphs.
+
+More numerical cards.
+
+Those capabilities are available in various existing finance and subscription-management products.
+
+The differentiated product journey must be:
+
+Discover a potentially recurring debit.
+
+Identify the underlying merchant using evidence.
+
+Separate payment intermediaries from actual service providers.
+
+Reconcile actual debits against known service terms and payment authorisation.
+
+Explain discrepancies.
+
+Guide service cancellation.
+
+Guide payment mandate revocation separately.
+
+Monitor subsequent debits.
+
+Preserve a clear evidence history.
+
+Generate a useful financial evidence summary that the consumer can retain.
+
+The product should answer:
+
+"I don't recognise this debit. Can DebitLens help me find out what it is, what I authorised, whether I was charged correctly and what I should do next?"
+
+This must be the central user experience.
+
+PART 2 — FIRST INSPECT THE EXISTING CODEBASE
+
+Before editing files, inspect the actual latest repository.
+
+Read:
+
+README.md.
+
+PROJECT_HANDOFF.md.
+
+NEXT_STEPS.md.
+
+TEST_REPORT.md.
+
+package.json.
+
+.env.example.
+
+server.ts.
+
+src/App.tsx.
+
+src/types/debitlens.ts.
+
+src/engine/debitlensEngine.ts.
+
+src/engine/reconciliationEngine.ts.
+
+src/services/neo4jPersistenceService.ts.
+
+src/services/sarvamService.ts.
+
+Frontend API client.
+
+Transaction Explorer.
+
+Commitments view.
+
+Smart Alerts.
+
+Reconciliation Centre.
+
+Evidence Casebook.
+
+Cancellation Centre.
+
+Settings and diagnostics.
+
+Existing persistence service.
+
+Existing tests.
+
+Existing sample datasets.
+
+Neo4j schema and Cypher query documentation.
+
+Identify the existing data model, API contracts, application entry points and working functionality.
+
+2.1 Preserve the architecture
+
+Keep the existing:
+
+React + TypeScript + Vite frontend.
+
+TypeScript/Express backend.
+
+Existing financial detection engine.
+
+Existing nine-outcome reconciliation engine.
+
+Existing persistent JSON store as the prototype's canonical application store.
+
+Existing Neo4j AuraDB graph layer.
+
+Existing Sarvam AI integrations.
+
+Do not migrate the application to Spring Boot or PostgreSQL during this final product-refinement phase.
+
+Do not create a second backend.
+
+Do not replace existing working functionality with mocks.
+
+Do not duplicate existing services unnecessarily.
+
+2.2 Preserve existing working features
+
+The application already has substantial functionality.
+
+Preserve:
+
+Financial Overview.
+
+Transaction Explorer and raw descriptor search.
+
+Recurring commitment detection.
+
+Merchant identity resolution.
+
+Commitments.
+
+Three-way reconciliation.
+
+Nine reconciliation outcomes.
+
+Evidence Casebook.
+
+Two-layer cancellation.
+
+Post-cancellation monitoring.
+
+Financial Relationship Map.
+
+DebitLens Bhasha.
+
+Smart Alerts.
+
+Data Coverage.
+
+Import Studio.
+
+Settings and integration diagnostics.
+
+New features should integrate with these existing workspaces rather than creating unnecessary additional workspaces.
+
+2.3 Current architecture responsibilities
+
+Preserve the following separation:
+
+Application persistence
+
+The existing persistent JSON store is the canonical prototype record store.
+
+Neo4j
+
+Neo4j represents financial relationships and supports graph queries. Treat it as a graph layer/projection, not a replacement for canonical application persistence.
+
+Sarvam
+
+Sarvam supports language generation or translation as implemented by the actual service routes.
+
+Deterministic financial engines
+
+Financial detection, reconciliation, provenance, status and user-action decisions must remain grounded in deterministic logic and actual application records.
+
+Do not let generative AI determine whether a transaction is fraudulent, whether a mandate exists or whether a cancellation has legally succeeded.
+
+PART 3 — P0: FIX FINANCIAL DATA INTEGRITY BEFORE ADDING NEW FEATURES
+
+These are mandatory corrections.
+
+3.1 Correct incomplete mandate imports
+
+Inspect:
+
+server.ts
+
+Find:
+
+POST /api/mandates/import
+
+The previous implementation assigned defaults to missing imported mandate fields:
+
+Maximum amount → ₹500.
+
+Payment rail → UPI_AUTOPAY.
+
+Frequency → MONTHLY.
+
+Start date → 1 June 2026.
+
+Status → ACTIVE.
+
+This behaviour must be removed.
+
+An incomplete mandate import must never invent financial details.
+
+Required field handling
+
+Field
+
+Correct behaviour when missing
+
+Maximum amount
+
+Unknown / null
+
+Payment rail
+
+UNKNOWN
+
+Frequency
+
+UNKNOWN
+
+Start date
+
+Null / unavailable
+
+Expiry date
+
+Null / unavailable
+
+Status
+
+UNKNOWN or PENDING_VERIFICATION
+
+Merchant association
+
+UNRESOLVED unless evidence supports a match
+
+Update MandateRecord in src/types/debitlens.ts if necessary.
+
+Use nullable or explicitly unknown fields where appropriate.
+
+Do not convert missing values into zero unless zero is a genuinely supplied financial value.
+
+Import validation
+
+For every imported mandate:
+
+Validate the reference ID.
+
+Validate the maximum amount if supplied.
+
+Validate currency.
+
+Validate date formats.
+
+Validate payment-rail values.
+
+Validate status values.
+
+Preserve the source and import batch.
+
+Identify missing fields.
+
+Flag conflicting records.
+
+Prevent duplicate mandates from being silently created.
+
+The import flow should return a summary containing:
+
+Total rows.
+
+Accepted rows.
+
+Rejected rows.
+
+Incomplete records.
+
+Duplicate records.
+
+Fields requiring verification.
+
+Reconciliation protection
+
+An incomplete mandate must not produce a definitive MATCHED outcome.
+
+It must produce an appropriate incomplete or unresolved result.
+
+The UI must explain which mandate fields are missing.
+
+Tests required
+
+Add tests proving that:
+
+Missing amount remains unknown.
+
+Missing frequency remains unknown.
+
+Missing payment rail remains unknown.
+
+Missing start date is not invented.
+
+Missing status is not treated as ACTIVE.
+
+An incomplete mandate cannot establish a fully verified MATCHED outcome.
+
+3.2 Fix expired mandate handling in dormant-mandate reconciliation
+
+Inspect:
+
+src/engine/reconciliationEngine.ts
+
+Find the dormant mandate or MANDATE_WITHOUT_RECENT_TRANSACTION branch in runFullReconciliation().
+
+The current logic checks ACTIVE status but must also independently check expiry dates.
+
+A mandate with:
+
+Status = ACTIVE.
+
+Expiry date in the past.
+
+No recent transaction.
+
+must not be reported as an active dormant mandate risk.
+
+Effective mandate validity
+
+Evaluate:
+
+Stored status.
+
+Expiry date.
+
+Revocation date.
+
+Start date, if available.
+
+Current evaluation date.
+
+Use a single deterministic effective-validity helper where practical.
+
+The logic should distinguish:
+
+ACTIVE and valid.
+
+EXPIRED.
+
+REVOKED.
+
+PENDING.
+
+UNKNOWN.
+
+INCOMPLETE.
+
+Do not assume that an ACTIVE text status overrides an expired end date.
+
+Tests required
+
+Add regression cases for:
+
+Active mandate with a future expiry.
+
+Active mandate with a past expiry.
+
+Revoked mandate.
+
+Unknown expiry.
+
+Mandate with missing status.
+
+Mandate with no recent debit.
+
+Only a genuinely valid mandate should be eligible for the active dormant-mandate finding.
+
+3.3 Fix persistence failure handling
+
+Inspect:
+
+savePersistentStore()
+
+It already returns a result similar to:
+
+{ saved: boolean, error?: string }
+
+Review every API route that mutates the canonical application store.
+
+Likely areas include:
+
+Transaction imports.
+
+Notification imports.
+
+Mandate imports.
+
+Merchant identity confirmation.
+
+Commitment confirmation or rejection.
+
+Cancellation lifecycle updates.
+
+Evidence attachment.
+
+Service-term changes.
+
+Alert status changes.
+
+New investigation cases.
+
+Review queue state.
+
+Evidence Pack metadata, if persisted.
+
+Required behaviour
+
+The backend must never return a normal successful mutation response when the canonical store failed to persist.
+
+For each mutation:
+
+Validate the input.
+
+Prepare the new state.
+
+Persist safely.
+
+Confirm that the write succeeded.
+
+Return a success response only after successful persistence.
+
+Handle failures with a clear error.
+
+Restore previous in-memory state or apply another safe recovery strategy if appropriate.
+
+Use atomic persistence where supported:
+
+Write the updated data to a temporary file.
+
+Flush/close it.
+
+Atomically replace the previous file.
+
+Handle exceptions.
+
+Do not leave partial or corrupted JSON.
+
+Neo4j synchronisation ordering
+
+The canonical store remains authoritative.
+
+Where a mutation requires graph synchronisation:
+
+Validate the mutation.
+
+Save the canonical application record.
+
+Synchronise the relevant graph representation.
+
+Track graph-sync success or failure separately.
+
+A temporary Neo4j outage should not falsely imply that a successfully saved canonical record was lost.
+
+However, a graph-dependent UI must disclose when its graph representation is behind the canonical state.
+
+Do not report a complete graph synchronisation when it failed.
+
+Tests required
+
+Simulate:
+
+Write permission failure.
+
+Invalid JSON state.
+
+Atomic rename failure, where practical.
+
+Neo4j failure after successful canonical persistence.
+
+Mutation followed by reload.
+
+Verify that the application never reports an unpersisted mutation as successful.
+
+3.4 Correct evidence provenance
+
+Inspect:
+
+buildCommitmentEvidenceCasebook()
+
+The current code maps:
+
+EVIDENCE_ATTACHED → USER_CONFIRMED
+
+These represent different levels of evidence and must be separated.
+
+An attached confirmation reference does not automatically prove that a merchant independently confirmed cancellation.
+
+Required provenance states
+
+Use the existing equivalent fields where possible, or extend the model carefully.
+
+Support distinctions such as:
+
+IMPORTED
+
+INFERRED
+
+USER_REPORTED
+
+EVIDENCE_ATTACHED
+
+USER_CONFIRMED
+
+MERCHANT_CONFIRMED
+
+BANK_CONFIRMED
+
+SYSTEM_GENERATED
+
+UNKNOWN
+
+Only mark evidence as merchant-confirmed or bank-confirmed when its source genuinely supports that status.
+
+Required data
+
+Each evidence record should retain, where available:
+
+Evidence ID.
+
+Commitment ID.
+
+Evidence type.
+
+Description.
+
+Source.
+
+Original source reference.
+
+Created date.
+
+Actual occurrence date, if known.
+
+Verification status.
+
+Verification method.
+
+User action or system action.
+
+Associated transaction/mandate/document IDs.
+
+Do not replace an unknown source with an invented source.
+
+Do not silently upgrade provenance status.
+
+Seeded DesignVault case
+
+The existing DesignVault synthetic scenario includes:
+
+A cancellation date of 10 September 2026.
+
+Example service confirmation evidence.
+
+Example mandate revocation information.
+
+Preloaded audit events.
+
+These are synthetic demonstration records.
+
+Ensure their actor and source are labelled accurately as demonstration data or system-seeded examples.
+
+Do not label seeded application records as actual real-world user actions.
+
+Preserve the example because it is important for demonstrating post-cancellation monitoring.
+
+3.5 Remove hardcoded evidence dates
+
+Inspect:
+
+src/features/cancellation/CancellationCentreView.tsx
+
+The current implementation includes a hardcoded date:
+
+2026-10-30
+
+Replace hardcoded dates used for newly created records with the current timestamp supplied by a reliable application-side clock.
+
+Use ISO 8601 timestamps internally.
+
+Format dates using the user's locale where appropriate.
+
+Do not rewrite historical dates already associated with genuine or synthetic source evidence.
+
+Keep demonstration fixtures historically stable where they represent an explicitly seeded scenario.
+
+3.6 Correct unknown notification amounts
+
+Inspect notification import and parsing.
+
+The current code uses zero when the expected notification amount is missing.
+
+Do not use 0 to mean unknown.
+
+Represent missing amount as null or an explicit UNKNOWN state.
+
+Distinguish:
+
+Genuine zero-value transaction.
+
+Missing amount.
+
+Unparseable amount.
+
+Estimated amount.
+
+A missing amount must not be treated as a financial value of ₹0.
+
+Ensure financial calculations skip unavailable values and provide an explanation when reconciliation cannot be completed.
+
+3.7 Strengthen CSV data validation
+
+Inspect the RFC-4180 CSV parser and transaction import logic.
+
+The previous implementation uses parseFloat, which can incorrectly accept values such as:
+
+200xyz
+
+as:
+
+200
+
+Replace loose numerical parsing with strict validation.
+
+Required checks
+
+Validate:
+
+Transaction ID.
+
+Transaction date.
+
+Description.
+
+Amount.
+
+Currency.
+
+Debit or credit direction.
+
+Optional account alias.
+
+Optional reference number.
+
+Payment rail, if supplied.
+
+Do not infer missing payment rails.
+
+Do not interpret an invalid amount as zero.
+
+Do not silently accept malformed dates.
+
+Do not accept duplicate transaction IDs as separate records.
+
+Preserve original raw descriptions.
+
+Represent rejected rows with a useful reason.
+
+Use integer paise internally for INR amounts.
+
+Add tests for malformed strings, negative values, empty cells, ambiguous dates and currency errors.
+
+PART 4 — P1: BUILD THE "I DON'T RECOGNISE THIS DEBIT" INVESTIGATION EXPERIENCE
+
+This is the highest-priority differentiation feature.
+
+The goal is to turn the Transactions Explorer from a passive list into a guided investigation workflow.
+
+The system must help consumers investigate an unfamiliar debit without automatically inventing the merchant identity.
+
+4.1 Add an investigation action to unresolved transactions
+
+In the existing Transactions Explorer and unresolved transaction detail panel, add a clearly visible action:
+
+"I don't recognise this debit"
+
+Only show it where appropriate, especially for:
+
+Unresolved descriptors.
+
+Processor-only records.
+
+Ambiguous merchant identities.
+
+Transactions not linked to an established commitment.
+
+Transactions flagged for review.
+
+Do not add this action indiscriminately to every transaction.
+
+4.2 Opening the investigation
+
+When the user selects the action, open a dedicated investigation panel or drawer.
+
+Prefer reusing the existing drawer/modal component system.
+
+Show the following information:
+
+Transaction summary
+
+Original transaction description.
+
+Amount.
+
+Transaction date.
+
+Currency.
+
+Payment rail, when known.
+
+Masked account alias, where available.
+
+Reference ID, where available.
+
+Current identity assessment
+
+Merchant identity.
+
+Possible processor identity.
+
+Linked service, if any.
+
+Related financial commitment, if any.
+
+Matching mandate, if any.
+
+Resolution status.
+
+Relevant evidence.
+
+Do not label an unknown field as though it were known.
+
+4.3 Possible merchant candidates
+
+Generate merchant candidates only from existing evidence sources.
+
+Potential sources:
+
+Exact merchant alias.
+
+Normalised alias.
+
+Previously confirmed user override.
+
+Related transaction history.
+
+Existing merchant catalogue.
+
+Payment processor relationship.
+
+Verified Neo4j relationships.
+
+Other existing structured evidence.
+
+Each candidate must include:
+
+Candidate merchant name.
+
+Candidate type.
+
+Match reason.
+
+Evidence source.
+
+Confidence score or rank, if meaningful.
+
+Confidence explanation.
+
+Do not invent external merchant identities.
+
+Do not use a generic LLM response as proof of merchant identity.
+
+If no reliable candidates exist, clearly display:
+
+"We couldn't identify the underlying merchant from the available records."
+
+4.4 Candidate actions
+
+For a candidate that has supporting evidence, provide:
+
+Confirm this merchant.
+
+This is not the merchant.
+
+Keep unresolved.
+
+For the transaction as a whole, provide:
+
+I recognise this payment.
+
+I still do not recognise it.
+
+I need more information.
+
+The user must never be forced to confirm a suggested candidate.
+
+4.5 Record user confirmation correctly
+
+When a user confirms an identity:
+
+Store the identity override.
+
+Store the transaction ID.
+
+Store the original descriptor.
+
+Store the confirmed merchant.
+
+Store the confirmation timestamp.
+
+Set source to USER_CONFIRMED.
+
+Preserve the prior system suggestion.
+
+Retain the user-selected reason or confirmation context, where available.
+
+Do not silently overwrite the raw merchant resolution.
+
+Keep the raw system finding and user override separately traceable.
+
+A confirmed override should be scoped carefully.
+
+Do not globally assume that every transaction with a similar payment processor belongs to the same merchant.
+
+Use a suitable combination of:
+
+Account alias.
+
+Descriptor.
+
+Merchant identifier.
+
+Relevant payment channel.
+
+If the application uses a single synthetic user profile, clearly document that limitation. Do not claim secure multi-user isolation.
+
+4.6 Unresolved investigation case
+
+When the user cannot identify the debit:
+
+Create a persistent investigation case.
+
+Suggested minimal data model:
+
+UnrecognizedDebitCase
+
+id
+
+transactionIds
+
+originalDescriptor
+
+possibleProcessor
+
+candidateMerchantIds
+
+status
+
+userAssessment
+
+userNotes
+
+evidenceIds
+
+recommendedNextAction
+
+createdAt
+
+updatedAt
+
+resolutionSource
+
+resolvedMerchantId, nullable
+
+Suggested statuses:
+
+OPEN
+
+UNDER_REVIEW
+
+NEEDS_USER_INPUT
+
+IDENTIFIED
+
+UNRESOLVED
+
+CLOSED
+
+Avoid unnecessary workflow complexity.
+
+Preserve case history.
+
+4.7 Useful user guidance
+
+If the debit remains unrecognised, provide a short evidence-based checklist:
+
+Check the original bank statement entry.
+
+Check the relevant UPI app's transaction details.
+
+Review the bank or card statement reference.
+
+Check available mandates.
+
+Check merchant emails or SMS receipts.
+
+Contact the bank or payment provider using independently verified official channels when necessary.
+
+Do not invent a customer-support phone number or website.
+
+Do not say that the user has formally disputed a payment just because an investigation case was created.
+
+The application must explicitly distinguish investigation from bank dispute filing.
+
+4.8 Neo4j integration
+
+Where the transaction has relevant graph relationships, expose those connections in the investigation view.
+
+The Neo4j graph may support:
+
+Transaction-to-descriptor relationships.
+
+Descriptor-to-processor relationships.
+
+Processor-to-merchant relationships.
+
+Merchant-to-commitment relationships.
+
+Commitment-to-mandate relationships.
+
+Only expose relationships that actually exist in the graph.
+
+Use the canonical store for investigation-case persistence unless the existing architecture already supports an appropriate graph projection.
+
+Do not make graph availability a blocker for creating an investigation case.
+
+4.9 Tests required
+
+Test:
+
+Opening an investigation from an unresolved transaction.
+
+Candidate list generation from real evidence.
+
+Empty candidate behaviour.
+
+User confirming a merchant.
+
+User rejecting a candidate.
+
+Keeping the transaction unresolved.
+
+Creating an investigation case.
+
+Persisting the case across reload.
+
+Preserving the original raw descriptor.
+
+No cross-merchant merging based only on a shared processor.
+
+PART 5 — P1: CREATE A PRIORITY "REVIEW & RESOLVE" INBOX
+
+Do not create an unrelated second alert system.
+
+Improve the existing Smart Alerts and Financial Overview experience.
+
+The user should be able to see what needs attention and understand what action to take.
+
+5.1 Unified action queue
+
+Create or improve a central Review & Resolve section.
+
+Aggregate actionable records from:
+
+Unresolved transaction investigations.
+
+Price discrepancies.
+
+Frequency discrepancies.
+
+Conflicting evidence.
+
+Service terms unavailable.
+
+Mandates requiring review.
+
+Trial conversion alerts.
+
+Upcoming renewals.
+
+Post-cancellation debits.
+
+Missing user confirmations.
+
+Do not duplicate findings already represented elsewhere.
+
+5.2 Priority categories
+
+Use a transparent rule-based priority scheme.
+
+Suggested categories:
+
+HIGH ATTENTION
+
+Possible post-cancellation debit.
+
+Material amount discrepancy.
+
+Unresolved debit with sufficient suspicious contextual evidence.
+
+Conflicting cancellation or mandate evidence.
+
+REVIEW REQUIRED
+
+Unknown merchant.
+
+Missing service terms.
+
+Mandate expiry or status uncertainty.
+
+Unexpected frequency.
+
+Potential duplicate.
+
+UPCOMING
+
+Known upcoming renewal.
+
+Trial conversion based on a verified date.
+
+Expected periodic debit.
+
+INFORMATIONAL
+
+Successfully reconciled record.
+
+Confirmed merchant association.
+
+Newly imported record.
+
+Do not classify every recurring transaction as a risk.
+
+Do not label unknown transactions as fraud.
+
+Do not use arbitrary severity scores.
+
+5.3 Action queue item design
+
+Each queue card should show:
+
+Title.
+
+Commitment or transaction.
+
+Amount, where relevant.
+
+Relevant date.
+
+Priority.
+
+Status.
+
+Why it appeared.
+
+Supporting evidence count.
+
+Recommended next action.
+
+Examples:
+
+"StreamBox debit increased by ₹300."
+
+"Payment processor identified, but underlying merchant is unknown."
+
+"Service cancellation is reported, but mandate revocation remains unverified."
+
+"A payment appeared after the recorded cancellation date."
+
+Each card should have an appropriate action:
+
+Investigate.
+
+Review discrepancy.
+
+Add service terms.
+
+Verify mandate.
+
+Open cancellation case.
+
+Inspect evidence.
+
+Mark reviewed, where appropriate.
+
+5.4 Queue status
+
+Use a simple persistent workflow:
+
+OPEN
+
+IN_REVIEW
+
+WAITING_FOR_USER
+
+RESOLVED
+
+DISMISSED, where appropriate
+
+A dismissed alert must not silently erase underlying financial evidence.
+
+Preserve its original finding.
+
+Allow a user to reopen or revisit a finding when appropriate.
+
+5.5 Avoid duplicate queue records
+
+Deduplicate using a stable key based on:
+
+Finding type.
+
+Commitment ID or transaction ID.
+
+Relevant evidence source.
+
+Relevant event or period.
+
+A single amount discrepancy should not generate several identical queue cards from different modules.
+
+5.6 Dashboard integration
+
+The Financial Overview should show a concise summary:
+
+Total open items.
+
+High-attention items.
+
+Items waiting for the user.
+
+Items resolved recently.
+
+Clicking a metric should navigate to the corresponding filtered queue.
+
+Do not add excessive new KPI cards.
+
+5.7 Tests required
+
+Test:
+
+Correct priority classification.
+
+Deduplication.
+
+Status persistence.
+
+No disappearance of source findings.
+
+Queue navigation.
+
+Resolved items remaining traceable.
+
+No false high-priority alerts for valid payments.
+
+PART 6 — P1: COMMITMENT PASSPORT
+
+Add a useful Commitment Passport within the existing commitment-detail interface.
+
+Do not create a completely separate workspace.
+
+It should be a consolidated evidence-backed profile of a financial commitment.
+
+6.1 Purpose
+
+When a user opens a commitment, they should be able to understand its complete history without navigating through multiple unrelated pages.
+
+The Commitment Passport should answer:
+
+What is this service?
+
+Which transaction descriptors relate to it?
+
+How often is it charged?
+
+What price was documented?
+
+What amount was authorised?
+
+What was actually debited?
+
+Does everything reconcile?
+
+Has the service been cancelled?
+
+Has the mandate been revoked?
+
+Has another payment occurred?
+
+What evidence is still missing?
+
+6.2 Passport sections
+
+Section A — Identity
+
+Show:
+
+Confirmed service name.
+
+Merchant identity.
+
+Merchant-resolution confidence/rank.
+
+Original descriptors.
+
+Known payment processor.
+
+Related account alias.
+
+Identity provenance.
+
+Confirmation date, if available.
+
+Section B — Financial pattern
+
+Show:
+
+Observed billing cadence.
+
+Number of transactions.
+
+First observed transaction.
+
+Latest transaction.
+
+Typical amount.
+
+Amount range.
+
+Price changes.
+
+Annualised amount only when cadence supports it.
+
+Do not infer a monthly amount for an unknown frequency.
+
+Section C — Authorisation
+
+Show:
+
+Mandate reference.
+
+Payment rail.
+
+Mandate maximum.
+
+Effective mandate status.
+
+Start date, if known.
+
+Expiry date, if known.
+
+Source of mandate data.
+
+Missing mandate fields.
+
+Section D — Service terms
+
+Show:
+
+Documented service price.
+
+Billing frequency.
+
+Currency.
+
+Source document ID.
+
+Extraction method.
+
+User verification state.
+
+Missing service information.
+
+Section E — Reconciliation
+
+Show the latest supported outcome from the nine-outcome taxonomy.
+
+Display:
+
+Expected service amount.
+
+Actual transaction amount.
+
+Mandate maximum.
+
+Difference.
+
+Explanation.
+
+Evidence IDs.
+
+Recommended action.
+
+Section F — Lifecycle
+
+Show independently:
+
+Service lifecycle
+
+Payment authorisation lifecycle
+
+Do not collapse them into one status.
+
+Section G — Evidence timeline
+
+Display:
+
+Transactions.
+
+Imported documents.
+
+User confirmations.
+
+Service cancellation actions.
+
+Mandate revocation actions.
+
+Subsequent debits.
+
+Reconciliation events.
+
+Review actions.
+
+6.3 Missing information
+
+A passport must not look complete when it is not.
+
+Show a Data Coverage indicator with clear descriptions:
+
+Verified.
+
+User-confirmed.
+
+Imported.
+
+Inferred.
+
+Unknown.
+
+Conflicting.
+
+Not supplied.
+
+Do not calculate a misleading 100% completion status when important fields are missing.
+
+6.4 Export integration
+
+Provide an action:
+
+"Export Commitment Evidence Pack"
+
+This should use the same implementation described in the next section.
+
+6.5 Tests required
+
+Test:
+
+Passport creation from existing records.
+
+No invented fields.
+
+Correct mandate expiry.
+
+Correct transaction history.
+
+Correct provenance.
+
+Correct independent cancellation states.
+
+Missing-information visibility.
+
+Export consistency.
+
+PART 7 — P1: IMPLEMENT A REAL EVIDENCE PACK EXPORT
+
+The current product has an Evidence Casebook, but the export workflow needs to become a real usable output.
+
+Implement it.
+
+7.1 Export objectives
+
+A user should be able to generate a readable summary of a specific financial commitment and its supporting records.
+
+The export must be useful for:
+
+Keeping personal records.
+
+Contacting a service provider.
+
+Contacting a bank or payment provider.
+
+Reviewing a recurring payment discrepancy.
+
+Following up on a post-cancellation debit.
+
+Do not claim that this is a legally certified dispute package.
+
+Name it:
+
+DebitLens Evidence Pack
+
+Subtitle:
+
+Financial Evidence Summary
+
+7.2 Export formats
+
+Implement at least:
+
+Downloadable JSON evidence record.
+
+Print-friendly HTML summary or browser print view that users can save as PDF.
+
+Include CSV transaction details only where appropriate.
+
+Do not introduce a large PDF-generation dependency unnecessarily.
+
+A browser print-to-PDF workflow is acceptable for this prototype if the generated HTML is clean and complete.
+
+7.3 Required content
+
+The evidence pack should contain:
+
+A. Header
+
+DebitLens name.
+
+Commitment/service name.
+
+Evidence pack generation timestamp.
+
+Unique report ID.
+
+Synthetic/demo data warning where applicable.
+
+B. Commitment identity
+
+Merchant.
+
+Service.
+
+Original raw descriptors.
+
+Identity resolution state.
+
+Identity provenance.
+
+C. Transaction evidence
+
+For each relevant transaction:
+
+Transaction ID.
+
+Date.
+
+Original description.
+
+Amount.
+
+Direction.
+
+Currency.
+
+Reference, where available.
+
+Data source.
+
+Preserve the original amount and raw descriptor.
+
+D. Service terms
+
+Documented price.
+
+Billing frequency.
+
+Currency.
+
+Source document ID.
+
+Extracted/user-entered/verified status.
+
+Unknown fields.
+
+E. Payment mandate
+
+Mandate ID/reference.
+
+Payment rail, if known.
+
+Maximum authorised amount.
+
+Effective status.
+
+Start and expiry dates.
+
+Provenance.
+
+Missing fields.
+
+F. Reconciliation
+
+Outcome.
+
+Explanation.
+
+Expected service price.
+
+Actual amount.
+
+Mandate cap.
+
+Discrepancy amount.
+
+Discrepancy percentage, where meaningful.
+
+Recommended action.
+
+G. Cancellation evidence
+
+Service lifecycle.
+
+Payment mandate lifecycle.
+
+Request dates.
+
+Confirmation references.
+
+Evidence source.
+
+Verification status.
+
+H. Post-cancellation activity
+
+Subsequent debits.
+
+Date comparison.
+
+Supporting transactions.
+
+Review status.
+
+Outstanding questions.
+
+I. Data limitations
+
+Clearly state:
+
+Missing documents.
+
+Missing mandate details.
+
+Unconfirmed merchant identity.
+
+Unverified cancellation.
+
+Other evidence gaps.
+
+J. Provenance notice
+
+Include:
+
+"DebitLens presents available records and rule-based findings. This report does not independently verify statements, merchant confirmations or bank records unless explicitly identified. Synthetic demonstration data is labelled where applicable."
+
+7.4 Export correctness
+
+The exported amounts must use actual underlying records.
+
+Do not manually construct example figures.
+
+Do not invent evidence.
+
+Do not upgrade evidence verification status in the export.
+
+Use integer minor units for financial calculations and format amounts for display.
+
+7.5 Privacy safeguards
+
+Mask account aliases where necessary.
+
+Do not include API keys.
+
+Do not include authentication credentials.
+
+Do not include internal server configuration.
+
+Exclude unrelated user financial records.
+
+Export only the selected commitment and its related evidence.
+
+Clearly distinguish synthetic demo data.
+
+7.6 Tests required
+
+Test:
+
+Correct JSON export.
+
+Correct content for each evidence type.
+
+Missing data handling.
+
+Provenance preservation.
+
+Synthetic data labelling.
+
+No unrelated transactions included.
+
+No credentials included.
+
+Printable layout rendering.
+
+PART 8 — P2: SMART BANK STATEMENT CSV MAPPING WIZARD
+
+The current Import Studio uses a structured transaction CSV format.
+
+Improve usability by adding a lightweight bank-statement mapping workflow.
+
+Do not try to build a universal banking integration.
+
+8.1 User journey
+
+When a user selects CSV import:
+
+Upload or select a CSV.
+
+Read the column headings.
+
+Analyse available columns.
+
+Suggest mappings.
+
+Display the proposed mappings.
+
+Let the user correct them.
+
+Show a sample-row preview.
+
+Validate records.
+
+Show accepted and rejected row counts.
+
+Require user confirmation before importing.
+
+Create an import batch record.
+
+Trigger relevant transaction analysis after successful persistence.
+
+8.2 Required mapping fields
+
+Support these core fields:
+
+DebitLens field
+
+Possible source columns
+
+Transaction date
+
+Date, Transaction Date, Txn Date
+
+Description
+
+Narration, Description, Details, Particulars
+
+Debit amount
+
+Debit, Withdrawal, Dr
+
+Credit amount
+
+Credit, Deposit, Cr
+
+Single signed amount
+
+Amount, Transaction Amount
+
+Transaction reference
+
+Reference, UTR, Reference No
+
+Account alias
+
+Account, Account Number
+
+Currency
+
+Currency
+
+Allow the user to assign different source columns.
+
+Do not require both debit and credit columns if a single signed amount field is supplied.
+
+8.3 Amount interpretation
+
+Support:
+
+Separate debit/credit columns.
+
+Single signed amount column.
+
+Negative debit conventions only where explicitly explained and supported.
+
+Do not assume sign conventions without user review.
+
+Show the interpretation in the preview.
+
+For example:
+
+Debit ₹500.
+
+Credit ₹0.
+
+Currency INR.
+
+Ensure that the import direction is correct.
+
+8.4 Date handling
+
+Support clear, explicitly selected formats such as:
+
+DD/MM/YYYY
+
+MM/DD/YYYY
+
+YYYY-MM-DD
+
+If the format is ambiguous, require user selection.
+
+Do not silently interpret 03/04/2026 using an arbitrary regional assumption.
+
+8.5 Preview and validation
+
+Show:
+
+First 10 rows.
+
+Column mappings.
+
+Valid rows.
+
+Rejected rows.
+
+Duplicate rows.
+
+Invalid dates.
+
+Invalid amounts.
+
+Missing descriptions.
+
+Missing references.
+
+Unmapped columns.
+
+Allow the user to review before import.
+
+8.6 Preserve uncertainty
+
+The wizard must not automatically invent:
+
+Merchant name.
+
+Payment rail.
+
+Billing frequency.
+
+Service terms.
+
+Mandate status.
+
+Account identity.
+
+Unknown information remains unknown.
+
+8.7 Keep existing CSV compatibility
+
+The current sample file:
+
+public/samples/debitlens-transactions.csv
+
+must continue to import correctly without requiring manual remapping every time.
+
+The existing RFC-4180 parser should be reused where possible.
+
+Avoid duplicating CSV parsing logic.
+
+8.8 Import batch history
+
+Preserve:
+
+Original file name.
+
+Import batch ID.
+
+Import timestamp.
+
+Total rows.
+
+Accepted rows.
+
+Rejected rows.
+
+Duplicate rows.
+
+Mapping configuration.
+
+Resulting transaction IDs.
+
+Persistence status.
+
+Do not store unnecessary copies of uploaded sensitive data.
+
+For the prototype, use a safe and documented approach.
+
+8.9 Tests required
+
+Test:
+
+Standard DebitLens CSV.
+
+Separate debit/credit columns.
+
+Single signed amount.
+
+Ambiguous date format.
+
+Invalid dates.
+
+Malformed numeric strings.
+
+Duplicate transaction IDs.
+
+Empty descriptions.
+
+Missing optional fields.
+
+User mapping changes.
+
+Cancel before import.
+
+Successful import and persistence.
+
+If the deadline does not allow the full wizard, implement the core mapping and preview workflow first and report remaining limitations accurately.
+
+PART 9 — IMPROVE THE CANCELLATION EXPERIENCE
+
+The cancellation feature is already an important differentiator.
+
+Improve its clarity without claiming direct automated cancellation.
+
+9.1 Preserve two independent lifecycles
+
+Layer A — Service cancellation
+
+Active.
+
+Cancellation requested.
+
+Cancellation pending.
+
+Cancelled.
+
+Unverified.
+
+Unknown.
+
+Layer B — Payment mandate revocation
+
+Active.
+
+Revocation requested.
+
+Revoked.
+
+Expired.
+
+Failed.
+
+Pending verification.
+
+Unknown.
+
+Keep existing status values where necessary, but preserve independent state tracking.
+
+9.2 Cancellation plan
+
+For each commitment, show:
+
+What the user must cancel.
+
+Which official service channel is supported.
+
+Whether the payment mandate needs separate action.
+
+Where the user should verify mandate status.
+
+What evidence should be retained.
+
+When to review subsequent transactions.
+
+Only use verified official cancellation URLs.
+
+Do not fabricate URLs.
+
+Do not present synthetic service links as real services.
+
+9.3 Real-service cancellation coverage
+
+Review the existing cancellation knowledge base.
+
+Where the application has reliable official cancellation instructions for a real service, show the source.
+
+Label instructions with:
+
+Source.
+
+Date checked, if genuinely checked.
+
+Applicable platform/region, if known.
+
+Verification status.
+
+Do not claim that a guide was independently verified if it was not.
+
+Where reliable information is unavailable, explain the limitation.
+
+9.4 After cancellation
+
+Create a clear follow-up monitoring explanation:
+
+"DebitLens will compare subsequently imported transactions against the recorded cancellation and mandate evidence."
+
+Do not imply that the prototype monitors an actual live bank account automatically.
+
+The application can only detect subsequent debits when relevant records are available.
+
+PART 10 — NEO4J GRAPH INTELLIGENCE
+
+Preserve real Neo4j functionality.
+
+Do not reduce it to decorative graph rendering.
+
+10.1 Responsibilities
+
+The graph should help connect:
+
+Transactions.
+
+Descriptors.
+
+Processors.
+
+Merchants.
+
+Services.
+
+Commitments.
+
+Mandates.
+
+Evidence.
+
+Cancellation events.
+
+10.2 New feature relationships
+
+Where appropriate, add relationships for:
+
+Transaction → Investigation Case.
+
+Investigation Case → Candidate Merchant.
+
+Investigation Case → Supporting Evidence.
+
+Commitment → Review Finding.
+
+Review Finding → Evidence.
+
+Commitment → Evidence Pack, only if export records are deliberately persisted.
+
+Keep the existing graph schema consistent.
+
+Do not introduce duplicate nodes for the same underlying record.
+
+Do not persist sensitive user notes unnecessarily into the graph.
+
+10.3 Honest status
+
+Show distinct system conditions:
+
+NOT_CONFIGURED.
+
+CONNECTION_FAILED.
+
+LIVE_NEO4J.
+
+LOCAL_PREVIEW.
+
+SYNC_PENDING.
+
+SYNC_FAILED.
+
+The exact status labels may follow existing conventions, but the semantics must remain clear.
+
+Do not report live status based only on an environment variable.
+
+Do not display hardcoded node or relationship counts.
+
+PART 11 — SARVAM AND DEBITLENS BHASHA
+
+Preserve the existing language service integration.
+
+11.1 Responsibilities
+
+Bhasha helps users:
+
+Understand an unfamiliar debit.
+
+Understand the reason for a reconciliation finding.
+
+Understand the difference between the service price and mandate cap.
+
+Understand cancellation steps.
+
+Ask a question about a selected commitment.
+
+Read key explanations in supported Indian languages.
+
+11.2 Grounded answers
+
+The context passed to Bhasha should contain only the relevant selected financial records:
+
+Commitment.
+
+Transaction.
+
+Merchant identity.
+
+Reconciliation finding.
+
+Mandate details.
+
+Service terms.
+
+Evidence.
+
+Do not pass unrelated entire financial histories when a narrow record is sufficient.
+
+Do not reveal masked identifiers or secrets.
+
+11.3 Clear technical attribution
+
+Retain the existing architecture accurately:
+
+Deterministic engine produces financial findings.
+
+Sarvam-105B is used where the actual chat completion endpoint calls it.
+
+Sarvam Translate translates where the actual translation endpoint is used.
+
+Deterministic grounded answers remain distinct from external model responses.
+
+Fallback output is labelled accurately.
+
+Never attribute a locally generated response to a provider that was not called.
+
+11.4 New investigation support
+
+Allow a user to select:
+
+"Explain why this debit is unresolved."
+
+Bhasha should explain:
+
+What is known.
+
+What is not known.
+
+Why the current merchant suggestion was or was not made.
+
+What evidence could help.
+
+What practical next step is appropriate.
+
+It must not invent a merchant identity.
+
+PART 12 — DATA COVERAGE AND TRUST
+
+The platform must make data completeness visible.
+
+For each commitment and investigation case, show which sources are available.
+
+Examples:
+
+Transaction history available.
+
+Payment mandate imported.
+
+Service terms available.
+
+Merchant identity confirmed.
+
+Invoice amount unavailable.
+
+Billing frequency not specified.
+
+Mandate expiry unknown.
+
+Cancellation evidence supplied.
+
+Revocation not independently verified.
+
+Explain what cannot be concluded because of missing evidence.
+
+Do not use a generic "100% verified" status.
+
+Do not confuse an imported record with a verified record.
+
+Do not equate:
+
+Found with confirmed.
+
+Attached with verified.
+
+User-reported with merchant-confirmed.
+
+Mandate cap with expected service price.
+
+Discrepancy with fraud.
+
+These distinctions are fundamental to the product.
+
+PART 13 — USER EXPERIENCE AND PRODUCT DESIGN
+
+The new features must feel like a coherent DebitLens application.
+
+Do not create separate disconnected feature screens.
+
+13.1 Navigation strategy
+
+Reuse the existing navigation destinations.
+
+Integrate:
+
+Unknown Debit Investigation into Transactions Explorer.
+
+Review & Resolve into Smart Alerts / Financial Overview.
+
+Commitment Passport into Commitment Detail.
+
+Evidence Pack into Evidence Casebook and Commitment Passport.
+
+CSV Mapping Wizard into Import Studio.
+
+Avoid adding five new sidebar entries.
+
+13.2 Product language
+
+Use concise, consumer-friendly language.
+
+Examples:
+
+Instead of:
+
+"Identity graph unresolved."
+
+Use:
+
+"We could not confirm which merchant this payment belongs to."
+
+Instead of:
+
+"Amount variance detected."
+
+Use:
+
+"The actual debit is higher than the documented service price."
+
+Instead of:
+
+"Mandate status inconclusive."
+
+Use:
+
+"We do not have enough information to confirm whether this payment authorisation is still active."
+
+13.3 Branding
+
+The normal consumer-facing UI must show DebitLens as an independent product.
+
+Do not reintroduce:
+
+HackFront labels.
+
+T4.1 labels.
+
+Partner-track banners.
+
+Neo4j/Sarvam promotional strips.
+
+Technology-provider showcase branding.
+
+Use:
+
+Financial Overview.
+
+Transactions Explorer.
+
+Review & Resolve.
+
+Commitment Passport.
+
+Financial Relationship Map.
+
+Reconciliation Centre.
+
+Evidence Casebook.
+
+DebitLens Bhasha.
+
+Cancellation Centre.
+
+Import Studio.
+
+System Information.
+
+Technical provider information belongs in the discreet diagnostics view.
+
+13.4 Responsive UI
+
+All new features must work on:
+
+320–374 px mobile.
+
+375–430 px mobile.
+
+768–1023 px tablet.
+
+1024–1279 px laptop.
+
+1280–1535 px desktop.
+
+1536–1920 px large desktop.
+
+Mobile requirements:
+
+Investigation drawer becomes a suitable bottom sheet or full-screen panel.
+
+Review queue cards stack vertically.
+
+Commitment Passport sections stack.
+
+Evidence Pack preview is scrollable.
+
+CSV mapping tables become responsive cards or controlled horizontal-scroll sections.
+
+Forms and buttons remain reachable.
+
+No page-wide horizontal overflow.
+
+Important interactions must not rely on hover.
+
+Maintain keyboard navigation, focus indicators and readable contrast.
+
+PART 14 — SECURITY AND PRIVACY LIMITATIONS
+
+This is a financial product. Treat every imported record and evidence file as sensitive.
+
+The current application uses prototype persistence and does not demonstrate full production multi-user security.
+
+Do not imply that it is safe to host arbitrary real customer financial data in its current form.
+
+For this deadline:
+
+Preserve synthetic/demo-mode boundaries.
+
+Do not add fake live bank connections.
+
+Keep secrets server-side.
+
+Mask financial references.
+
+Validate all imported data.
+
+Avoid logging raw sensitive identifiers.
+
+Do not store unnecessary uploaded file content.
+
+Avoid exposing evidence records for unrelated commitments.
+
+Keep export content scoped to the selected commitment.
+
+Document that production deployment requires authentication, tenant isolation, a stronger production database, secure upload storage, encryption and appropriate operational security controls.
+
+Do not attempt a full enterprise authentication and compliance system as an unfinished deadline feature.
+
+PART 15 — REQUIRED AUTOMATED TESTING
+
+Extend the existing Node.js test suite through the current tsx runner unless there is a justified reason to change the test framework.
+
+Do not call the project Vitest if it still uses Node's built-in test runner.
+
+15.1 Financial integrity tests
+
+Missing mandate amount.
+
+Missing mandate frequency.
+
+Missing mandate payment rail.
+
+Missing mandate dates.
+
+Unknown mandate status.
+
+Expired mandate with ACTIVE status.
+
+Revoked mandate.
+
+Incomplete mandate cannot be MATCHED.
+
+Dormant mandate excludes expired records.
+
+Missing notification amount remains unknown.
+
+Invalid CSV amount is rejected.
+
+Invalid date is rejected.
+
+Integer-paise arithmetic remains exact.
+
+15.2 Persistence tests
+
+Successful mutation survives reload.
+
+Failed store write does not return success.
+
+Atomic write behaviour.
+
+Neo4j outage after successful canonical persistence.
+
+Graph sync failure is surfaced.
+
+Case updates persist.
+
+Review status persists.
+
+Merchant override persists.
+
+15.3 Investigation workflow tests
+
+Unresolved descriptor can open investigation.
+
+Supported candidate generation.
+
+No false candidate when evidence is absent.
+
+Candidate explanation displayed.
+
+User confirmation is recorded.
+
+Rejection is recorded.
+
+Unresolved case remains unresolved.
+
+Investigation survives reload.
+
+No processor-wide merchant merging.
+
+15.4 Review & Resolve tests
+
+Correct finding aggregation.
+
+Priority classification.
+
+Duplicate finding suppression.
+
+User review status.
+
+Dismissal does not erase source evidence.
+
+Resolved finding remains traceable.
+
+Correct navigation to source record.
+
+15.5 Commitment Passport tests
+
+Transaction history.
+
+Service terms.
+
+Mandate details.
+
+Reconciliation.
+
+Provenance.
+
+Missing-data display.
+
+Independent cancellation lifecycles.
+
+15.6 Evidence Pack tests
+
+Correct commitment scoping.
+
+Correct JSON structure.
+
+Correct amount calculations.
+
+Correct provenance.
+
+Synthetic-data labelling.
+
+Missing evidence included as unknown.
+
+No unrelated transactions.
+
+No secrets.
+
+Printable view.
+
+15.7 CSV mapping tests
+
+Standard DebitLens CSV.
+
+Debit/credit columns.
+
+Signed amounts.
+
+Ambiguous dates.
+
+Invalid dates.
+
+Malformed numeric strings.
+
+Duplicate IDs.
+
+User-adjusted mappings.
+
+Preview cancellation.
+
+Successful import.
+
+Persistence error.
+
+15.8 Integration tests
+
+Where possible, verify:
+
+Neo4j query status.
+
+Neo4j graph writes.
+
+Graph result consistency.
+
+Sarvam translation success/failure.
+
+Chat-completion success/failure.
+
+Honest local fallback.
+
+Do not require live external credentials for every unit test.
+
+Use suitable mocked service boundaries for unit tests, while separately identifying which real integration tests have actually been executed.
+
+PART 16 — ENGINEERING QUALITY AND BUILD
+
+Run the actual available project commands.
+
+Inspect package.json before executing them.
+
+At minimum, where configured:
+
+npm run typecheck
+
+npm test
+
+npm run build
+
+Do not claim success without actual command output.
+
+Fix errors.
+
+Do not weaken tests.
+
+Do not remove working test coverage.
+
+Check:
+
+TypeScript types.
+
+API response contracts.
+
+Request validation.
+
+Component props.
+
+Empty states.
+
+Error handling.
+
+Loading states.
+
+Persistence failures.
+
+Duplicate actions.
+
+Mobile navigation.
+
+Browser console errors.
+
+Perform a fresh startup after changes.
+
+Where possible, execute the core end-to-end workflows in the browser.
+
+PART 17 — REQUIRED DEMONSTRATION SCENARIOS
+
+The final prototype must be demonstrable through connected user journeys.
+
+Implement and validate these specific scenarios.
+
+Scenario A — Unrecognised debit
+
+Use an existing synthetic processor-only transaction.
+
+Demonstrate:
+
+Open Transactions Explorer.
+
+Select an unresolved transaction.
+
+Click "I don't recognise this debit."
+
+Display the known processor.
+
+Display missing merchant identity.
+
+Show evidence-supported candidates or no reliable candidate.
+
+Record user investigation.
+
+Retain unresolved status where appropriate.
+
+Expected result:
+
+The application helps the user investigate an unfamiliar debit without falsely identifying the merchant.
+
+Scenario B — Silent price increase
+
+Use the existing StreamBox discrepancy example.
+
+Service terms: ₹499.
+
+Mandate cap: ₹999.
+
+Actual debit: ₹799.
+
+Demonstrate:
+
+Open the commitment.
+
+Run three-way reconciliation.
+
+Show AMOUNT_DISCREPANCY.
+
+Explain the ₹300 difference.
+
+Show why the mandate ceiling does not establish the agreed price.
+
+Open the evidence.
+
+Add or show the finding in Review & Resolve.
+
+Open the Commitment Passport.
+
+Expected result:
+
+The application identifies a service-price discrepancy without incorrectly calling it fraud.
+
+Scenario C — Merchant resolution
+
+Show:
+
+One successfully resolved merchant alias.
+
+One processor-only unresolved transaction.
+
+Explain why one is resolved and the other is not.
+
+Expected result:
+
+No false merchant mapping based only on a shared processor.
+
+Scenario D — Multilingual explanation
+
+Open the StreamBox commitment.
+
+Open DebitLens Bhasha.
+
+Ask why the debit differs from the documented price.
+
+Show the grounded English explanation.
+
+Show Hindi translation.
+
+Indicate live provider or local fallback status accurately.
+
+Expected result:
+
+The consumer can understand the financial finding in a supported language.
+
+Scenario E — Cancellation and subsequent debit
+
+Use the existing synthetic DesignVault scenario.
+
+Demonstrate:
+
+Service cancellation lifecycle.
+
+Mandate revocation lifecycle.
+
+Different evidence verification states.
+
+Later ₹649 debit.
+
+Post-cancellation finding.
+
+Evidence history.
+
+Commitment Passport.
+
+Evidence Pack.
+
+Expected result:
+
+The application tracks both cancellation actions independently and preserves the evidence behind a subsequent debit alert.
+
+Scenario F — Import a different bank CSV
+
+Where the mapping wizard is implemented:
+
+Upload a CSV using different column headers.
+
+Map the fields.
+
+Preview.
+
+Resolve ambiguous date or amount conventions.
+
+Review rejected rows.
+
+Import.
+
+Open imported transactions.
+
+Show subsequent analysis.
+
+Expected result:
+
+Users can import more than one rigid CSV format without the application inventing missing financial details.
+
+PART 18 — FINAL DATA, DOCUMENTATION AND RELEASE PREPARATION
+
+Update:
+
+README.md.
+
+PROJECT_HANDOFF.md.
+
+NEXT_STEPS.md.
+
+TEST_REPORT.md.
+
+Reconciliation documentation.
+
+Evidence provenance documentation.
+
+Neo4j graph documentation.
+
+Sarvam integration documentation.
+
+Demo script.
+
+Dataset dictionary.
+
+RELEASE_QA_REPORT.md.
+
+Document the actual implementation.
+
+Do not claim full production readiness.
+
+Clearly distinguish:
+
+Existing working capabilities.
+
+Newly implemented capabilities.
+
+External-service verification.
+
+Synthetic test results.
+
+Known limitations.
+
+Future production work.
+
+18.1 Final sample data
+
+Preserve:
+
+public/samples/debitlens-transactions.csv
+
+public/samples/debitlens-notifications.json
+
+Verify that both import flows work.
+
+Do not include actual customer records.
+
+18.2 Public packaging
+
+Remove unnecessary internal AI Studio prompts and planning documents from public/assets/aistudio/.
+
+Do not include:
+
+Real .env.
+
+API secrets.
+
+node_modules.
+
+Unnecessary runtime files.
+
+Debug logs.
+
+Stale nested ZIPs.
+
+Personal financial data.
+
+Keep required application assets and documentation.
+
+Do not remove necessary seed or initialisation code.
+
+Generate one clean release ZIP from the final source.
+
+Use:
+
+DebitLens_HackFront_India_2026_Final_Submission.zip
+
+Extract the final ZIP into a fresh directory and verify its contents.
+
+PART 19 — DEVELOPMENT PRIORITIES AND EXECUTION ORDER
+
+Implement in this sequence.
+
+PHASE 1 — Financial integrity (mandatory)
+
+Complete:
+
+Mandate-import defaults removed.
+
+Effective mandate expiry validation.
+
+Persistence failure handling.
+
+Evidence provenance corrections.
+
+Synthetic DesignVault audit attribution.
+
+Dynamic creation timestamps.
+
+Missing notification amounts remain unknown.
+
+Strict CSV financial validation.
+
+Do not move to major feature additions while these issues remain.
+
+PHASE 2 — Product differentiation (highest product priority)
+
+Implement:
+
+"I don't recognise this debit" investigation workflow.
+
+Evidence-supported merchant candidates.
+
+User confirmation/rejection provenance.
+
+Persistent unresolved investigation case.
+
+Review & Resolve queue.
+
+Contextual recommended next actions.
+
+PHASE 3 — Evidence-based user value
+
+Implement:
+
+Commitment Passport inside existing commitment details.
+
+JSON Evidence Pack.
+
+Print-friendly Evidence Pack view.
+
+Provenance and data coverage visibility.
+
+Correct export masking and synthetic-data warnings.
+
+PHASE 4 — Practical import usability
+
+Implement:
+
+CSV header mapping.
+
+Sample-row preview.
+
+Debit/credit interpretation.
+
+Date format selection.
+
+Row validation.
+
+Confirm-before-import.
+
+Import batch history.
+
+Do not sacrifice financial correctness to rush the wizard.
+
+PHASE 5 — Integration, UX and responsiveness
+
+Confirm real Neo4j graph operations.
+
+Confirm Sarvam chat and translation attribution.
+
+Implement honest fallbacks.
+
+Integrate new workflows into the existing UI.
+
+Validate mobile, tablet and desktop layouts.
+
+Correct all visible UI states.
+
+PHASE 6 — Final release
+
+Run tests.
+
+Run typecheck.
+
+Run production build.
+
+Test core browser journeys.
+
+Update documentation.
+
+Generate and inspect the clean release ZIP.
+
+Produce a factual final report.
+
+PART 20 — FINAL ACCEPTANCE CHECKLIST
+
+Do not declare the work complete until the following have been checked.
+
+Financial integrity
+
+No invented mandate defaults.
+
+Unknown amount remains unknown.
+
+Unknown frequency remains unknown.
+
+Expired mandate cannot be treated as valid ACTIVE.
+
+Dormant mandate logic checks expiry.
+
+Missing notification amount does not become zero.
+
+Invalid financial values are rejected.
+
+Persistence failures cannot be reported as success.
+
+Evidence attachment is not confused with independent verification.
+
+Seeded audit events are labelled synthetic.
+
+Product differentiation
+
+Unknown Debit Investigation works.
+
+Candidate merchants are evidence-supported.
+
+User override provenance is preserved.
+
+Investigation can remain unresolved.
+
+Review & Resolve aggregates findings.
+
+Duplicate queue findings are suppressed.
+
+Commitment Passport presents the full evidence profile.
+
+Evidence Pack export works.
+
+Practical usability
+
+CSV mapping wizard works, or remaining scope is documented.
+
+Standard sample CSV still imports.
+
+Different column headings can be mapped.
+
+Invalid rows are clearly explained.
+
+User must confirm before import.
+
+Reconciliation and cancellation
+
+All nine outcomes remain correct.
+
+₹499 / ₹999 / ₹799 example works.
+
+Service cancellation and mandate revocation remain independent.
+
+Subsequent debit monitoring works.
+
+Casebook provenance is accurate.
+
+Integrations
+
+Neo4j operations are genuine.
+
+Graph status is truthful.
+
+Sarvam model attribution is accurate.
+
+Translation and contextual answers are distinguished.
+
+Fallback mode is clearly labelled.
+
+Product experience
+
+No unnecessary workspaces were added.
+
+All new features connect to existing workflows.
+
+DebitLens branding is consistent.
+
+Consumer language is clear.
+
+Mobile flows work.
+
+Tablet flows work.
+
+Desktop flows work.
+
+No horizontal page overflow.
+
+No critical action is inaccessible.
+
+Engineering and release
+
+Automated tests pass.
+
+Typecheck passes.
+
+Production build passes.
+
+Core workflows are browser-tested.
+
+Documentation matches implementation.
+
+Sample files are included.
+
+Secrets are excluded.
+
+Final ZIP is generated.
+
+Final ZIP is extracted and inspected.
+
+PART 21 — REQUIRED FINAL REPORT
+
+When development is complete, give me a detailed and truthful report.
+
+Include:
+
+Initial project state.
+
+Financial integrity corrections.
+
+New Unknown Debit Investigation functionality.
+
+Review & Resolve improvements.
+
+Commitment Passport implementation.
+
+Evidence Pack implementation.
+
+CSV mapping functionality.
+
+Neo4j changes.
+
+Sarvam changes.
+
+Responsive UI changes.
+
+Automated test results.
+
+Typecheck results.
+
+Production build results.
+
+Browser testing results.
+
+External integration verification results.
+
+Final release ZIP.
+
+Remaining technical limitations.
+
+Suggested live demonstration flow.
+
+Mark each item as:
+
+Implemented and tested.
+
+Implemented but not independently verified.
+
+Partially implemented.
+
+Not implemented.
+
+Blocked by an external service or environment limitation.
+
+Do not invent test results or claim successful operations that were not performed.
+
+FINAL PRODUCT PRINCIPLE
+
+DebitLens must not become another application that simply says:
+
+"Here are your recurring subscriptions."
+
+It should help the user answer:
+
+What is this unfamiliar debit?
+
+Who is actually behind it?
+
+What evidence supports the identity?
+
+What did the service promise?
+
+What payment authorisation exists?
+
+Was the actual debit consistent with those records?
+
+What needs my attention?
+
+How do I cancel the service?
+
+How do I revoke the payment authorisation?
+
+Did another debit occur afterwards?
+
+Can I retain a clear summary of what happened?
+
+The system should never invent missing information merely to make a conclusion.
+
+It should be comfortable saying:
+
+"We don't know yet. Here is what we found, what is missing and what you can do next."
+
+Build DebitLens as an evidence-to-resolution financial product, not a bigger subscription dashboard.

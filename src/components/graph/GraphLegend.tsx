@@ -23,7 +23,7 @@ export const GraphLegend: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3">
         <div>
           <h4 className="text-sm font-semibold text-slate-900">
-            Neo4j Property Graph Schema Legend
+            Financial Relationship Schema Legend
           </h4>
           <p className="text-xs text-slate-500">
             17 Node Labels · 18 Evidence-Backed Relationship Types · Click any node or edge on the map to inspect
