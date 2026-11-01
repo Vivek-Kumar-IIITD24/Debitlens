@@ -25,6 +25,7 @@ import {
   buildInitialSeedGuardrails,
   buildGroundedContextualQuestionResponse,
   parseStrictAmount,
+  normaliseDescriptor,
   generateMerchantCandidates,
   buildUnrecognizedDebitCase,
   buildReviewQueue,
@@ -32,6 +33,7 @@ import {
   generateEvidencePackData,
   generatePrintableEvidencePackHtml,
   previewCsvMapping,
+  parseAllMappedCsvRows,
 } from './src/engine/debitlensEngine';
 import {
   MERCHANT_CATALOGUE,
@@ -193,6 +195,78 @@ function persistOrError(res: express.Response): boolean {
   }
   return true;
 }
+
+export function computeCanonicalTxnFingerprint(row: RawCsvRow): string {
+  const normDesc = normaliseDescriptor(row.raw_description || '');
+  const ref = (row.external_reference || '').trim();
+  const acct = (row.account_alias || 'PRIMARY-ACCOUNT').trim();
+  const curr = (row.currency || 'INR').trim().toUpperCase();
+  const date = (row.transaction_date || '').trim();
+  const amt = String(Number(row.amount) || row.amount).trim();
+  const dir = (row.direction || 'DEBIT').trim().toUpperCase();
+  return `${acct}_${curr}_${date}_${amt}_${dir}_${ref}_${normDesc}`;
+}
+
+let mutationQueue = Promise.resolve();
+
+export function snapshotState(): PersistentAppStore {
+  return {
+    rawCsvRows: [...rawCsvRows],
+    notificationEvents: [...notificationEvents],
+    userMerchantOverrides: { ...userMerchantOverrides },
+    userCommitmentOverrides: { ...userCommitmentOverrides },
+    alertStatusOverrides: { ...alertStatusOverrides },
+    importHistory: [...importHistory],
+    mandates: [...mandatesStore],
+    serviceTerms: [...serviceTermsStore],
+    customCasebookEntries: [...customCasebookEntries],
+    auditEvents: [...auditEventsStore],
+    guardrails: [...guardrailsStore],
+    investigationCases: [...investigationCasesStore],
+    reviewQueueStatusOverrides: { ...reviewQueueStatusOverrides },
+  };
+}
+
+export function restoreStateSnapshot(snapshot: PersistentAppStore) {
+  rawCsvRows = snapshot.rawCsvRows;
+  notificationEvents = snapshot.notificationEvents;
+  userMerchantOverrides = snapshot.userMerchantOverrides;
+  userCommitmentOverrides = snapshot.userCommitmentOverrides;
+  alertStatusOverrides = snapshot.alertStatusOverrides;
+  importHistory = snapshot.importHistory;
+  mandatesStore = snapshot.mandates;
+  serviceTermsStore = snapshot.serviceTerms;
+  customCasebookEntries = snapshot.customCasebookEntries;
+  auditEventsStore = snapshot.auditEvents;
+  guardrailsStore = snapshot.guardrails;
+  investigationCasesStore = snapshot.investigationCases;
+  reviewQueueStatusOverrides = snapshot.reviewQueueStatusOverrides;
+}
+
+export async function safeMutateState<T>(
+  mutator: () => Promise<T> | T
+): Promise<{ success: boolean; result?: T; error?: string }> {
+  return new Promise((resolve) => {
+    mutationQueue = mutationQueue.then(async () => {
+      const snapshot = snapshotState();
+      try {
+        const result = await mutator();
+        const saveRes = savePersistentStore();
+        if (!saveRes.saved) {
+          restoreStateSnapshot(snapshot);
+          resolve({ success: false, error: saveRes.error || 'Failed to save persistent store.' });
+          return;
+        }
+        resolve({ success: true, result });
+      } catch (err) {
+        restoreStateSnapshot(snapshot);
+        const message = err instanceof Error ? err.message : String(err);
+        resolve({ success: false, error: message });
+      }
+    });
+  });
+}
+
 
 function loadSeedData(forceReset = false) {
   if (!forceReset && fs.existsSync(PERSISTENT_STORE_PATH)) {
@@ -1510,12 +1584,14 @@ app.post('/api/mandates/import', async (req, res) => {
   }
 
   const totalRows = incoming.length;
+  let newRecords = 0;
+  let exactDuplicates = 0;
+  let conflictingDuplicates = 0;
+  let existingPreserved = 0;
   let acceptedRows = 0;
   let rejectedRows = 0;
   let incompleteRecords = 0;
-  let duplicateRecords = 0;
   const fieldsRequiringVerification: string[] = [];
-  const seenRefs = new Set(mandatesStore.map((m) => m.mandateReference));
 
   for (const item of incoming) {
     if (!item.mandateReference) {
@@ -1528,19 +1604,16 @@ app.post('/api/mandates/import', async (req, res) => {
       continue;
     }
 
-    if (seenRefs.has(cleanRef)) {
-      duplicateRecords++;
-    } else {
-      seenRefs.add(cleanRef);
-    }
-
     // Strictly DO NOT default missing financial details!
     let maxMinor: number | null = null;
     let maxAmount: number | null = null;
     if (item.maxAmountMinor !== undefined && item.maxAmountMinor !== null) {
-      maxMinor = Number(item.maxAmountMinor);
-      maxAmount = fromMinorUnits(maxMinor);
-    } else if (item.maxAmount !== undefined && item.maxAmount !== null && item.maxAmount !== '') {
+      const num = Number(item.maxAmountMinor);
+      if (Number.isSafeInteger(num) && num > 0) {
+        maxMinor = num;
+        maxAmount = fromMinorUnits(maxMinor);
+      }
+    } else if (item.maxAmount !== undefined && item.maxAmount !== null && String(item.maxAmount) !== '') {
       const parsed = parseStrictAmount(item.maxAmount);
       if (parsed !== null && parsed > 0) {
         maxMinor = toMinorUnits(parsed);
@@ -1548,15 +1621,61 @@ app.post('/api/mandates/import', async (req, res) => {
       }
     }
 
+    const VALID_RAILS: PaymentRailType[] = [
+      'UPI_AUTOPAY',
+      'CARD_EMANDATE',
+      'ENACH_NACH',
+      'GOOGLE_PLAY',
+      'APPLE_APP_STORE',
+      'DIRECT_MERCHANT',
+      'BANK_STANDING_INSTRUCTION',
+      'UPI_ONE_TIME',
+      'CARD_ONE_TIME',
+    ];
     const paymentRail: PaymentRailType | 'UNKNOWN' =
-      (item.paymentRail as PaymentRailType) || 'UNKNOWN';
+      VALID_RAILS.includes(item.paymentRail as PaymentRailType)
+        ? (item.paymentRail as PaymentRailType)
+        : 'UNKNOWN';
 
+    const VALID_FREQUENCIES: RecurrenceFrequency[] = [
+      'WEEKLY',
+      'FORTNIGHTLY',
+      'MONTHLY',
+      'QUARTERLY',
+      'HALF_YEARLY',
+      'YEARLY',
+      'IRREGULAR',
+      'RESUMED',
+      'TRIAL_CONVERTED',
+      'ONE_TIME',
+    ];
     const frequency: RecurrenceFrequency | 'UNKNOWN' =
-      (item.frequency as RecurrenceFrequency) || 'UNKNOWN';
+      VALID_FREQUENCIES.includes(item.frequency as RecurrenceFrequency)
+        ? (item.frequency as RecurrenceFrequency)
+        : 'UNKNOWN';
 
-    const startDate: string | null = item.startDate ? String(item.startDate).trim() : null;
-    const endDate: string | null = item.endDate ? String(item.endDate).trim() : null;
-    const mandateStatus = item.mandateStatus || 'UNKNOWN';
+    const isValidCalendarDate = (d: string | null): boolean => {
+      if (!d) return false;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+      const [year, month, day] = d.split('-').map(Number);
+      if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+      const date = new Date(Date.UTC(year, month - 1, day));
+      return (
+        date.getUTCFullYear() === year &&
+        date.getUTCMonth() === month - 1 &&
+        date.getUTCDate() === day
+      );
+    };
+
+    const rawStartDate = item.startDate ? String(item.startDate).trim() : null;
+    const rawEndDate = item.endDate ? String(item.endDate).trim() : null;
+    const startDate = isValidCalendarDate(rawStartDate) ? rawStartDate : null;
+    const endDate = isValidCalendarDate(rawEndDate) ? rawEndDate : null;
+
+    const VALID_STATUSES = ['ACTIVE', 'PAUSED', 'REVOKED', 'EXPIRED'];
+    const mandateStatus = VALID_STATUSES.includes(item.mandateStatus as any)
+      ? item.mandateStatus!
+      : 'UNKNOWN';
 
     const missingFields: string[] = [];
     if (maxMinor === null) missingFields.push('maxAmount');
@@ -1604,8 +1723,32 @@ app.post('/api/mandates/import', async (req, res) => {
         (newMandate.commitmentId && m.commitmentId === newMandate.commitmentId)
     );
     if (existingIdx >= 0) {
-      mandatesStore[existingIdx] = newMandate;
+      const existing = mandatesStore[existingIdx];
+      const isExact =
+        existing.mandateReference === newMandate.mandateReference &&
+        existing.maxAmountMinor === newMandate.maxAmountMinor &&
+        existing.frequency === newMandate.frequency &&
+        existing.paymentRail === newMandate.paymentRail &&
+        existing.startDate === newMandate.startDate &&
+        existing.endDate === newMandate.endDate &&
+        existing.mandateStatus === newMandate.mandateStatus;
+
+      if (isExact) {
+        exactDuplicates++;
+      } else {
+        conflictingDuplicates++;
+      }
+
+      // Do NOT overwrite a complete existing mandate with an incomplete duplicate row!
+      const existingIncomplete = (existing as any).isIncomplete || (existing.missingFields && existing.missingFields.length > 0);
+      const newIncomplete = (newMandate as any).isIncomplete || (newMandate.missingFields && newMandate.missingFields.length > 0);
+      if (!existingIncomplete && newIncomplete) {
+        existingPreserved++;
+      } else {
+        mandatesStore[existingIdx] = newMandate;
+      }
     } else {
+      newRecords++;
       mandatesStore.push(newMandate);
     }
     acceptedRows++;
@@ -1617,11 +1760,16 @@ app.post('/api/mandates/import', async (req, res) => {
   await syncStateToGraphAsync();
 
   res.json({
+    newRecords,
+    exactDuplicates,
+    conflictingDuplicates,
+    invalidRecords: rejectedRows,
+    incompleteRecords,
+    existingPreserved,
     totalRows,
     acceptedRows,
     rejectedRows,
-    incompleteRecords,
-    duplicateRecords,
+    duplicateRecords: exactDuplicates + conflictingDuplicates,
     fieldsRequiringVerification,
     importedCount: acceptedRows,
     mandates: mandatesStore,
@@ -2655,11 +2803,11 @@ app.post('/api/investigations', async (req, res) => {
     investigationCasesStore.push(existing);
     recordAuditEvent({
       commitmentId: null,
-      eventType: 'INVESTIGATION_OPENED',
+      eventType: 'MERCHANT_CORRECTION',
       summary: `User opened investigation ${existing.id} for unrecognized debit ${txn.id} (${txn.rawDescription}).`,
       previousState: null,
       newState: 'OPEN',
-      actor: 'USER_REPORTED',
+      actor: 'USER_ACTION',
     });
     if (!persistOrError(res)) return;
   }
@@ -2685,6 +2833,9 @@ app.post('/api/investigations/:id/action', async (req, res) => {
   if (notes) {
     caseItem.notes = (caseItem.notes ? caseItem.notes + '\n' : '') + notes;
   }
+  if (!caseItem.actionsTaken) {
+    caseItem.actionsTaken = [];
+  }
   caseItem.actionsTaken.push({
     actionId: `ACT-${Date.now()}`,
     actionType,
@@ -2696,7 +2847,7 @@ app.post('/api/investigations/:id/action', async (req, res) => {
 
   recordAuditEvent({
     commitmentId: null,
-    eventType: 'INVESTIGATION_UPDATED',
+    eventType: 'MERCHANT_CORRECTION',
     summary: `Investigation ${caseItem.id} updated with action ${actionType} (Status: ${caseItem.status}).`,
     previousState: prevState,
     newState: caseItem.status,
@@ -2718,35 +2869,50 @@ app.post('/api/investigations/:id/confirm-merchant', async (req, res) => {
     res.status(404).json({ error: 'Investigation case not found' });
     return;
   }
+  const state = computeCurrentState();
+  const txn = state.transactions.find((t) => t.id === caseItem.transactionId);
+  if (!txn) {
+    res.status(404).json({ error: 'Associated transaction not found' });
+    return;
+  }
+  const merch = MERCHANT_CATALOGUE.find((m) => m.id === merchantId);
+  if (!merch) {
+    res.status(400).json({ error: `Invalid merchantId "${merchantId}": not found in catalogue.` });
+    return;
+  }
   userMerchantOverrides[rawDescription] = merchantId;
-  caseItem.confirmedMerchantId = merchantId;
+  caseItem.resolvedMerchantId = merchantId;
+  (caseItem as any).confirmedMerchantId = merchantId;
   caseItem.status = 'IDENTIFIED';
   caseItem.updatedAt = new Date().toISOString();
+  if (!caseItem.actionsTaken) {
+    caseItem.actionsTaken = [];
+  }
   caseItem.actionsTaken.push({
     actionId: `ACT-${Date.now()}`,
     actionType: 'CONFIRM_MERCHANT',
     takenAt: new Date().toISOString(),
-    notes: `Confirmed descriptor "${rawDescription}" matches merchant ${merchantId}.`,
+    notes: `Confirmed descriptor "${rawDescription}" matches merchant ${merch.canonicalName} (${merchantId}).`,
     actor: 'USER',
   });
 
   recordAuditEvent({
     commitmentId: null,
     eventType: 'IDENTITY_MATCH_CONFIRMED',
-    summary: `Investigation ${caseItem.id}: Confirmed descriptor "${rawDescription}" maps to ${merchantId}.`,
+    summary: `Investigation ${caseItem.id}: Confirmed descriptor "${rawDescription}" maps to ${merch.canonicalName} (${merchantId}).`,
     previousState: 'UNRESOLVED',
     newState: merchantId,
     actor: 'USER_ACTION',
   });
 
   if (!persistOrError(res)) return;
-  const state = computeCurrentState();
+  const updatedState = computeCurrentState();
   await syncStateToGraphAsync();
 
   res.json({
     case: caseItem,
-    transactions: state.transactions,
-    commitments: state.commitments,
+    transactions: updatedState.transactions,
+    commitments: updatedState.commitments,
   });
 });
 
@@ -2810,56 +2976,49 @@ app.post('/api/import/transactions/apply-mapped', async (req, res) => {
     res.status(400).json({ error: 'csvContent and config are required' });
     return;
   }
-  const preview = previewCsvMapping(csvContent, config);
-  const validRows = preview.previewRows.filter((r) => r.isValid && r.mappedRow);
-  if (validRows.length === 0) {
+  const parseResult = parseAllMappedCsvRows(csvContent, config, true);
+  if (parseResult.validRows.length === 0) {
     res.status(400).json({
       error: 'No valid transaction rows could be parsed using the supplied column mapping.',
-      preview,
+      parseResult,
     });
     return;
   }
 
+  const existingFingerprints = new Set(rawCsvRows.map(computeCanonicalTxnFingerprint));
   const newRawRows: RawCsvRow[] = [];
-  const existingIds = new Set(rawCsvRows.map((r) => r.transaction_id));
+  let existingDuplicatesSkipped = 0;
 
-  for (let i = 0; i < validRows.length; i++) {
-    const vr = validRows[i];
-    const m = vr.mappedRow!;
-    let txnId = m.transaction_id || `TXN-MAP-${Date.now()}-${i + 1}`;
-    if (existingIds.has(txnId)) {
-      txnId = `${txnId}-DUP${Date.now().toString().slice(-4)}`;
+  for (const vr of parseResult.validRows) {
+    const fp = computeCanonicalTxnFingerprint(vr);
+    if (existingFingerprints.has(fp)) {
+      existingDuplicatesSkipped++;
+      continue;
     }
-    existingIds.add(txnId);
-    newRawRows.push({
-      transaction_id: txnId,
-      transaction_date: m.transaction_date,
-      raw_description: m.raw_description,
-      amount: m.amount,
-      currency: m.currency || 'INR',
-      direction: (m.direction as any) || 'DEBIT',
-      payment_rail: (m.payment_rail as any) || 'UNKNOWN',
-      account_alias: m.account_alias || 'MAPPED-ACCOUNT',
-      external_reference: m.external_reference || `MAP-${Date.now()}-${i + 1}`,
-    });
+    existingFingerprints.add(fp);
+    newRawRows.push(vr);
   }
 
   rawCsvRows.push(...newRawRows);
-  const batchRecord = {
-    batchId: `BATCH-MAP-${Date.now()}`,
-    sourceType: 'CSV_UPLOAD' as const,
-    recordCount: newRawRows.length,
-    timestamp: new Date().toISOString(),
-    status: 'COMPLETED' as const,
+  const batchId = `BATCH-MAP-${Date.now()}`;
+  const batchRecord: ImportHistoryEntry = {
+    id: batchId,
+    filename: 'mapped-statement.csv',
+    sourceType: 'CSV_MAPPED',
+    totalRecords: parseResult.totalRows,
+    acceptedRecords: newRawRows.length,
+    rejectedRecords: parseResult.rejectedCount,
+    duplicateRecords: parseResult.duplicateCount + existingDuplicatesSkipped,
+    importedAt: new Date().toISOString(),
   };
   importHistory.unshift(batchRecord);
 
   recordAuditEvent({
     commitmentId: null,
-    eventType: 'IMPORT_COMPLETED',
-    summary: `Mapped CSV import: Successfully parsed and committed ${newRawRows.length} valid transaction rows.`,
+    eventType: 'IMPORT',
+    summary: `Mapped CSV import: Successfully parsed and committed ${newRawRows.length} valid transaction rows (${existingDuplicatesSkipped} existing duplicates skipped).`,
     previousState: null,
-    newState: batchRecord.batchId,
+    newState: batchRecord.id,
     actor: 'USER_ACTION',
   });
 
@@ -2868,11 +3027,14 @@ app.post('/api/import/transactions/apply-mapped', async (req, res) => {
   await syncStateToGraphAsync();
 
   res.json({
-    message: `Successfully imported ${newRawRows.length} transactions via Smart Mapping Wizard.`,
+    message: `Successfully imported ${newRawRows.length} transactions via Smart Mapping Wizard (${existingDuplicatesSkipped} duplicate rows skipped).`,
     batch: batchRecord,
     totalTransactions: state.transactions.length,
     totalCommitments: state.commitments.length,
     totalAlerts: state.alerts.length,
+    importedRowsCount: newRawRows.length,
+    duplicatesSkipped: existingDuplicatesSkipped + parseResult.duplicateCount,
+    parseResult,
   });
 });
 

@@ -20,10 +20,13 @@ import {
   RelationshipConfidenceStatus,
   RecurrenceFrequency,
   PaymentRailType,
+  DateFormatOption,
+  ServiceLifecycleStatus,
+  MandateLifecycleStatus,
 } from '../types/debitlens';
 import { MERCHANT_CATALOGUE, PAYMENT_PROCESSORS } from './referenceData';
 import { formatINR, formatMinorINR, toMinorUnits, fromMinorUnits } from '../utils/currency';
-import { normaliseDescriptor, detectProcessor, parseStrictAmount } from './debitlensEngine';
+import { normaliseDescriptor, detectProcessor, parseStrictAmount, parseStrictSignedAmount, RawCsvRow } from './debitlensEngine';
 import { getEffectiveMandateStatus, getMissingMandateFields } from './reconciliationEngine';
 
 // ============================================================================
@@ -39,7 +42,7 @@ export function generateMerchantCandidates(
     | TransactionRecord,
   maybeAllTxns?: TransactionRecord[],
   maybeOverrides?: Record<string, string>
-): (MerchantCandidate & { merchantId?: string; merchantName?: string; category?: string; website?: string })[] {
+): MerchantCandidate[] {
   let transaction: TransactionRecord;
   let allTransactions: TransactionRecord[] = [];
   let userOverrides: Record<string, string> = {};
@@ -167,6 +170,7 @@ export function generateMerchantCandidates(
           merchantName: m.canonicalName,
           serviceName: m.serviceName,
           candidateType: 'PROCESSOR_RELATIONSHIP',
+          isProcessorOnly: true,
           matchReason: `Known client of payment processor ${detectedProc.name}.`,
           evidenceSource: `PAYMENT_PROCESSOR [${detectedProc.name}]`,
           confidenceScore: 40,
@@ -205,7 +209,7 @@ export function buildUnrecognizedDebitCase(params: {
       : null;
 
   const recommendedNextAction =
-    candidates.length > 0 && candidates[0].confidenceScore >= 80
+    candidates.length > 0 && candidates[0].confidenceScore >= 80 && !(candidates[0] as any).isProcessorOnly
       ? `Review candidate "${candidateName}". If confirmed, associate to resolve descriptor.`
       : `Check your bank SMS/UPI app details for reference "${transaction.id}". If unfamiliar, inspect mandate list before filing a bank dispute.`;
 
@@ -214,7 +218,7 @@ export function buildUnrecognizedDebitCase(params: {
     transactionId: transaction.id,
     originalDescriptor: transaction.rawDescription,
     amount: transaction.amount,
-    amountMinor: transaction.amountMinor,
+    amountMinor: transaction.amountMinor ?? toMinorUnits(transaction.amount),
     transactionDate: transaction.transactionDate,
     currency: transaction.currency,
     paymentRail: transaction.paymentRail,
@@ -238,7 +242,7 @@ export function buildUnrecognizedDebitCase(params: {
     guidanceChecklist: [
       `Search Gmail/SMS for payments of ₹${transaction.amount} around ${transaction.transactionDate}.`,
       'Check banking/UPI app for active e-mandate or UPI AutoPay with matching ceiling amounts.',
-      'Under RBI zero-liability guidelines, notify your bank within 3 calendar days if unauthorised.',
+      'Under RBI customer protection guidelines, notify your bank promptly if this transaction is unauthorised to restrict your financial liability.',
     ],
     actionsTaken: (existingCase as any).actionsTaken || [],
     createdAt: existingCase.createdAt || now,
@@ -331,7 +335,7 @@ export function buildReviewQueue(params: {
       actionType = 'INSPECT_EVIDENCE';
     } else if (f.status === 'AMOUNT_DISCREPANCY') {
       priority = 'P1' as any;
-      category = 'RECONCILIATION_DISCREPANCY' as any;
+      category = 'PRICE_DISCREPANCY';
       actionType = 'REVIEW_DISCREPANCY';
     } else if (f.status === 'FREQUENCY_DISCREPANCY') {
       priority = 'P1' as any;
@@ -374,7 +378,9 @@ export function buildReviewQueue(params: {
       amountMinor: f.actualTransactionAmountMinor ?? null,
       eventDate: f.evaluatedAt ? f.evaluatedAt.slice(0, 10) : new Date().toISOString().slice(0, 10),
       whyItAppeared: f.explanation || (f as any).discrepancyReason || 'Three-way reconciliation discrepancy detected.',
-      supportingEvidenceCount: Array.isArray(f.evidenceRecordIds) ? f.evidenceRecordIds.length : 2,
+      supportingEvidenceCount: Array.isArray(f.evidenceRecordIds) && f.evidenceRecordIds.length > 0
+        ? f.evidenceRecordIds.length
+        : (f.latestTransactionId ? 1 : 0) + (f.mandateReference ? 1 : 0) + (f.commitmentId ? 1 : 0),
       recommendedAction: f.recommendedAction || 'Review commitment documents and statement records.',
       actionType,
       createdAt: f.evaluatedAt || new Date().toISOString(),
@@ -393,7 +399,7 @@ export function buildReviewQueue(params: {
     let category: ReviewQueueItem['category'] = 'PRICE_DISCREPANCY';
     let actionType: ReviewQueueItem['actionType'] = 'INSPECT_EVIDENCE';
 
-    if (alt.alertType === 'POST_CANCEL_ALERT') {
+    if (alt.alertType === 'POST_CANCELLATION_DEBIT' || (alt.alertType as string) === 'POST_CANCEL_ALERT') {
       priority = 'P0' as any;
       category = 'POST_CANCEL_DEBIT';
       actionType = 'OPEN_CANCELLATION';
@@ -414,6 +420,7 @@ export function buildReviewQueue(params: {
     const override = statusOverrides[dedupKey] || statusOverrides[`RQ-ALT-${alt.id}`];
     const status: ReviewQueueStatus = override || (alt.status === 'ACKNOWLEDGED' ? 'IN_REVIEW' : 'OPEN');
     const cmt = commitments.find((c) => c.id === alt.commitmentId);
+    const alertEvidenceCount = (alt.transactionId ? 1 : 0) + (alt.commitmentId ? 1 : 0);
 
     items.push({
       id: `RQ-ALT-${alt.id}`,
@@ -431,7 +438,7 @@ export function buildReviewQueue(params: {
       amountMinor: null,
       eventDate: alt.createdAt,
       whyItAppeared: alt.description,
-      supportingEvidenceCount: 2,
+      supportingEvidenceCount: alertEvidenceCount,
       recommendedAction: alt.suggestedAction,
       actionType,
       createdAt: `${alt.createdAt}T00:00:00Z`,
@@ -507,11 +514,10 @@ export function generateCommitmentPassport(params: {
       (m) =>
         m.commitmentId === commitment.id ||
         (commitment.mandateRef && m.mandateReference === commitment.mandateRef)
-    ) || (mandateList.length > 0 ? mandateList[0] : null);
+    ) || null;
 
   const terms =
-    termsList.find((s) => s.commitmentId === commitment.id) ||
-    (termsList.length > 0 ? termsList[0] : null);
+    termsList.find((s) => s.commitmentId === commitment.id) || null;
 
   const amounts = cmtTxns.map((t) => t.amount);
   const minAmount = amounts.length > 0 ? Math.min(...amounts) : commitment.typicalAmount;
@@ -562,27 +568,55 @@ export function generateCommitmentPassport(params: {
 
   const totalDebitsCount = cmtTxns.length;
   const totalSpent = amounts.reduce((acc, a) => acc + a, 0);
-  const firstDebitDate = cmtTxns[0]?.transactionDate || commitment.firstSeenDate || null;
+  const firstDebitDate = cmtTxns[0]?.transactionDate || commitment.firstObservedDate || (commitment as any).firstSeenDate || null;
   const latestDebitDate = cmtTxns[cmtTxns.length - 1]?.transactionDate || commitment.lastPaymentDate || null;
 
   const verifiedElementsCount = coverageItems.filter((c) => c.present).length;
+
+  const merchInfo = MERCHANT_CATALOGUE.find((m) => m.id === commitment.merchantId);
+  const auditEventsList = params.auditEvents || [];
+  const confirmEvent = auditEventsList.find(
+    (e: any) =>
+      (e.commitmentId === commitment.id || (e.summary && e.summary.includes(commitment.merchantName))) &&
+      (e.eventType === 'IDENTITY_MATCH_CONFIRMED' || e.eventType === 'CANDIDATE_CONFIRMED')
+  );
+  const confirmedAt = confirmEvent?.timestamp || null;
+
+  const isUserConfirmed = Boolean(
+    confirmEvent ||
+    commitment.verificationStatus === 'USER_CONFIRMED' ||
+    commitment.relationshipStatus === 'USER_CONFIRMED'
+  );
+
+  let resolvedProvenance: 'USER_CONFIRMED' | 'CONFIRMED' | 'SYSTEM_INFERRED' | 'SUGGESTED' | 'UNKNOWN' = 'UNKNOWN';
+  if (isUserConfirmed) {
+    resolvedProvenance = 'USER_CONFIRMED';
+  } else if (commitment.verificationStatus === 'CONFIRMED' || commitment.relationshipStatus === 'CONFIRMED') {
+    resolvedProvenance = 'CONFIRMED';
+  } else if (commitment.relationshipStatus === 'SYSTEM_INFERRED' || commitment.confidenceLabel === 'HIGH') {
+    resolvedProvenance = 'SYSTEM_INFERRED';
+  } else if (commitment.confidenceLabel === 'MEDIUM') {
+    resolvedProvenance = 'SUGGESTED';
+  } else {
+    resolvedProvenance = 'UNKNOWN';
+  }
 
   const sectionA_Identity = {
     serviceName: commitment.serviceName,
     merchantName: commitment.merchantName,
     merchantId: commitment.merchantId,
-    legalEntityName: commitment.merchantName,
+    legalEntityName: (merchInfo as any)?.legalEntityName || null,
     category: commitment.category,
-    supportContact: `support@${commitment.merchantName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`,
-    grievanceOfficer: `Grievance Officer (${commitment.merchantName})`,
-    website: `https://${commitment.merchantName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`,
+    supportContact: (merchInfo as any)?.customerSupportEmail || null,
+    grievanceOfficer: null,
+    website: (merchInfo as any)?.officialWebsite || null,
     confidenceScore: commitment.confidenceScore,
     confidenceLabel: commitment.confidenceLabel,
     connectedDescriptors: commitment.connectedDescriptors,
     processorName: commitment.processorName,
     accountAlias: cmtTxns[0]?.accountAlias || 'Default Account',
-    provenance: commitment.verificationStatus === 'CONFIRMED' ? 'USER_CONFIRMED' : 'CONFIRMED',
-    confirmedAt: commitment.verificationStatus === 'CONFIRMED' ? '2026-10-31T00:00:00Z' : null,
+    provenance: resolvedProvenance,
+    confirmedAt,
   };
 
   const sectionB_Mandate = {
@@ -591,7 +625,7 @@ export function generateCommitmentPassport(params: {
     mandateReference: mandate?.mandateReference || commitment.mandateRef || null,
     maxAmount: mandate?.maxAmount ?? null,
     mandateStatus: effectiveMandateStatus,
-    frequency: mandate?.frequency || commitment.recurrenceType || 'UNKNOWN',
+    frequency: mandate?.frequency || 'UNKNOWN',
     startDate: mandate?.startDate || null,
     endDate: mandate?.endDate || null,
   };
@@ -600,7 +634,7 @@ export function generateCommitmentPassport(params: {
     termsPresent: Boolean(terms),
     serviceName: terms?.serviceName || commitment.serviceName,
     expectedAmount: terms?.expectedAmount ?? null,
-    billingFrequency: terms?.billingFrequency || commitment.recurrenceType || 'UNKNOWN',
+    billingFrequency: terms?.billingFrequency || 'UNKNOWN',
     renewalDate: commitment.nextExpectedDate || null,
     userVerified: Boolean(terms?.userVerified),
     sourceDocument: terms?.documentSource || null,
@@ -611,7 +645,7 @@ export function generateCommitmentPassport(params: {
     totalSpent,
     firstDebitDate,
     latestDebitDate,
-    averageDebitAmount: totalDebitsCount > 0 ? Math.round(totalSpent / totalDebitsCount) : commitment.typicalAmount,
+    averageDebitAmount: totalDebitsCount > 0 ? Math.round(totalSpent / totalDebitsCount) : null,
     cadence: commitment.recurrenceType,
   };
 
@@ -623,6 +657,11 @@ export function generateCommitmentPassport(params: {
       : 'Awaiting comparison data',
     cadenceComparison: `Observed ${commitment.recurrenceType} cadence vs Mandate ${mandate?.frequency || 'Unregistered'}`,
     lifecycleComparison: areBothStopped ? 'Both Stopped' : 'Active or Inconsistent',
+    actualReconciledDebit: reconciliationFinding?.actualTransactionAmount ?? null,
+    actualDebitTransactionAmount: cmtTxns[cmtTxns.length - 1]?.amount ?? commitment.latestAmount ?? null,
+    typicalObservedAmount: commitment.typicalAmount,
+    expectedBillingAmount: reconciliationFinding?.expectedServiceAmount ?? terms?.expectedAmount ?? null,
+    mandateMaxAmount: reconciliationFinding?.mandateMaxAmount ?? mandate?.maxAmount ?? null,
     expectedPrice: reconciliationFinding?.expectedServiceAmount ?? null,
     actualAmount: reconciliationFinding?.actualTransactionAmount ?? commitment.typicalAmount,
     mandateCap: reconciliationFinding?.mandateMaxAmount ?? null,
@@ -651,10 +690,33 @@ export function generateCommitmentPassport(params: {
       id: e.id,
       title: e.title,
       description: e.description,
-      date: e.eventDate,
+      date: (e as any).eventDate || e.timestamp || '',
       verificationStatus: e.verificationStatus,
       sourceReference: e.sourceReference,
     })),
+  };
+
+  const recordCoverage = {
+    percent: qualityPercent,
+    presentCount: verifiedElementsCount,
+    totalCount: 4,
+    missingItems,
+  };
+
+  const verificationQuality = {
+    provenance: resolvedProvenance,
+    confidenceScore: commitment.confidenceScore,
+    confidenceLabel: commitment.confidenceLabel,
+    isUserConfirmed,
+    confirmedAt,
+  };
+
+  const financialReconciliationStatus = {
+    status: reconciliationFinding?.status || 'UNRESOLVED',
+    isDiscrepancy: Boolean(reconciliationFinding?.status?.includes('DISCREPANCY')),
+    explanation:
+      reconciliationFinding?.explanation ||
+      'Reconciliation pending attachment of complete statement, mandate, or service documents.',
   };
 
   const dataCoverage = {
@@ -683,6 +745,9 @@ export function generateCommitmentPassport(params: {
     sectionF_Cancellation,
     sectionG_Evidence,
     dataCoverage,
+    recordCoverage,
+    verificationQuality,
+    financialReconciliationStatus,
     // Backwards compatibility sections
     sectionB_FinancialPattern: {
       observedCadence: commitment.recurrenceType,
@@ -769,11 +834,10 @@ export function generateEvidencePackData(params: {
       (m) =>
         m.commitmentId === commitment.id ||
         (commitment.mandateRef && m.mandateReference === commitment.mandateRef)
-    ) || (mandateList.length > 0 ? mandateList[0] : null);
+    ) || null;
 
   const terms =
-    termsList.find((s) => s.commitmentId === commitment.id) ||
-    (termsList.length > 0 ? termsList[0] : null);
+    termsList.find((s) => s.commitmentId === commitment.id) || null;
 
   const missingGaps: string[] = [];
   if (!terms) missingGaps.push('Contracted invoice or terms document not attached');
@@ -781,6 +845,27 @@ export function generateEvidencePackData(params: {
   if (commitment.confidenceScore < 80) missingGaps.push('Merchant identity unconfirmed by user');
 
   const postCancelTxns = cmtTxns.filter((t) => t.isPostCancellationDebit);
+  const hasImported = transactions.some(
+    (t) => (t.sourceType as string) === 'CSV_STATEMENT' || (t.sourceType as string) === 'IMPORTED_CSV' || (t.sourceType as string) === 'USER_UPLOAD' || (t.sourceType as string) === 'CSV_MAPPED'
+  );
+  const hasSynthetic = transactions.some(
+    (t) => (t.sourceType as string) === 'DEMO_SEED' || (t.sourceType as string) === 'SYNTHETIC'
+  );
+  const syntheticNotice = (hasImported && hasSynthetic)
+    ? 'Mixed Evidence Source · Comprises both user-imported statement records and demonstration seed fixtures. Processed locally and deterministically. Zero customer credentials collected.'
+    : hasImported
+    ? 'User-Imported Statement Records · Processed locally and deterministically. Zero customer credentials collected.'
+    : 'Synthetic Demonstration Dataset · Generated for verified evaluation. Zero customer credentials collected.';
+
+  const isUserConfirmedIdentity = Boolean(
+    commitment.verificationStatus === 'USER_CONFIRMED' ||
+    (commitment as any).isUserConfirmed ||
+    (params.auditEvents || []).some(
+      (e: any) =>
+        (e.commitmentId === commitment.id || (e.summary && e.summary.includes(commitment.merchantName))) &&
+        (e.eventType === 'IDENTITY_MATCH_CONFIRMED' || e.eventType === 'CANDIDATE_CONFIRMED')
+    )
+  );
 
   return {
     commitmentId: commitment.id,
@@ -792,15 +877,18 @@ export function generateEvidencePackData(params: {
       subtitle: 'Financial Evidence Summary',
       reportId: `EVP-${commitment.id}-${Date.now()}`,
       generatedAt: new Date().toISOString(),
-      syntheticNotice:
-        'Synthetic Demonstration Dataset · Generated for verified evaluation. Zero customer credentials collected.',
+      syntheticNotice,
     },
     commitmentIdentity: {
       merchantName: commitment.merchantName,
       serviceName: commitment.serviceName,
       commitmentId: commitment.id,
       descriptors: commitment.connectedDescriptors,
-      resolutionStatus: commitment.confidenceLabel === 'HIGH' ? 'CONFIRMED' : 'INFERRED',
+      resolutionStatus: isUserConfirmedIdentity
+        ? 'USER_CONFIRMED'
+        : commitment.confidenceLabel === 'HIGH'
+        ? 'SYSTEM_INFERRED'
+        : 'INFERRED',
       provenance: 'RULE_BASED_DESCRIPTOR_RESOLVER',
     },
     transactions: cmtTxns.map((t) => ({
@@ -847,8 +935,8 @@ export function generateEvidencePackData(params: {
         reconciliationFinding?.recommendedAction || 'Inspect account transactions and verified plan tier.',
     },
     cancellationEvidence: {
-      serviceLifecycle: commitment.serviceLifecycleStatus,
-      mandateLifecycle: commitment.mandateLifecycleStatus,
+      serviceLifecycle: commitment.serviceLifecycleStatus || 'UNKNOWN',
+      mandateLifecycle: commitment.mandateLifecycleStatus || 'UNKNOWN',
       requestDates: {
         service: cancellationSession?.serviceCancelledAt || null,
         mandate: cancellationSession?.paymentAuthorisationRevokedAt || null,
@@ -883,14 +971,30 @@ export function generateEvidencePackData(params: {
   };
 }
 
+export function escapeHtml(val: string | number | null | undefined): string {
+  if (val === null || val === undefined) return '';
+  return String(val)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function generatePrintableEvidencePackHtml(pack: EvidencePackData): string {
-  const formatAmount = (amt: number | null) => (amt !== null ? formatINR(amt) : 'Unavailable');
+  const formatAmount = (amt: number | null) => (amt !== null ? escapeHtml(formatINR(amt)) : 'Unavailable');
+  const debitsCount = pack.transactions.filter((t) => t.direction === 'DEBIT').length;
+  const creditsCount = pack.transactions.filter((t) => t.direction === 'CREDIT').length;
+  const debCountText =
+    creditsCount > 0
+      ? `${debitsCount} debit${debitsCount === 1 ? '' : 's'}, ${creditsCount} credit${creditsCount === 1 ? '' : 's'} (${pack.transactions.length} total records)`
+      : `${debitsCount} debit${debitsCount === 1 ? '' : 's'} recorded`;
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>${pack.header.reportTitle} — ${pack.commitmentIdentity.serviceName}</title>
+  <title>${escapeHtml(pack.header.reportTitle)} — ${escapeHtml(pack.commitmentIdentity.serviceName)}</title>
   <style>
     @media print {
       body { font-size: 11pt; color: #0f172a; margin: 0.5in; }
@@ -918,61 +1022,61 @@ export function generatePrintableEvidencePackHtml(pack: EvidencePackData): strin
   <div class="header-box">
     <div>
       <h1>DebitLens Financial Evidence Pack</h1>
-      <div style="font-size: 0.9rem; color: #64748b;">${pack.header.subtitle} · Report ID: <code>${pack.header.reportId}</code></div>
-      <div style="font-size: 0.8rem; color: #64748b; margin-top: 0.25rem;">Generated: ${pack.header.generatedAt}</div>
+      <div style="font-size: 0.9rem; color: #64748b;">${escapeHtml(pack.header.subtitle)} · Report ID: <code>${escapeHtml(pack.header.reportId)}</code></div>
+      <div style="font-size: 0.8rem; color: #64748b; margin-top: 0.25rem;">Generated: ${escapeHtml(pack.header.generatedAt)}</div>
     </div>
     <div style="text-align: right;">
-      <span class="badge badge-warn">${pack.header.syntheticNotice.split('·')[0].trim()}</span>
+      <span class="badge badge-warn">${escapeHtml(pack.header.syntheticNotice.split('·')[0].trim())}</span>
     </div>
   </div>
 
   <h2>Section A: Commitment Identity & Merchant Profile</h2>
   <table>
-    <tr><th style="width: 30%;">Service Name</th><td><strong>${pack.commitmentIdentity.serviceName}</strong></td></tr>
-    <tr><th>Merchant Name</th><td>${pack.commitmentIdentity.merchantName} (${pack.commitmentIdentity.commitmentId})</td></tr>
-    <tr><th>Connected Descriptors</th><td><code>${pack.commitmentIdentity.descriptors.join(', ')}</code></td></tr>
-    <tr><th>Resolution Status</th><td>${pack.commitmentIdentity.resolutionStatus} (${pack.commitmentIdentity.provenance})</td></tr>
+    <tr><th style="width: 30%;">Service Name</th><td><strong>${escapeHtml(pack.commitmentIdentity.serviceName)}</strong></td></tr>
+    <tr><th>Merchant Name</th><td>${escapeHtml(pack.commitmentIdentity.merchantName)} (${escapeHtml(pack.commitmentIdentity.commitmentId)})</td></tr>
+    <tr><th>Connected Descriptors</th><td><code>${escapeHtml(pack.commitmentIdentity.descriptors.join(', '))}</code></td></tr>
+    <tr><th>Resolution Status</th><td>${escapeHtml(pack.commitmentIdentity.resolutionStatus)} (${escapeHtml(pack.commitmentIdentity.provenance)})</td></tr>
   </table>
 
   <h2>Section B: Payment Mandate Authorisation</h2>
   <table>
-    <tr><th style="width: 30%;">Mandate Reference</th><td><code>${pack.paymentMandate.mandateReference || 'Unavailable'}</code></td></tr>
-    <tr><th>Payment Rail</th><td>${pack.paymentMandate.paymentRail.replace(/_/g, ' ')}</td></tr>
+    <tr><th style="width: 30%;">Mandate Reference</th><td><code>${escapeHtml(pack.paymentMandate.mandateReference || 'Unavailable')}</code></td></tr>
+    <tr><th>Payment Rail</th><td>${escapeHtml(pack.paymentMandate.paymentRail.replace(/_/g, ' '))}</td></tr>
     <tr><th>Maximum Limit</th><td>${formatAmount(pack.paymentMandate.maxAuthorisedAmount)}</td></tr>
-    <tr><th>Effective Mandate Status</th><td><span class="badge">${pack.paymentMandate.effectiveStatus}</span></td></tr>
-    <tr><th>Start / Expiry Date</th><td>${pack.paymentMandate.startDate || '—'} / ${pack.paymentMandate.expiryDate || 'No Expiry'}</td></tr>
+    <tr><th>Effective Mandate Status</th><td><span class="badge">${escapeHtml(pack.paymentMandate.effectiveStatus)}</span></td></tr>
+    <tr><th>Start / Expiry Date</th><td>${escapeHtml(pack.paymentMandate.startDate || '—')} / ${escapeHtml(pack.paymentMandate.expiryDate || 'No Expiry')}</td></tr>
   </table>
 
   <h2>Section C: Commercial Terms & Pricing</h2>
   <table>
     <tr><th style="width: 30%;">Documented Price</th><td>${formatAmount(pack.serviceTerms.documentedPrice)}</td></tr>
-    <tr><th>Billing Frequency</th><td>${pack.serviceTerms.billingFrequency}</td></tr>
-    <tr><th>Verification Status</th><td>${pack.serviceTerms.verificationStatus}</td></tr>
+    <tr><th>Billing Frequency</th><td>${escapeHtml(pack.serviceTerms.billingFrequency)}</td></tr>
+    <tr><th>Verification Status</th><td>${escapeHtml(pack.serviceTerms.verificationStatus)}</td></tr>
   </table>
 
   <h2>Section D: Transaction History & Cadence</h2>
   <table>
-    <tr><th style="width: 30%;">Total Transactions</th><td>${pack.transactions.length} debits recorded</td></tr>
-    <tr><th>Post-Cancellation Activity</th><td><strong>${pack.postCancellationActivity.monitoringStatement}</strong></td></tr>
+    <tr><th style="width: 30%;">Total Transactions</th><td>${debCountText}</td></tr>
+    <tr><th>Post-Cancellation Activity</th><td><strong>${escapeHtml(pack.postCancellationActivity.monitoringStatement)}</strong></td></tr>
   </table>
 
   <h2>Section E: Three-Way Reconciliation Analysis</h2>
   <table>
-    <tr><th style="width: 30%;">Reconciliation Outcome</th><td><span class="badge">${pack.reconciliation.outcome}</span></td></tr>
+    <tr><th style="width: 30%;">Reconciliation Outcome</th><td><span class="badge">${escapeHtml(pack.reconciliation.outcome)}</span></td></tr>
     <tr><th>Documented Price</th><td>${formatAmount(pack.reconciliation.expectedServicePrice)}</td></tr>
     <tr><th>Actual Statement Debit</th><td><strong>${formatAmount(pack.reconciliation.actualDebitAmount)}</strong></td></tr>
     <tr><th>Mandate Limit Ceiling</th><td>${formatAmount(pack.reconciliation.mandateCap)}</td></tr>
-    <tr><th>Amount Discrepancy</th><td>${pack.reconciliation.discrepancyAmount !== null ? formatINR(pack.reconciliation.discrepancyAmount) : 'None'} (${pack.reconciliation.discrepancyPercent ?? 0}%)</td></tr>
-    <tr><th>Detailed Finding</th><td>${pack.reconciliation.explanation}</td></tr>
-    <tr><th>Recommended Action</th><td>${pack.reconciliation.recommendedAction}</td></tr>
+    <tr><th>Amount Discrepancy</th><td>${pack.reconciliation.discrepancyAmount !== null ? escapeHtml(formatINR(pack.reconciliation.discrepancyAmount)) : 'None'} (${escapeHtml(pack.reconciliation.discrepancyPercent ?? 0)}%)</td></tr>
+    <tr><th>Detailed Finding</th><td>${escapeHtml(pack.reconciliation.explanation)}</td></tr>
+    <tr><th>Recommended Action</th><td>${escapeHtml(pack.reconciliation.recommendedAction)}</td></tr>
   </table>
 
   <h2>Section F: Two-Layer Cancellation & Post-Cancellation Monitoring</h2>
   <table>
-    <tr><th style="width: 30%;">Service Lifecycle (Layer A)</th><td>${pack.cancellationEvidence.serviceLifecycle}</td></tr>
-    <tr><th>Mandate Lifecycle (Layer B)</th><td>${pack.cancellationEvidence.mandateLifecycle}</td></tr>
-    <tr><th>Cancellation References</th><td>${pack.cancellationEvidence.confirmationReferences.length ? pack.cancellationEvidence.confirmationReferences.join(', ') : 'None attached'}</td></tr>
-    <tr><th>Subsequent Statement Debits</th><td><strong>${pack.postCancellationActivity.monitoringStatement}</strong></td></tr>
+    <tr><th style="width: 30%;">Service Lifecycle (Layer A)</th><td>${escapeHtml(pack.cancellationEvidence.serviceLifecycle)}</td></tr>
+    <tr><th>Mandate Lifecycle (Layer B)</th><td>${escapeHtml(pack.cancellationEvidence.mandateLifecycle)}</td></tr>
+    <tr><th>Cancellation References</th><td>${pack.cancellationEvidence.confirmationReferences.length ? escapeHtml(pack.cancellationEvidence.confirmationReferences.join(', ')) : 'None attached'}</td></tr>
+    <tr><th>Subsequent Statement Debits</th><td><strong>${escapeHtml(pack.postCancellationActivity.monitoringStatement)}</strong></td></tr>
   </table>
 
   <h2>Section G: Statement Transaction Evidence (${pack.transactions.length} Records)</h2>
@@ -984,11 +1088,11 @@ export function generatePrintableEvidencePackHtml(pack: EvidencePackData): strin
       ${pack.transactions
         .map(
           (t) => `<tr>
-          <td>${t.date}</td>
-          <td><code>${t.description}</code></td>
-          <td>${t.direction}</td>
-          <td>${formatINR(t.amount)}</td>
-          <td><small>${t.id}</small></td>
+          <td>${escapeHtml(t.date)}</td>
+          <td><code>${escapeHtml(t.description)}</code></td>
+          <td>${escapeHtml(t.direction)}</td>
+          <td>${escapeHtml(formatINR(t.amount))}</td>
+          <td><small>${escapeHtml(t.id)}</small></td>
         </tr>`
         )
         .join('')}
@@ -997,7 +1101,7 @@ export function generatePrintableEvidencePackHtml(pack: EvidencePackData): strin
 
   <div class="disclaimer">
     <strong>Provenance & Accuracy Notice:</strong><br>
-    ${pack.provenanceNotice}
+    ${escapeHtml(pack.provenanceNotice)}
   </div>
 </body>
 </html>`;
@@ -1006,12 +1110,127 @@ export function generatePrintableEvidencePackHtml(pack: EvidencePackData): strin
 // ============================================================================
 // 5. SMART BANK STATEMENT CSV MAPPING WIZARD
 // ============================================================================
+export function parseCsvDate(
+  rawDate: string,
+  format: DateFormatOption = 'YYYY-MM-DD'
+): string | null {
+  if (!rawDate || !rawDate.trim()) return null;
+  const trimmed = rawDate.trim();
+
+  if (format === 'DD/MM/YYYY' || format === 'DD-MM-YYYY') {
+    const parts = trimmed.split(/[-/.]/);
+    if (parts.length === 3) {
+      const d = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10);
+      const yStr = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+      const y = parseInt(yStr, 10);
+      if (m >= 1 && m <= 12 && d >= 1 && d <= 31 && y >= 1970 && y <= 2100) {
+        const testDate = new Date(Date.UTC(y, m - 1, d));
+        if (testDate.getUTCDate() === d && testDate.getUTCMonth() === m - 1) {
+          return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        }
+      }
+    }
+  } else if (format === 'MM/DD/YYYY' || format === 'MM-DD-YYYY') {
+    const parts = trimmed.split(/[-/.]/);
+    if (parts.length === 3) {
+      const m = parseInt(parts[0], 10);
+      const d = parseInt(parts[1], 10);
+      const yStr = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+      const y = parseInt(yStr, 10);
+      if (m >= 1 && m <= 12 && d >= 1 && d <= 31 && y >= 1970 && y <= 2100) {
+        const testDate = new Date(Date.UTC(y, m - 1, d));
+        if (testDate.getUTCDate() === d && testDate.getUTCMonth() === m - 1) {
+          return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        }
+      }
+    }
+  } else if (format === 'YYYY-MM-DD') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const [y, m, d] = trimmed.split('-').map(Number);
+      const testDate = new Date(Date.UTC(y, m - 1, d));
+      if (testDate.getUTCDate() === d && testDate.getUTCMonth() === m - 1) {
+        return trimmed;
+      }
+    }
+  } else {
+    // AUTO format
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return trimmed;
+    }
+    const slashParts = trimmed.split(/[-/.]/);
+    if (slashParts.length === 3) {
+      const p0 = parseInt(slashParts[0], 10);
+      const p1 = parseInt(slashParts[1], 10);
+      const p2 = slashParts[2].length === 2 ? `20${slashParts[2]}` : slashParts[2];
+      const y = parseInt(p2, 10);
+      if (p0 > 12 && p0 <= 31 && p1 <= 12) {
+        return `${y}-${String(p1).padStart(2, '0')}-${String(p0).padStart(2, '0')}`;
+      } else if (p1 > 12 && p1 <= 31 && p0 <= 12) {
+        return `${y}-${String(p0).padStart(2, '0')}-${String(p1).padStart(2, '0')}`;
+      } else if (p0 <= 31 && p1 <= 12) {
+        return `${y}-${String(p1).padStart(2, '0')}-${String(p0).padStart(2, '0')}`;
+      }
+    }
+    const ms = Date.parse(trimmed);
+    if (!isNaN(ms)) {
+      return new Date(ms).toISOString().slice(0, 10);
+    }
+  }
+  return null;
+}
+
+export function parseCsvRowsRFC4180(text: string): string[][] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = '';
+  let insideQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        currentField += '"';
+        i++;
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === ',' && !insideQuotes) {
+      currentRow.push(currentField.trim());
+      currentField = '';
+    } else if ((char === '\r' || char === '\n') && !insideQuotes) {
+      if (char === '\r' && nextChar === '\n') {
+        i++;
+      }
+      currentRow.push(currentField.trim());
+      if (currentRow.some((c) => c.length > 0)) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
+      currentField = '';
+    } else {
+      currentField += char;
+    }
+  }
+
+  if (currentField.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentField.trim());
+    if (currentRow.some((c) => c.length > 0)) {
+      rows.push(currentRow);
+    }
+  }
+
+  return rows;
+}
+
 export function previewCsvMapping(
   csvText: string,
   userConfig?: Partial<CsvMappingConfig>
 ): CsvMappingPreviewResult {
-  const lines = csvText.trim().split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length === 0) {
+  const allParsedRows = parseCsvRowsRFC4180(csvText);
+  if (allParsedRows.length === 0) {
     const emptyConfig: CsvMappingConfig = {
       dateColumn: '',
       descriptionColumn: '',
@@ -1034,24 +1253,7 @@ export function previewCsvMapping(
     };
   }
 
-  // Parse header line respecting quotes
-  const parseHeaderLine = (line: string): string[] => {
-    const res: string[] = [];
-    let cur = '';
-    let inQ = false;
-    for (let i = 0; i < line.length; i++) {
-      const c = line[i];
-      if (c === '"') inQ = !inQ;
-      else if (c === ',' && !inQ) {
-        res.push(cur.trim());
-        cur = '';
-      } else cur += c;
-    }
-    res.push(cur.trim());
-    return res;
-  };
-
-  const headers = parseHeaderLine(lines[0]);
+  const headers = allParsedRows[0];
   const lowerHeaders = headers.map((h) => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
 
   // Suggest Date column
@@ -1129,11 +1331,10 @@ export function previewCsvMapping(
   let duplicateRowCount = 0;
   const seenKeys = new Set<string>();
 
-  const dataLines = lines.slice(1);
+  const dataRows = allParsedRows.slice(1);
 
-  dataLines.forEach((line, idx) => {
+  dataRows.forEach((cells, idx) => {
     const rowNum = idx + 1; // 1-indexed data row
-    const cells = parseHeaderLine(line);
     const rawDate = dateIdx >= 0 ? cells[dateIdx] || '' : '';
     const rawDesc = descIdx >= 0 ? cells[descIdx] || '' : '';
     const rawRef = refIdx >= 0 ? cells[refIdx] || '' : '';
@@ -1141,7 +1342,7 @@ export function previewCsvMapping(
     let interpretedAmount: number | null = null;
     let direction: 'DEBIT' | 'CREDIT' = 'DEBIT';
     let rawAmountStr = '';
-    let isCreditRow = false;
+    let isAmbiguous = false;
 
     if (isSeparate) {
       const drStr = debitIdx >= 0 ? cells[debitIdx] || '' : '';
@@ -1149,7 +1350,11 @@ export function previewCsvMapping(
       const drAmt = parseStrictAmount(drStr);
       const crAmt = parseStrictAmount(crStr);
 
-      if (drAmt !== null && drAmt > 0) {
+      if (drAmt !== null && drAmt > 0 && crAmt !== null && crAmt > 0) {
+        isAmbiguous = true;
+        rawAmountStr = `Debit: ${drStr}, Credit: ${crStr}`;
+        interpretedAmount = null;
+      } else if (drAmt !== null && drAmt > 0) {
         interpretedAmount = drAmt;
         direction = 'DEBIT';
         rawAmountStr = drStr;
@@ -1157,7 +1362,6 @@ export function previewCsvMapping(
         interpretedAmount = crAmt;
         direction = 'CREDIT';
         rawAmountStr = crStr;
-        isCreditRow = true;
       } else {
         rawAmountStr = drStr || crStr || '0';
         interpretedAmount = null;
@@ -1165,64 +1369,33 @@ export function previewCsvMapping(
     } else {
       const str = signedIdx >= 0 ? cells[signedIdx] || '' : '';
       rawAmountStr = str;
-      const num = parseStrictAmount(str);
-      if (num !== null) {
-        if (num < 0) {
-          interpretedAmount = Math.abs(num);
-          direction = 'CREDIT';
-          isCreditRow = true;
-        } else {
-          interpretedAmount = num;
-          direction = 'DEBIT';
-        }
+      const parsedSigned = parseStrictSignedAmount(str);
+      if (parsedSigned !== null && parsedSigned.amount > 0) {
+        interpretedAmount = parsedSigned.amount;
+        direction = parsedSigned.isNegative ? 'CREDIT' : 'DEBIT';
       }
     }
 
-    // Parse date with chosen format
-    let parsedDate: string | null = null;
-    if (rawDate) {
-      if (config.dateFormat === 'DD/MM/YYYY') {
-        const parts = rawDate.split(/[-/.]/);
-        if (parts.length === 3) {
-          const d = parts[0].padStart(2, '0');
-          const m = parts[1].padStart(2, '0');
-          const y = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-          parsedDate = `${y}-${m}-${d}`;
-        }
-      } else if (config.dateFormat === 'MM/DD/YYYY') {
-        const parts = rawDate.split(/[-/.]/);
-        if (parts.length === 3) {
-          const m = parts[0].padStart(2, '0');
-          const d = parts[1].padStart(2, '0');
-          const y = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-          parsedDate = `${y}-${m}-${d}`;
-        }
-      } else {
-        const ms = Date.parse(rawDate);
-        if (!isNaN(ms)) {
-          parsedDate = new Date(ms).toISOString().slice(0, 10);
-        }
-      }
-    }
+    const parsedDate = parseCsvDate(rawDate, config.dateFormat);
 
     let isValid = true;
     let rejectReason: string | undefined;
 
-    if (isCreditRow) {
+    if (isAmbiguous) {
       isValid = false;
-      rejectReason = 'Credit/Deposit row (filtered out)';
+      rejectReason = 'Ambiguous row: both debit and credit columns contain positive amounts';
     } else if (!rawDesc) {
       isValid = false;
       rejectReason = 'Missing description';
     } else if (interpretedAmount === null || interpretedAmount <= 0) {
       isValid = false;
       rejectReason = `Invalid amount "${rawAmountStr}"`;
-    } else if (!parsedDate || isNaN(Date.parse(parsedDate))) {
+    } else if (!parsedDate) {
       isValid = false;
       rejectReason = `Invalid date "${rawDate}" under format ${config.dateFormat}`;
     }
 
-    const dedupKey = `${parsedDate}_${rawDesc}_${interpretedAmount}`;
+    const dedupKey = `${parsedDate}_${rawDesc}_${interpretedAmount}_${direction}`;
     if (isValid) {
       if (seenKeys.has(dedupKey)) {
         duplicateRowCount++;
@@ -1241,10 +1414,10 @@ export function previewCsvMapping(
           raw_description: rawDesc,
           amount: String(interpretedAmount),
           currency: 'INR',
-          direction: 'DEBIT',
-          account_alias: config.defaultAccountAlias,
-          payment_rail: config.defaultRail,
-          external_reference: rawRef || undefined,
+          direction,
+          account_alias: config.defaultAccountAlias || 'PRIMARY-ACCOUNT',
+          payment_rail: config.defaultRail || 'UNKNOWN',
+          external_reference: rawRef || `MAP-${rowNum}`,
         }
       : null;
 
@@ -1283,13 +1456,155 @@ export function previewCsvMapping(
     suggestedMappings: config,
     detectedMapping: config,
     previewRows,
-    totalRows: dataLines.length,
-    totalRowsFound: dataLines.length,
+    totalRows: dataRows.length,
+    totalRowsFound: dataRows.length,
     validRowCount,
     validRowsCount: validRowCount,
     rejectedRowCount,
     duplicateRowCount,
     unmappedHeaders,
+    validationErrors,
+  };
+}
+
+export function parseAllMappedCsvRows(
+  csvContent: string,
+  config: CsvMappingConfig,
+  includeCredits: boolean = true
+): {
+  validRows: RawCsvRow[];
+  totalRows: number;
+  validCount: number;
+  rejectedCount: number;
+  duplicateCount: number;
+  validationErrors: { row: number; reason: string }[];
+} {
+  const allParsedRows = parseCsvRowsRFC4180(csvContent);
+  if (allParsedRows.length < 2) {
+    return {
+      validRows: [],
+      totalRows: 0,
+      validCount: 0,
+      rejectedCount: 0,
+      duplicateCount: 0,
+      validationErrors: [{ row: 0, reason: 'CSV has no data rows' }],
+    };
+  }
+
+  const headers = allParsedRows[0];
+  const dateIdx = headers.indexOf(config.dateColumn);
+  const descIdx = headers.indexOf(config.descriptionColumn);
+  const debitIdx = config.debitAmountColumn || config.debitColumn ? headers.indexOf(config.debitAmountColumn || config.debitColumn!) : -1;
+  const creditIdx = config.creditAmountColumn || config.creditColumn ? headers.indexOf(config.creditAmountColumn || config.creditColumn!) : -1;
+  const signedIdx = config.singleAmountColumn || config.signedAmountColumn ? headers.indexOf(config.singleAmountColumn || config.signedAmountColumn!) : -1;
+  const refIdx = config.referenceColumn ? headers.indexOf(config.referenceColumn) : -1;
+  const acctIdx = config.accountColumn ? headers.indexOf(config.accountColumn) : -1;
+  const currIdx = config.currencyColumn ? headers.indexOf(config.currencyColumn) : -1;
+
+  const isSeparate = config.amountMode === 'SEPARATE_DEBIT_CREDIT' || config.amountMode === 'SEPARATE_COLUMNS';
+  const dataRows = allParsedRows.slice(1);
+  const validRows: RawCsvRow[] = [];
+  const validationErrors: { row: number; reason: string }[] = [];
+  const seenDedupKeys = new Set<string>();
+  let duplicateCount = 0;
+  let rejectedCount = 0;
+
+  dataRows.forEach((cells, idx) => {
+    const rowNum = idx + 1;
+    const rawDate = dateIdx >= 0 ? cells[dateIdx] || '' : '';
+    const rawDesc = descIdx >= 0 ? cells[descIdx] || '' : '';
+    const rawRef = refIdx >= 0 ? cells[refIdx] || '' : '';
+    const acctAlias = (acctIdx >= 0 && cells[acctIdx]) ? cells[acctIdx] : config.defaultAccountAlias || 'PRIMARY-ACCOUNT';
+    const currency = (currIdx >= 0 && cells[currIdx]) ? cells[currIdx] : 'INR';
+
+    let amount: number | null = null;
+    let direction: 'DEBIT' | 'CREDIT' = 'DEBIT';
+
+    if (isSeparate) {
+      const drStr = debitIdx >= 0 ? cells[debitIdx] || '' : '';
+      const crStr = creditIdx >= 0 ? cells[creditIdx] || '' : '';
+      const drAmt = parseStrictAmount(drStr);
+      const crAmt = parseStrictAmount(crStr);
+
+      if (drAmt !== null && drAmt > 0 && crAmt !== null && crAmt > 0) {
+        rejectedCount++;
+        validationErrors.push({ row: rowNum, reason: 'Ambiguous row: both debit and credit columns contain positive amounts' });
+        return;
+      } else if (drAmt !== null && drAmt > 0) {
+        amount = drAmt;
+        direction = 'DEBIT';
+      } else if (crAmt !== null && crAmt > 0) {
+        amount = crAmt;
+        direction = 'CREDIT';
+      }
+    } else {
+      const str = signedIdx >= 0 ? cells[signedIdx] || '' : '';
+      const parsedSigned = parseStrictSignedAmount(str);
+      if (parsedSigned !== null && parsedSigned.amount > 0) {
+        amount = parsedSigned.amount;
+        direction = parsedSigned.isNegative ? 'CREDIT' : 'DEBIT';
+      }
+    }
+
+    if (amount === null || amount <= 0) {
+      rejectedCount++;
+      validationErrors.push({ row: rowNum, reason: `Invalid amount` });
+      return;
+    }
+
+    if (!includeCredits && direction === 'CREDIT') {
+      // Excluded
+      return;
+    }
+
+    const parsedDate = parseCsvDate(rawDate, config.dateFormat);
+    if (!parsedDate) {
+      rejectedCount++;
+      validationErrors.push({ row: rowNum, reason: `Invalid date "${rawDate}"` });
+      return;
+    }
+
+    if (!rawDesc) {
+      rejectedCount++;
+      validationErrors.push({ row: rowNum, reason: 'Missing description' });
+      return;
+    }
+
+    const dedupKey = `${parsedDate}_${rawDesc}_${amount}_${direction}`;
+    if (seenDedupKeys.has(dedupKey)) {
+      duplicateCount++;
+      return;
+    }
+    seenDedupKeys.add(dedupKey);
+
+    // Deterministic ID generation based on row content
+    let hash = 0;
+    for (let c = 0; c < dedupKey.length; c++) {
+      hash = (hash << 5) - hash + dedupKey.charCodeAt(c);
+      hash |= 0;
+    }
+    const cleanHash = Math.abs(hash).toString(36);
+    const txnId = `TXN-MAP-${cleanHash}-${rowNum}`;
+
+    validRows.push({
+      transaction_id: txnId,
+      transaction_date: parsedDate,
+      raw_description: rawDesc,
+      amount: String(amount),
+      currency,
+      direction,
+      payment_rail: (config.defaultRail as any) || 'UNKNOWN',
+      account_alias: acctAlias,
+      external_reference: rawRef || `MAP-${cleanHash}`,
+    });
+  });
+
+  return {
+    validRows,
+    totalRows: dataRows.length,
+    validCount: validRows.length,
+    rejectedCount,
+    duplicateCount,
     validationErrors,
   };
 }

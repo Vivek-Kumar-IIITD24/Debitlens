@@ -109,6 +109,7 @@ type CommitmentFilter =
 export default function App() {
   const [activeSection, setActiveSection] = useState<ActiveSection>('overview');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
   const [language, setLanguage] = useState<LanguageCode>('hi-IN');
   const [supportedLanguages, setSupportedLanguages] = useState<SupportedLanguage[]>([
     {
@@ -439,7 +440,7 @@ export default function App() {
             DebitLens
           </a>
           <span className="hidden sm:inline-block text-[11px] font-medium text-teal-800 bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-200">
-            Find it. Understand it. Stop it.
+            Find it. Understand it. Reconcile it. Verify it.
           </span>
         </div>
 
@@ -508,8 +509,21 @@ export default function App() {
           </button>
         </nav>
 
-        {/* Right: Settings + Import Action */}
+        {/* Right: Demo Mode Toggle + Settings + Import Action */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => setIsDemoMode((prev) => !prev)}
+            title="Toggle Demonstration Controls & Focus Scenarios"
+            className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors cursor-pointer min-h-[38px] flex items-center gap-1.5 ${
+              isDemoMode
+                ? 'bg-amber-100 text-amber-900 border-amber-300 shadow-2xs'
+                : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full ${isDemoMode ? 'bg-amber-600' : 'bg-slate-400'}`} />
+            <span>Demo Mode: {isDemoMode ? 'ON' : 'OFF'}</span>
+          </button>
           <button
             type="button"
             onClick={() => setActiveSection('settings')}
@@ -548,7 +562,7 @@ export default function App() {
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <div>
                   <div className="text-base font-bold text-slate-900">DebitLens</div>
-                  <div className="text-[11px] text-teal-800 font-medium">Find it. Understand it. Stop it.</div>
+                  <div className="text-[11px] text-teal-800 font-medium">Find it. Understand it. Reconcile it. Verify it.</div>
                 </div>
                 <button
                   type="button"
@@ -613,7 +627,7 @@ export default function App() {
           <div className="space-y-5">
             <div className="px-2">
               <div className="text-xs font-semibold text-teal-800">
-                Find it. Understand it. Stop it.
+                Find it. Understand it. Reconcile it. Verify it.
               </div>
               <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
                 Financial Commitment Intelligence & Three-Way Reconciliation Platform
@@ -665,50 +679,57 @@ export default function App() {
         <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 pb-24 lg:pb-8 max-w-[1440px] mx-auto w-full space-y-6">
           {/* Workspace Context Toolbar with Persistent Bhasha Language Selector & Focus Scenarios */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
-            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-              <span className="font-semibold text-slate-900">Focus Scenarios:</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedCommitmentId('CMT-STREAMBOX');
-                  setActiveSection('graph');
-                }}
-                className="px-2.5 py-1 font-medium text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-md transition-colors whitespace-nowrap cursor-pointer"
-              >
-                Financial Relationship Map
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedTransactionId('TXN-1003');
-                  setLanguage('hi-IN');
-                  setActiveSection('bhasha');
-                }}
-                className="px-2.5 py-1 font-medium text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-md transition-colors whitespace-nowrap cursor-pointer"
-              >
-                DebitLens Bhasha (Hindi / Tamil)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedCommitmentId('CMT-STREAMBOX');
-                  setActiveSection('reconciliation');
-                }}
-                className="px-2.5 py-1 font-medium text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md transition-colors whitespace-nowrap cursor-pointer"
-              >
-                Three-Way Reconciliation
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedCommitmentId('CMT-DESIGNVAULT');
-                  setActiveSection('cancellation');
-                }}
-                className="px-2.5 py-1 font-medium text-rose-900 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-md transition-colors whitespace-nowrap cursor-pointer"
-              >
-                Post-Cancellation Review (DesignVault)
-              </button>
-            </div>
+            {isDemoMode ? (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                <span className="font-semibold text-slate-900">Focus Scenarios:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCommitmentId('CMT-STREAMBOX');
+                    setActiveSection('graph');
+                  }}
+                  className="px-2.5 py-1 font-medium text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-md transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  Financial Relationship Map
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedTransactionId('TXN-1003');
+                    setLanguage('hi-IN');
+                    setActiveSection('bhasha');
+                  }}
+                  className="px-2.5 py-1 font-medium text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-md transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  DebitLens Bhasha (Hindi / Tamil)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCommitmentId('CMT-STREAMBOX');
+                    setActiveSection('reconciliation');
+                  }}
+                  className="px-2.5 py-1 font-medium text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  Three-Way Reconciliation
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCommitmentId('CMT-DESIGNVAULT');
+                    setActiveSection('cancellation');
+                  }}
+                  className="px-2.5 py-1 font-medium text-rose-900 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-md transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  Post-Cancellation Review (DesignVault)
+                </button>
+              </div>
+            ) : (
+              <div className="text-xs text-slate-500 font-medium flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span>Active Consumer Ledger · Track, reconcile, and verify financial recurring commitments</span>
+              </div>
+            )}
 
             <LanguageSelector
               selectedLanguage={language}
@@ -720,8 +741,8 @@ export default function App() {
           {/* SECTION 1: OVERVIEW DASHBOARD */}
           {activeSection === 'overview' && summary && (
             <div className="space-y-6">
-              {/* Relationship & Language Intelligence Summary Strip */}
-              {integrations && (
+              {/* Relationship & Language Intelligence Summary Strip (Shown in Demo Mode) */}
+              {isDemoMode && integrations && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div className="p-4 rounded-xl bg-white border border-slate-200 flex items-start justify-between gap-4 shadow-xs">
                     <div className="space-y-1">
@@ -1765,7 +1786,7 @@ export default function App() {
         <div className="flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 text-teal-700 shrink-0" />
           <span>
-            DebitLens — Evidence-Backed Financial Commitment Intelligence & Three-Way Reconciliation · Find it. Understand it. Stop it.
+            DebitLens — Evidence-Backed Financial Commitment Intelligence & Three-Way Reconciliation · Find it. Understand it. Reconcile it. Verify it.
           </span>
         </div>
         <div className="flex items-center gap-3 text-[11px] font-mono">

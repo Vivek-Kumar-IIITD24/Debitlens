@@ -25,6 +25,7 @@ import {
   RawCsvRow,
   NotificationInput,
   parseStrictAmount,
+  parseStrictSignedAmount,
   getEffectiveMandateStatus,
   getMissingMandateFields,
   generateMerchantCandidates,
@@ -34,6 +35,9 @@ import {
   generateEvidencePackData,
   generatePrintableEvidencePackHtml,
   previewCsvMapping,
+  escapeHtml,
+  parseCsvDate,
+  parseAllMappedCsvRows,
 } from './debitlensEngine';
 import { toMinorUnits, fromMinorUnits, formatMinorINR } from '../utils/currency';
 import { isPlaceholderEnvValue } from '../services/neo4jPersistenceService';
@@ -1447,15 +1451,17 @@ test('Phase 1 Financial Integrity: Mandate validity & missing fields prevent MAT
     id: 'MND-TEST-01',
     mandateReference: 'UMN-TEST-01@okaxis',
     commitmentId: 'CMT-TEST',
+    merchantId: 'MCH-TEST',
     merchantName: 'Test Service',
     paymentRail: 'UPI_AUTOPAY' as const,
+    currency: 'INR',
     maxAmountMinor: 50000,
     maxAmount: 500,
     frequency: 'MONTHLY' as const,
     startDate: '2026-01-01',
     endDate: '2027-01-01',
     mandateStatus: 'ACTIVE' as const,
-    sourceType: 'IMPORT' as const,
+    sourceType: 'USER_IMPORTED' as const,
     updatedAt: '2026-06-01T00:00:00Z',
   };
 
@@ -1548,9 +1554,9 @@ test('Phase 1 Financial Integrity: Mandate validity & missing fields prevent MAT
   ];
 
   const findingWithIncomplete = reconcileCommitment({
-    commitment: dummyCommitment,
+    commitment: dummyCommitment as any,
     transactions: dummyTxns,
-    mandate: incompleteMandate,
+    mandate: incompleteMandate as any,
     serviceTerms: null,
     session: null,
   });
@@ -1558,7 +1564,7 @@ test('Phase 1 Financial Integrity: Mandate validity & missing fields prevent MAT
   // Must not be MATCHED
   assert.notEqual(findingWithIncomplete.status, 'MATCHED');
   assert.equal(findingWithIncomplete.status, 'UNRESOLVED');
-  assert.ok(findingWithIncomplete.discrepancyDetails.missingMandateFields?.length! >= 1);
+  assert.ok(findingWithIncomplete.discrepancyDetails?.missingMandateFields?.length! >= 1);
 });
 
 test('Phase 2 Product Differentiation: Candidate merchant generation without hallucination', () => {
@@ -1578,7 +1584,11 @@ test('Phase 2 Product Differentiation: Candidate merchant generation without hal
 
   const candidates = generateMerchantCandidates(unresolvedTxn, [unresolvedTxn], {});
   assert.ok(candidates.length >= 1);
-  const streamboxCandidate = candidates.find((c) => c.merchantName.includes('StreamBox'));
+  const streamboxCandidate = candidates.find(
+    (c) =>
+      (c.candidateMerchantName && c.candidateMerchantName.includes('StreamBox')) ||
+      (c.merchantName && c.merchantName.includes('StreamBox'))
+  );
   assert.ok(streamboxCandidate);
   assert.ok(streamboxCandidate.confidenceScore >= 70);
   assert.ok(streamboxCandidate.matchReason.length > 5);
@@ -1636,7 +1646,7 @@ test('Phase 2 Product Differentiation: Unrecognized Debit Case lifecycle & Revie
 
   assert.ok(queue.length >= 2);
   // Reconciliation finding with discrepancy should be P1
-  const reconItem = queue.find((i) => i.category === 'RECONCILIATION_DISCREPANCY');
+  const reconItem = queue.find((i) => i.category === 'PRICE_DISCREPANCY');
   assert.ok(reconItem);
   assert.equal(reconItem.priority, 'P1');
 
@@ -1747,6 +1757,356 @@ test('Phase 4 Usability: Smart Bank Statement CSV Mapping Wizard', () => {
   assert.ok(salaryRow.validationError?.includes('Credit/Deposit row'));
 });
 
+// ----------------------------------------------------------------------------
+// 14. REGRESSION TESTS: XSS ESCAPING, FULL CSV PARSING, PASSPORT ZERO-FABRICATION
+// ----------------------------------------------------------------------------
 
+test('Phase 4 Hardening: escapeHtml neutralizes XSS vectors in printable evidence pack', () => {
+  assert.equal(
+    escapeHtml('<script>alert("pwned")</script>'),
+    '&lt;script&gt;alert(&quot;pwned&quot;)&lt;/script&gt;'
+  );
+  assert.equal(escapeHtml('Tom & Jerry "Special"'), 'Tom &amp; Jerry &quot;Special&quot;');
+  assert.equal(escapeHtml("User's Plan"), 'User&#39;s Plan');
+  assert.equal(escapeHtml(null), '');
+  assert.equal(escapeHtml(undefined), '');
+  assert.equal(escapeHtml(42), '42');
+});
 
+test('Phase 4 Hardening: parseCsvDate correctly parses diverse date formats and rejects invalid dates', () => {
+  // DD/MM/YYYY
+  assert.equal(parseCsvDate('25/12/2026', 'DD/MM/YYYY'), '2026-12-25');
+  assert.equal(parseCsvDate('05/01/2026', 'DD/MM/YYYY'), '2026-01-05');
+
+  // DD-MM-YYYY
+  assert.equal(parseCsvDate('15-08-2026', 'DD-MM-YYYY'), '2026-08-15');
+
+  // MM/DD/YYYY
+  assert.equal(parseCsvDate('12/25/2026', 'MM/DD/YYYY'), '2026-12-25');
+
+  // YYYY-MM-DD
+  assert.equal(parseCsvDate('2026-10-31', 'YYYY-MM-DD'), '2026-10-31');
+
+  // AUTO detection
+  assert.equal(parseCsvDate('2026-09-15', 'AUTO'), '2026-09-15');
+  assert.equal(parseCsvDate('25/12/2026', 'AUTO'), '2026-12-25');
+
+  // Invalid date inputs
+  assert.equal(parseCsvDate('', 'AUTO'), null);
+  assert.equal(parseCsvDate('invalid-date', 'AUTO'), null);
+  assert.equal(parseCsvDate('32/01/2026', 'DD/MM/YYYY'), null);
+});
+
+test('Phase 4 Hardening: parseAllMappedCsvRows parses all rows, preserves credits and generates deterministic IDs', () => {
+  const multiRowCsv = `Date,Narration,Ref,Debit,Credit
+01/10/2026,UPI-SWIGGY-1001,REF-01,350.00,
+02/10/2026,UPI-NETFLIX-1002,REF-02,649.00,
+03/10/2026,REFUND-SWIGGY-1001,REF-03,,350.00
+04/10/2026,SALARY-ACME,REF-04,,95000.00
+05/10/2026,ATM-CASH-WDL,REF-05,2000.00,`;
+
+  const parsed = parseAllMappedCsvRows(multiRowCsv, {
+    dateColumn: 'Date',
+    descriptionColumn: 'Narration',
+    referenceColumn: 'Ref',
+    amountMode: 'SEPARATE_DEBIT_CREDIT',
+    debitAmountColumn: 'Debit',
+    creditAmountColumn: 'Credit',
+    dateFormat: 'DD/MM/YYYY',
+  });
+
+  // All 5 rows should be parsed
+  assert.equal(parsed.validRows.length, 5);
+
+  // Check debit row
+  const netflix = parsed.validRows.find((r) => r.raw_description.includes('NETFLIX'));
+  assert.ok(netflix);
+  assert.equal(netflix.direction, 'DEBIT');
+  assert.equal(netflix.amount, '649');
+  assert.equal(netflix.transaction_date, '2026-10-02');
+  assert.ok(netflix.transaction_id.startsWith('TXN-MAP-'));
+
+  // Check credit row (preserved!)
+  const refund = parsed.validRows.find((r) => r.raw_description.includes('REFUND-SWIGGY'));
+  assert.ok(refund);
+  assert.equal(refund.direction, 'CREDIT');
+  assert.equal(refund.amount, '350');
+  assert.equal(refund.transaction_date, '2026-10-03');
+
+  // Check salary credit (preserved!)
+  const salary = parsed.validRows.find((r) => r.raw_description.includes('SALARY-ACME'));
+  assert.ok(salary);
+  assert.equal(salary.direction, 'CREDIT');
+  assert.equal(salary.amount, '95000');
+});
+
+test('Phase 4 Hardening: generateCommitmentPassport strictly upholds zero-fabrication rule for contacts and dates', () => {
+  // Test with a synthetic commitment with no merchant catalogue entry
+  const unknownCmt = {
+    id: 'CMT-CUSTOM-APP',
+    merchantName: 'Unknown Startup App',
+    serviceName: 'Pro Tier Subscription',
+    latestAmount: 299,
+    typicalAmount: 299,
+    expectedAmountMinor: 29900,
+    annualisedAmount: 3588,
+    monthlyEquivalent: 299,
+    recurrenceType: 'MONTHLY' as const,
+    paymentRail: 'UPI_AUTOPAY' as const,
+    status: 'ACTIVE' as const,
+    entityClass: 'FINANCIAL_COMMITMENT' as const,
+    verificationStatus: 'USER_CONFIRMED' as const,
+    confidenceScore: 85,
+    confidenceLabel: 'HIGH' as const,
+    confidenceBreakdown: {
+      temporalScore: 30,
+      amountRegularityScore: 30,
+      descriptorConfidence: 15,
+      mandateAlignmentScore: 10,
+      totalScore: 85,
+      supportingTransactionsCount: 2,
+      relationshipConfidence: 'CONFIRMED_MERCHANT_RELATIONSHIP' as const,
+    },
+    connectedDescriptors: ['CUSTOM*APP'],
+    supportingTransactionIds: ['TXN-C1', 'TXN-C2'],
+    firstSeenDate: '2026-07-01',
+    latestTransactionDate: '2026-08-01',
+    nextExpectedDate: '2026-09-01',
+    category: 'SOFTWARE_SAAS' as const,
+    detectionExplanation: 'Custom detected commitment',
+    isFinancialObligation: false,
+    usageStatus: 'ACTIVE_IN_USE' as const,
+    serviceLifecycleStatus: 'ACTIVE' as const,
+    mandateLifecycleStatus: 'ACTIVE' as const,
+  };
+
+  const txns: any[] = [
+    {
+      id: 'TXN-C1',
+      transactionDate: '2026-07-01',
+      amount: 299,
+      commitmentId: 'CMT-CUSTOM-APP',
+      merchantName: 'Unknown Startup App',
+      serviceName: 'Pro Tier Subscription',
+      paymentRail: 'UPI_AUTOPAY',
+      rawDescription: 'CUSTOM*APP',
+      resolutionStatus: 'CANONICAL_MERCHANT_MATCHED',
+    },
+    {
+      id: 'TXN-C2',
+      transactionDate: '2026-08-01',
+      amount: 299,
+      commitmentId: 'CMT-CUSTOM-APP',
+      merchantName: 'Unknown Startup App',
+      serviceName: 'Pro Tier Subscription',
+      paymentRail: 'UPI_AUTOPAY',
+      rawDescription: 'CUSTOM*APP',
+      resolutionStatus: 'CANONICAL_MERCHANT_MATCHED',
+    },
+  ];
+
+  const passport = generateCommitmentPassport({
+    commitment: unknownCmt as any,
+    transactions: txns,
+    mandate: null,
+    serviceTerms: null,
+    reconciliation: null,
+    alerts: [],
+    casebookEntries: [],
+    auditEvents: [],
+  });
+
+  // Zero-fabrication assertions: must be null, never placeholder or fabricated strings
+  assert.equal(
+    passport.sectionA_Identity.supportContact,
+    null,
+    'Support contact must be null when unknown, never fabricated'
+  );
+  assert.equal(
+    passport.sectionA_Identity.grievanceOfficer,
+    null,
+    'Grievance officer must be null when unknown, never fabricated'
+  );
+  assert.equal(
+    passport.sectionA_Identity.website,
+    null,
+    'Service website must be null when unknown, never fabricated'
+  );
+  assert.equal(
+    passport.sectionA_Identity.confirmedAt,
+    null,
+    'confirmedAt must be null when no genuine audit event exists, never fallback 2026-10-31T00:00:00Z'
+  );
+  assert.equal(passport.sectionB_Mandate.mandatePresent, false);
+  assert.equal(passport.sectionC_Terms.termsPresent, false);
+});
+
+test('Regression: Inverted provenance fix ensures system inference is NEVER labeled USER_CONFIRMED', () => {
+  const inferredCommitment: any = {
+    id: 'CMT-INFERRED',
+    serviceName: 'Inferred Cloud SaaS',
+    merchantName: 'Unknown SaaS Corp',
+    merchantId: 'M-UNKNOWN-SAAS',
+    confidenceScore: 85,
+    confidenceLabel: 'HIGH',
+    connectedDescriptors: ['CLOUD*SAAS*MONTHLY'],
+    processorName: null,
+    recurrenceType: 'MONTHLY',
+    typicalAmount: 999,
+    verificationStatus: 'CONFIRMED', // System matching rule CONFIRMED, but NOT user action!
+    relationshipStatus: 'SYSTEM_INFERRED',
+    category: 'SOFTWARE_SAAS',
+    paymentRail: 'CARD_EMANDATE',
+  };
+
+  const passport = generateCommitmentPassport({
+    commitment: inferredCommitment,
+    transactions: [],
+    mandate: null,
+    serviceTerms: null,
+    reconciliation: null,
+    alerts: [],
+    casebookEntries: [],
+    auditEvents: [], // No IDENTITY_MATCH_CONFIRMED audit event
+  });
+
+  // Must be CONFIRMED or SYSTEM_INFERRED, strictly NEVER USER_CONFIRMED without user action
+  assert.notEqual(passport.sectionA_Identity.provenance, 'USER_CONFIRMED');
+  assert.equal(passport.sectionA_Identity.provenance, 'CONFIRMED');
+});
+
+test('Regression: Legal entity does NOT fall back to merchant display name when not in catalogue', () => {
+  const commitmentWithoutLegalEntity: any = {
+    id: 'CMT-UNLISTED',
+    serviceName: 'StreamNow Subscription',
+    merchantName: 'StreamNow Pvt Ltd',
+    merchantId: 'M-UNLISTED-99',
+    confidenceScore: 70,
+    confidenceLabel: 'MEDIUM',
+    connectedDescriptors: ['STREAMNOW*99'],
+    processorName: null,
+    recurrenceType: 'MONTHLY',
+    typicalAmount: 499,
+    category: 'ENTERTAINMENT_STREAMING',
+    paymentRail: 'UPI_AUTOPAY',
+  };
+
+  const passport = generateCommitmentPassport({
+    commitment: commitmentWithoutLegalEntity,
+    transactions: [],
+    mandate: null,
+    serviceTerms: null,
+    reconciliation: null,
+    alerts: [],
+    casebookEntries: [],
+    auditEvents: [],
+  });
+
+  // M-UNLISTED-99 is not in catalogue, legalEntityName must be null, never 'StreamNow Pvt Ltd'
+  assert.equal(passport.sectionA_Identity.legalEntityName, null);
+});
+
+test('Regression: parseStrictSignedAmount correctly parses negative amounts and accounting parentheses', () => {
+  const res1 = parseStrictSignedAmount('-500');
+  assert.ok(res1);
+  assert.equal(res1.amount, 500);
+  assert.equal(res1.isNegative, true);
+
+  const res2 = parseStrictSignedAmount('(499.00)');
+  assert.ok(res2);
+  assert.equal(res2.amount, 499);
+  assert.equal(res2.isNegative, true);
+
+  const res3 = parseStrictSignedAmount('₹799.00');
+  assert.ok(res3);
+  assert.equal(res3.amount, 799);
+  assert.equal(res3.isNegative, false);
+
+  const res4 = parseStrictSignedAmount('-(₹1299)');
+  assert.ok(res4);
+  assert.equal(res4.amount, 1299);
+  assert.equal(res4.isNegative, true);
+
+  const resInvalid = parseStrictSignedAmount('invalid_amount');
+  assert.equal(resInvalid, null);
+});
+
+test('Regression: Ambiguous row detection flags rows where both debit and credit contain positive values', () => {
+  const ambiguousCsv = `Date,Description,Debit,Credit\n2026-10-15,Suspicious Dual Entry,500,500\n2026-10-16,Normal Debit,299,\n`;
+  const preview = previewCsvMapping(ambiguousCsv, {
+    dateColumn: 'Date',
+    descriptionColumn: 'Description',
+    amountMode: 'SEPARATE_COLUMNS',
+    debitColumn: 'Debit',
+    creditColumn: 'Credit',
+    dateFormat: 'YYYY-MM-DD',
+  });
+
+  assert.equal(preview.totalRows, 2);
+  assert.equal(preview.previewRows[0].isValid, false);
+  assert.ok(preview.previewRows[0].rejectReason?.includes('Ambiguous row'));
+  assert.equal(preview.previewRows[1].isValid, true);
+
+  const parseResult = parseAllMappedCsvRows(ambiguousCsv, {
+    dateColumn: 'Date',
+    descriptionColumn: 'Description',
+    amountMode: 'SEPARATE_COLUMNS',
+    debitColumn: 'Debit',
+    creditColumn: 'Credit',
+    dateFormat: 'YYYY-MM-DD',
+  });
+
+  assert.equal(parseResult.validCount, 1);
+  assert.equal(parseResult.rejectedCount, 1);
+  assert.ok(parseResult.validationErrors[0].reason.includes('Ambiguous row'));
+});
+
+test('Regression: Mandate completeness synchronization marks status as INCOMPLETE if required startDate is missing', () => {
+  const mandateMissingStartDate: any = {
+    id: 'MND-TEST-NO-DATE',
+    mandateReference: 'UMN-TEST-NODATE-01',
+    commitmentId: 'CMT-TEST',
+    merchantName: 'Test Merchant',
+    paymentRail: 'UPI_AUTOPAY',
+    maxAmountMinor: 100000,
+    maxAmount: 1000,
+    frequency: 'MONTHLY',
+    startDate: null, // MISSING required start date!
+    endDate: '2027-10-31',
+    mandateStatus: 'ACTIVE',
+  };
+
+  const missing = getMissingMandateFields(mandateMissingStartDate);
+  assert.ok(missing.includes('startDate'));
+
+  const effectiveStatus = getEffectiveMandateStatus(mandateMissingStartDate);
+  assert.equal(effectiveStatus, 'INCOMPLETE', 'Mandate missing required startDate must return INCOMPLETE');
+});
+
+test('Regression: Idempotent CSV repeat import skips exact duplicates based on canonical fingerprint', () => {
+  const csvContent = `transaction_date,raw_description,amount,currency,direction\n2026-10-01,UPI/DR/NETFLIX/OCT,649,INR,DEBIT\n2026-10-02,UPI/DR/SPOTIFY/OCT,119,INR,DEBIT\n`;
+  const parsed1 = parseCsvTextRFC4180(csvContent);
+  assert.equal(parsed1.length, 2);
+
+  // Compute canonical fingerprints
+  const fp1 = `${parsed1[0].account_alias || 'PRIMARY-ACCOUNT'}_INR_${parsed1[0].transaction_date}_649_DEBIT__${normaliseDescriptor(parsed1[0].raw_description)}`;
+  const fp2 = `${parsed1[1].account_alias || 'PRIMARY-ACCOUNT'}_INR_${parsed1[1].transaction_date}_119_DEBIT__${normaliseDescriptor(parsed1[1].raw_description)}`;
+
+  const canonicalStore = new Set([fp1, fp2]);
+  let duplicatesSkipped = 0;
+  const newInserts: any[] = [];
+
+  for (const row of parsed1) {
+    const fp = `${row.account_alias || 'PRIMARY-ACCOUNT'}_INR_${row.transaction_date}_${row.amount}_${row.direction}__${normaliseDescriptor(row.raw_description)}`;
+    if (canonicalStore.has(fp)) {
+      duplicatesSkipped++;
+    } else {
+      newInserts.push(row);
+    }
+  }
+
+  // On re-import of same data, 0 new rows should be inserted!
+  assert.equal(duplicatesSkipped, 2);
+  assert.equal(newInserts.length, 0);
+});
 

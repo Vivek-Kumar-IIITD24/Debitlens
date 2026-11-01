@@ -373,23 +373,57 @@ export function resolveTransactionDescriptor(
   };
 }
 
-export function parseStrictAmount(value: unknown): number | null {
+export function parseStrictSignedAmount(value: unknown): { amount: number; isNegative: boolean } | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') {
-    return Number.isNaN(value) || value < 0 ? null : value;
+    if (!Number.isFinite(value)) return null;
+    return { amount: Math.abs(value), isNegative: value < 0 };
   }
   let str = String(value).trim();
   if (!str) return null;
-  // Clean currency symbols and commas e.g. "₹499.00", "Rs. 1,299", "INR 799"
+
+  let isNegative = false;
+
+  // Handle prefix minus or plus
+  if (str.startsWith('-')) {
+    isNegative = true;
+    str = str.slice(1).trim();
+  } else if (str.startsWith('+')) {
+    str = str.slice(1).trim();
+  }
+
+  // Handle accounting parentheses e.g. (499.00) or (₹499.00)
+  if (str.startsWith('(') && str.endsWith(')')) {
+    isNegative = true;
+    str = str.slice(1, -1).trim();
+  }
+
+  // Clean currency symbols e.g. "₹499.00", "Rs. 1,299", "INR 799"
   str = str.replace(/^(?:INR|RS\.?|₹)\s*/i, '').replace(/,/g, '').trim();
-  // Strictly validate integer or decimal number
-  // Rejects loose strings such as '200xyz' or '12.34.56'
+
+  // Handle minus after currency symbol e.g. ₹-499 or after removing parens
+  if (str.startsWith('-')) {
+    isNegative = true;
+    str = str.slice(1).trim();
+  } else if (str.startsWith('(') && str.endsWith(')')) {
+    isNegative = true;
+    str = str.slice(1, -1).trim();
+  }
+
   if (!/^\d+(?:\.\d+)?$/.test(str)) {
     return null;
   }
   const num = Number(str);
-  return Number.isNaN(num) || num < 0 ? null : num;
+  if (Number.isNaN(num)) return null;
+  return { amount: num, isNegative };
 }
+
+export function parseStrictAmount(value: unknown): number | null {
+  const parsed = parseStrictSignedAmount(value);
+  if (!parsed || parsed.isNegative) return null;
+  return parsed.amount;
+}
+
 
 export function parseAndNormaliseTransactions(
   rows: RawCsvRow[],
@@ -734,7 +768,7 @@ export function detectCommitmentsAndAlerts(
       (n) =>
         (n.relatedCommitmentId === commitmentId ||
           (n.merchantHint && n.merchantHint.toLowerCase() === merchant.canonicalName.toLowerCase())) &&
-        Boolean(n.eventDate && n.expectedAmount > 0)
+        Boolean(n.eventDate && n.expectedAmount !== null && n.expectedAmount !== undefined && n.expectedAmount > 0)
     );
     const trialNotif = matchingNotifs.find((n) => n.eventType === 'TRIAL_STARTED');
 

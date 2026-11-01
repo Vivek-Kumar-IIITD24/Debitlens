@@ -188,6 +188,7 @@ export interface TransactionRecord {
   commitmentId: string | null;
   isPostCancellationDebit?: boolean;
   isHabitualNonCommitment?: boolean;
+  isPaymentProcessorIsolated?: boolean;
 }
 
 export interface MerchantRecord {
@@ -405,6 +406,7 @@ export interface ReconciliationFindingRecord {
   epistemicCaveat: string;
   evidenceRecordIds: string[];
   evaluatedAt: string;
+  recommendedAction?: string;
   discrepancyDetails?: {
     missingMandateFields?: string[];
     missingTermsFields?: string[];
@@ -863,6 +865,12 @@ export interface MerchantCandidate {
   evidenceSource: string;
   confidenceScore: number;
   confidenceExplanation: string;
+  merchantId?: string;
+  merchantName?: string;
+  serviceName?: string;
+  category?: string;
+  website?: string;
+  isProcessorOnly?: boolean;
 }
 
 export type UnrecognizedDebitCaseStatus =
@@ -896,6 +904,8 @@ export interface UnrecognizedDebitCase {
   status: UnrecognizedDebitCaseStatus;
   userAssessment: 'UNRECOGNIZED' | 'RECOGNIZED' | 'NEEDS_MORE_INFO' | 'UNDER_INVESTIGATION' | null;
   userNotes: string;
+  notes?: string;
+  actionsTaken?: any[];
   evidenceIds: string[];
   recommendedNextAction: string;
   createdAt: string;
@@ -980,9 +990,9 @@ export interface CommitmentPassport {
     merchantId?: string;
     legalEntityName?: string;
     category?: string;
-    supportContact?: string;
-    grievanceOfficer?: string;
-    website?: string;
+    supportContact?: string | null;
+    grievanceOfficer?: string | null;
+    website?: string | null;
     confidenceScore: number;
     confidenceLabel: string;
     connectedDescriptors: string[];
@@ -1034,8 +1044,8 @@ export interface CommitmentPassport {
     recommendedAction?: string;
   };
   sectionF_Cancellation: {
-    serviceLifecycleStatus: string;
-    mandateLifecycleStatus: string;
+    serviceLifecycleStatus?: string;
+    mandateLifecycleStatus?: string;
     bothCancelled?: boolean;
     areBothStopped?: boolean;
     cancellationSummary?: string;
@@ -1061,6 +1071,24 @@ export interface CommitmentPassport {
     overallQualityPercent?: number;
     coverageStatement?: string;
     missingItems?: string[];
+  };
+  recordCoverage?: {
+    percent: number;
+    presentCount: number;
+    totalCount: number;
+    missingItems: string[];
+  };
+  verificationQuality?: {
+    provenance: string;
+    confidenceScore: number;
+    confidenceLabel: string;
+    isUserConfirmed: boolean;
+    confirmedAt?: string | null;
+  };
+  financialReconciliationStatus?: {
+    status: string;
+    isDiscrepancy: boolean;
+    explanation: string;
   };
   // Backwards compatibility sections
   sectionB_FinancialPattern?: any;
@@ -1156,20 +1184,28 @@ export interface EvidencePackData {
   provenanceNotice: string;
 }
 
+export type DateFormatOption =
+  | 'DD/MM/YYYY'
+  | 'DD-MM-YYYY'
+  | 'MM/DD/YYYY'
+  | 'MM-DD-YYYY'
+  | 'YYYY-MM-DD'
+  | 'AUTO';
+
 // ============================================================================
 // PART 8: CSV MAPPING WIZARD TYPES
 // ============================================================================
 export interface CsvMappingConfig {
   dateColumn: string;
   descriptionColumn: string;
-  amountMode: 'SEPARATE_COLUMNS' | 'SINGLE_SIGNED_COLUMN' | 'SEPARATE_DEBIT_CREDIT';
+  amountMode: 'SEPARATE_COLUMNS' | 'SINGLE_SIGNED_COLUMN' | 'SEPARATE_DEBIT_CREDIT' | 'SINGLE_AMOUNT';
   debitColumn?: string;
   creditColumn?: string;
   debitAmountColumn?: string;
   creditAmountColumn?: string;
   singleAmountColumn?: string;
   signedAmountColumn?: string;
-  dateFormat: 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD';
+  dateFormat: DateFormatOption;
   referenceColumn?: string;
   accountColumn?: string;
   currencyColumn?: string;

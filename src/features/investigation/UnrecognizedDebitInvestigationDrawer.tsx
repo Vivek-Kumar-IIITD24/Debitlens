@@ -78,15 +78,17 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
 
   const handleConfirmCandidate = async (candidate: MerchantCandidate) => {
     if (!currentCase) return;
+    const targetId = candidate.merchantId || candidate.candidateMerchantId;
+    if (!targetId) return;
     try {
       setSubmittingAction(true);
       const result = await apiClient.confirmInvestigationMerchant(currentCase.id, {
-        merchantId: candidate.merchantId,
+        merchantId: targetId,
         rawDescription: transaction.rawDescription,
       });
       setCurrentCase(result.case);
       if (onMerchantConfirmed) {
-        onMerchantConfirmed(candidate.merchantId, transaction.rawDescription);
+        onMerchantConfirmed(targetId, transaction.rawDescription);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to confirm merchant');
@@ -118,7 +120,7 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
   };
 
   const visibleCandidates = (currentCase?.candidateMerchants || []).filter(
-    (c) => !dismissedCandidateIds.has(c.merchantId)
+    (c) => !dismissedCandidateIds.has(c.merchantId || c.candidateMerchantId)
   );
 
   return (
@@ -238,12 +240,12 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2 text-xs">
                   <span className="px-2.5 py-1 bg-white/80 rounded border border-indigo-200 text-indigo-900 font-medium">
-                    {transaction.isPaymentProcessorIsolated
+                    {transaction.processorName || (transaction.isPaymentProcessorIsolated
                       ? 'Processor Isolated (Razorpay/PayU/BillDesk)'
-                      : 'Unknown Descriptor Pattern'}
+                      : 'Payment processor not identified from the available transaction details.')}
                   </span>
                   <span className="px-2.5 py-1 bg-white/80 rounded border border-indigo-200 text-indigo-900 font-medium">
-                    Evidence Verified: No Mandate Registered
+                    Evidence Verified: No matching mandate record was found in the records imported into DebitLens.
                   </span>
                 </div>
               </div>
@@ -317,16 +319,22 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
+                        {c.candidateType === 'PROCESSOR_RELATIONSHIP' || (c as any).isProcessorOnly ? (
+                          <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded text-[11px] font-medium border border-slate-200">
+                            Contextual Match
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => handleConfirmCandidate(c)}
+                            disabled={submittingAction}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors disabled:opacity-50"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            Confirm
+                          </button>
+                        )}
                         <button
-                          onClick={() => handleConfirmCandidate(c)}
-                          disabled={submittingAction}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors disabled:opacity-50"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          Confirm
-                        </button>
-                        <button
-                          onClick={() => handleDismissCandidate(c.merchantId)}
+                          onClick={() => handleDismissCandidate(c.merchantId || c.candidateMerchantId)}
                           disabled={submittingAction}
                           className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
                           title="Not this merchant"
@@ -372,8 +380,7 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
                   3
                 </span>
                 <p>
-                  <strong>Zero-Liability Protection:</strong> Under RBI guidelines, if this debit was
-                  unauthorised, notify your bank within 3 calendar days to claim zero financial liability.
+                  <strong>Prompt Bank Notification:</strong> Under RBI customer protection guidelines, notify your issuing bank promptly if this transaction is unauthorised to restrict your financial liability.
                 </p>
               </div>
             </div>
@@ -421,7 +428,7 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
                 Case Activity Log
               </h4>
               <div className="space-y-2 text-xs">
-                {currentCase.actionsTaken.map((act) => (
+                {currentCase.actionsTaken.map((act: any) => (
                   <div key={act.actionId} className="flex items-start gap-2 text-slate-700">
                     <span className="w-1.5 h-1.5 rounded-full bg-slate-400 mt-1.5 shrink-0" />
                     <div>

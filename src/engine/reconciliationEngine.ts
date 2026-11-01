@@ -683,13 +683,16 @@ export function getEffectiveMandateStatus(
   evaluationDate: Date = new Date()
 ): EffectiveMandateStatus {
   if (!mandate) return 'UNKNOWN';
+  const missing = getMissingMandateFields(mandate);
   if (
+    missing.length > 0 ||
+    mandate.isIncomplete ||
+    (mandate.missingFields && mandate.missingFields.length > 0) ||
     mandate.maxAmountMinor === null ||
     mandate.maxAmountMinor === undefined ||
     mandate.maxAmountMinor <= 0 ||
     mandate.frequency === 'UNKNOWN' ||
-    mandate.paymentRail === 'UNKNOWN' ||
-    mandate.isIncomplete
+    mandate.paymentRail === 'UNKNOWN'
   ) {
     return 'INCOMPLETE';
   }

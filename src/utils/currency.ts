@@ -46,13 +46,5 @@ export function formatINR(amount: number | null | undefined): string {
   }).format(amount);
 }
 
-export function formatDateIN(isoDate: string | null | undefined): string {
-  if (!isoDate) return '—';
-  const d = new Date(isoDate + (isoDate.includes('T') ? '' : 'T00:00:00Z'));
-  if (Number.isNaN(d.getTime())) return isoDate;
-  return d.toLocaleDateString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
-}
+export { formatDateIN, formatDateTimeIN, normalizeDateString } from './dateUtils';
+
