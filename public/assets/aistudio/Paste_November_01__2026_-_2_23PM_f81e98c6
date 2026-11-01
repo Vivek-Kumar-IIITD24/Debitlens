@@ -1,0 +1,2203 @@
+# DEBITLENS — MASTER FINAL REFINEMENT & RELEASE PROMPT
+## Complete F2 Codebase Correction, Feature Hardening, Product Polish, Testing and Final Submission
+
+**Project:** DebitLens  
+**Product tagline:** Find it. Understand it. Reconcile it. Verify it.  
+**Objective:** Refine the existing F2 implementation into a complete, stable, professional and demonstrable final prototype with the fewest possible development iterations.
+
+---
+
+# 1. YOUR ROLE AND EXECUTION EXPECTATIONS
+
+Act as a senior full-stack engineer, fintech product architect, application security engineer, QA lead and product designer working together on the existing DebitLens codebase.
+
+Your responsibility is to take the current F2 repository, identify and correct every issue listed in this prompt, preserve all working functionality, complete the required missing implementations, test the complete application, and package one clean final submission.
+
+This is an implementation task, not merely a code review or planning exercise.
+
+**Do not stop after producing an audit, checklist, architecture proposal, implementation plan or sample code. Actually modify the existing project files, implement the fixes, execute the available tests and build, and produce the final corrected project package.**
+
+The objective is to complete the entire refinement scope in one coordinated development pass. Avoid creating F2.1, F2.2, F2.3 and further intermediate versions just to address issues that are already identifiable.
+
+## Mandatory execution rules
+
+1. Start by inspecting the actual existing repository and its current implementation. Do not assume that every issue in this prompt is still present. Verify each one against the current source.
+2. Preserve everything that is already working. Do not replace functioning modules just to make implementation easier.
+3. Do not rebuild DebitLens from scratch.
+4. Do not migrate the project to a different backend or database architecture.
+5. Do not introduce unnecessary dependencies, frameworks, services or infrastructure.
+6. Implement interconnected fixes together so that the system has consistent data models, APIs, UI states and tests.
+7. Do not create fake integrations, hardcoded success states, fabricated merchant details, fabricated financial data or placeholder verification.
+8. Do not silently downgrade or remove any feature when fixing a problem.
+9. Keep all user-facing financial conclusions deterministic, evidence-based and traceable.
+10. Do not allow an AI-generated explanation to become the basis of a financial decision, merchant confirmation, mandate status or liability determination.
+11. If an external service cannot be tested because credentials or network access are unavailable, report that limitation clearly. Do not claim it was verified.
+12. Maintain a final implementation checklist and mark each item complete only after verifying it.
+13. When an existing implementation differs from the architecture described below, preserve the repository's established patterns unless a specific correction is necessary.
+14. Do not leave known P0 or P1 findings unresolved and call the application final.
+
+**Important:** The final deliverable should be one consistent, complete prototype release, not an accumulation of disconnected fixes.
+
+---
+
+# 2. EXISTING ARCHITECTURE — PRESERVE IT
+
+The existing DebitLens implementation is built around:
+
+- React 19
+- TypeScript
+- Vite
+- TypeScript/Express backend in `server.ts`
+- JSON-based canonical prototype persistence
+- Neo4j AuraDB graph projection
+- Sarvam AI integrations
+- Existing deterministic reconciliation, transaction and commitment engines
+- Existing frontend feature components and API structure
+
+Maintain this architecture.
+
+## Architecture principles
+
+### Canonical data
+The JSON persistent store remains the canonical source of truth for the prototype.
+
+All financial records, commitments, transaction records, investigation cases, user confirmations, evidence and audit information must be saved through a reliable persistence path.
+
+### Neo4j
+Neo4j remains a real graph-based relationship and intelligence layer.
+
+It must not become the sole canonical store of financial records.
+
+Graph synchronization should remain a separately tracked operation. A graph sync failure must not cause the application to pretend that canonical persistence failed, nor should successful canonical persistence be represented as a fully synchronized graph when it is not.
+
+### Sarvam AI
+Preserve the actual Sarvam integrations and existing supported use cases.
+
+AI may assist with language processing, translation, explanation, extraction and user-facing understanding, but must not independently:
+
+- Confirm a merchant.
+- Declare a mandate valid.
+- Declare an actual debit authorized.
+- Determine legal liability.
+- Mark a commitment as verified.
+- Claim that a cancellation was successful.
+- Reconcile a financial transaction without deterministic supporting records.
+
+### Deterministic financial engine
+Financial calculations, amount matching, recurrence detection, mandate matching, transaction classification, evidence status, confidence classifications and reconciliation outcomes must remain deterministic.
+
+AI output must be clearly distinguishable from verified financial information.
+
+---
+
+# 3. PRODUCT IDENTITY AND BRANDING — FINALISE CONSISTENTLY
+
+The product must appear as an independent, professional fintech application named:
+
+**DebitLens**
+
+Use this tagline consistently:
+
+**Find it. Understand it. Reconcile it. Verify it.**
+
+Remove the old competing tagline:
+
+"Find it. Understand it. Stop it."
+
+## Branding restrictions
+
+Do not display the following in normal consumer-facing product screens:
+
+- HackFront
+- HackFront India
+- T4.1
+- Hackathon
+- Partner track
+- Prize information
+- Internal judging references
+- Internal development-team information
+- Partner promotional banners
+- Internal integration showcase cards
+
+Do not place labels such as:
+
+"Neo4j + Sarvam AI + HackFront Fintech T4.1"
+
+on the main dashboard or ordinary consumer screens.
+
+Neo4j and Sarvam are actual technologies used in the application, but their technical details belong under:
+
+**Settings → System Information → Technical Integrations**
+
+The integration section may show genuine configuration and connection information, including:
+
+- Integration name
+- Purpose
+- Actual connection state
+- Last successful synchronization or request, where recorded
+- Last failure, where recorded
+- Relevant model or database information, where available
+- Whether the feature is configured, unavailable, degraded or connected
+
+Never display "Live", "Connected" or "Healthy" solely because a static configuration value exists. The status must represent a real health check or a clearly defined last-known state.
+
+## Visual design
+
+Maintain a professional fintech design system:
+
+- Navy and white as the primary visual foundation.
+- Teal as a restrained accent.
+- Clear typography and hierarchy.
+- Consistent spacing and alignment.
+- Accessible contrast.
+- Clear status labels.
+- Restrained use of shadows.
+- No unnecessary gradients, excessive glows or decorative visual effects.
+- No overcrowded dashboards.
+- No backend infrastructure cards on the consumer home screen.
+
+The application must look like a credible consumer fintech product, not a developer dashboard or hackathon demonstration.
+
+---
+
+# 4. HOME DASHBOARD — REWORK THE INFORMATION HIERARCHY
+
+Review the current home dashboard and remove unnecessary technical and demonstration elements from its primary layout.
+
+The ordinary consumer home screen should focus on:
+
+1. Recurring financial commitments.
+2. Upcoming expected payments.
+3. Recent debit activity.
+4. Unrecognized or suspicious debit alerts.
+5. Reconciliation and review tasks.
+6. Mandate visibility and status.
+7. A clear path to investigate and resolve an unknown debit.
+
+The home screen should communicate what is happening with the user's money, not which backend technologies are running.
+
+## Required changes
+
+- Remove the large Neo4j/AuraDB integration card from the primary dashboard.
+- Remove the large Sarvam AI/model integration card from the primary dashboard.
+- Move all genuine integration details to Settings → System Information → Technical Integrations.
+- Move Focus Scenarios and demonstration scenario controls behind an explicitly enabled Demo Mode.
+- Do not show demonstration tools to ordinary users by default.
+- Make it obvious when Demo Mode is active.
+- Clearly distinguish synthetic demonstration records from actual user-imported records.
+- Use the final tagline consistently.
+- Preserve working dashboard metrics, transaction views, commitment navigation and alert navigation.
+
+Do not create a dashboard that displays impressive-looking statistics without traceable underlying data.
+
+---
+
+# 5. P0 — COMMITMENT PASSPORT: EVIDENCE INTEGRITY AND DATA CORRECTNESS
+
+File requiring close inspection:
+
+`src/engine/investigationEngine.ts`
+
+Related component:
+
+`src/features/passport/CommitmentPassportModal.tsx`
+
+The Commitment Passport is one of DebitLens's important product differentiators. It must provide a trustworthy, traceable view of a financial commitment.
+
+Correct every instance of inferred or fabricated information being represented as a verified merchant or service fact.
+
+## 5.1 Remove fabricated merchant contact and legal information
+
+The current implementation constructs information such as:
+
+- `support@<sanitised merchant name>.com`
+- `https://<sanitised merchant name>.com`
+- `"Grievance Officer (<merchant>)"`
+- A legal entity name copied directly from the display merchant name
+
+These values must never be generated from a merchant name.
+
+Remove all such fabrication.
+
+Only populate contact information, websites, legal entity names and grievance officer details when the information is available from a legitimate, explicitly recorded and traceable source.
+
+For every field, provide appropriate provenance.
+
+Examples:
+
+- `OFFICIAL_MERCHANT_SOURCE`
+- `USER_PROVIDED`
+- `IMPORTED_RECORD`
+- `USER_CONFIRMED`
+- `UNAVAILABLE`
+
+Use the existing provenance model where possible. Extend it only when necessary.
+
+If the source is unavailable, display:
+
+"Not available in the records provided."
+
+Do not manufacture a website or email address as a fallback.
+
+## 5.2 Fix verification status inversion
+
+Inspect the existing `provenance` calculation in `generateCommitmentPassport()`.
+
+The current logic incorrectly assigns `CONFIRMED` when a commitment is not user-confirmed.
+
+Correct the logic so that:
+
+- Explicit user confirmation is identified as user confirmation.
+- Imported information remains imported information.
+- System-inferred information remains system-inferred information.
+- Unknown information remains unknown.
+- An absent confirmation event never becomes confirmation.
+
+Do not use `CONFIRMED` as a generic fallback.
+
+## 5.3 Fix fabricated timestamps
+
+Remove the hardcoded confirmation timestamp:
+
+`2026-10-31T00:00:00Z`
+
+A confirmation timestamp must come from a real confirmation or audit event.
+
+If no such event exists, return `null` and display "Not confirmed".
+
+Never manufacture a historical confirmation date.
+
+## 5.4 Remove unrelated mandate and terms fallbacks
+
+Inspect:
+
+- `generateCommitmentPassport()`
+- `generateEvidencePackData()`
+
+The existing logic can fall back to:
+
+- `mandateList[0]`
+- `termsList[0]`
+
+when it cannot find a matching record for the selected commitment.
+
+Remove these fallbacks completely.
+
+A Passport for one merchant must never silently attach another merchant's mandate or service terms.
+
+Use exact, defensible matching relationships.
+
+If no matching record exists:
+
+- Return no matching mandate.
+- Return no matching terms.
+- Explain that the record was not found in the imported or available records.
+- Do not associate unrelated records.
+
+A missing record is a legitimate and important outcome.
+
+## 5.5 Separate observed recurrence from contractual frequency
+
+Do not treat the observed transaction recurrence as proof of mandate frequency.
+
+For example:
+
+- Observed debits may occur monthly.
+- The mandate frequency may be unavailable.
+- The service's documented billing cycle may also be unavailable.
+
+Display these as separate fields.
+
+Recommended labels:
+
+- Observed transaction pattern
+- Recorded mandate frequency
+- Documented service billing frequency
+
+Never copy `commitment.recurrenceType` into a contractual mandate or service-term field unless a source explicitly supports that value.
+
+## 5.6 Correct actual debit amount
+
+The Passport must not populate `actualAmount` from `commitment.typicalAmount` when there is no matching actual transaction or reconciliation record.
+
+Keep these concepts separate:
+
+- Actual reconciled debit amount.
+- Observed historical amount.
+- Typical or estimated amount.
+- Mandate maximum amount.
+- Documented service price.
+
+Use an explicit source and status for each.
+
+If an actual debit is unavailable, show that it is unavailable.
+
+Never present a typical amount as an actual charged amount.
+
+## 5.7 Separate coverage, verification and financial status
+
+The existing Passport quality meter treats record presence as verification. This is incorrect.
+
+Create separate, clearly named concepts:
+
+**Record coverage**
+How many of the expected record categories have available information?
+
+**Verification status**
+Which details have actually been verified, and on what basis?
+
+**Financial status**
+What is the state of the debit or reconciliation?
+
+Do not combine these into one "verified" score.
+
+Examples of acceptable distinctions:
+
+- Mandate record present, not independently verified.
+- User-confirmed merchant.
+- Imported service terms, source not independently verified.
+- Actual debit matched to a statement record.
+- No matching mandate found in imported records.
+- Cancellation evidence attached, completion not verified.
+
+A data field being non-empty does not make the data true.
+
+## 5.8 Rename misleading evidence sections
+
+Review the Passport's section labelled:
+
+"Verified Evidence Records"
+
+Rename it to something factually accurate, such as:
+
+"Available Evidence Records"
+
+or:
+
+"Evidence and Source Records"
+
+Display the provenance and verification state of each record.
+
+Do not imply that an imported or user-reported document has been independently validated.
+
+---
+
+# 6. P0 — EVIDENCE PACK AND PRINTABLE HTML SECURITY
+
+Inspect:
+
+`generatePrintableEvidencePackHtml()`
+
+in:
+
+`src/engine/investigationEngine.ts`
+
+Related backend routes:
+
+- `GET /api/commitments/:id/evidence-pack`
+- `GET /api/commitments/:id/evidence-pack/print`
+
+## 6.1 Prevent HTML and script injection
+
+The current printable Evidence Pack inserts dynamic content directly into HTML.
+
+Potentially affected fields include:
+
+- Merchant names.
+- Service names.
+- Transaction descriptions.
+- Notes.
+- Source references.
+- Identifiers.
+- Recommended actions.
+- Explanations.
+- Imported CSV descriptions.
+- Evidence labels and other user-provided text.
+
+Implement a safe HTML escaping utility and apply it to every dynamic text value inserted into the HTML document.
+
+Escape at the rendering boundary.
+
+At a minimum, correctly escape:
+
+- `&`
+- `<`
+- `>`
+- `"`
+- `'`
+
+Do not rely on the assumption that imported bank statement values are safe.
+
+Do not allow raw user-controlled values to create HTML elements, scripts, attributes or event handlers.
+
+Do not confuse normal HTML text escaping with safe URL handling. If any dynamic links are rendered, validate their schemes and permitted destinations separately.
+
+## 6.2 Required security regression tests
+
+Add tests using malicious values such as:
+
+`<script>alert(1)</script>`
+
+`"><img src=x onerror=alert(1)>`
+
+Test merchant name, description, note and source-reference fields independently.
+
+The generated Evidence Pack must display the content safely as text, not execute or interpret it as markup.
+
+## 6.3 Correct the synthetic-data notice
+
+The current print document always labels its content:
+
+"Synthetic Demonstration Dataset"
+
+This is misleading when a user has imported their own transaction or mandate records.
+
+Determine the data source of the records actually included in the Evidence Pack.
+
+Display an accurate source notice, such as:
+
+- Synthetic demonstration data.
+- User-imported bank statement records.
+- User-provided mandate records.
+- A mixture of sources.
+
+When a mixture exists, label it as a mixture.
+
+Do not label user-imported records as synthetic.
+
+Do not imply that user-imported records have been independently verified.
+
+## 6.4 Preserve confidence without converting it to confirmation
+
+A high confidence score is not user confirmation.
+
+Do not convert a high-confidence merchant association into `CONFIRMED`.
+
+Preserve the distinction between:
+
+- Candidate.
+- Suggested.
+- High-confidence inference.
+- User-confirmed.
+- Officially sourced.
+- Independently verified, where the application actually performs such verification.
+
+## 6.5 Correct evidence aggregate status
+
+The current cancellation evidence aggregate can report:
+
+`EVIDENCE_ATTACHED`
+
+when any evidence exists, even if the evidence is incomplete, user-reported or unverified.
+
+Implement accurate evidence status rules.
+
+Attaching a document is not the same as proving cancellation.
+
+The system should distinguish:
+
+- No evidence supplied.
+- Evidence uploaded.
+- Evidence awaiting review.
+- Evidence reviewed.
+- Cancellation requested.
+- Cancellation acknowledged.
+- Cancellation completed.
+- Cancellation independently confirmed, if supported by a genuine source.
+
+Do not move to a stronger status simply because a file exists.
+
+## 6.6 Preserve evidence metadata
+
+When exporting an Evidence Pack, preserve available information about each evidence record:
+
+- Evidence type.
+- Original source.
+- Creation or upload timestamp.
+- Relevant event timestamp.
+- Provenance.
+- Verification or review status.
+- Related transaction or commitment.
+- Reference or identifier.
+- Notes, where applicable.
+
+Do not flatten the evidence into generic text and lose its source history.
+
+## 6.7 Correct debit counts
+
+The printable Evidence Pack currently counts all transactions as debits.
+
+Correct the logic to distinguish:
+
+- Debit transactions.
+- Credit transactions.
+- Refunds.
+- Reversals, if identifiable.
+- Unclassified transactions.
+
+Use truthful counts and labels.
+
+## 6.8 Correct PDF/print terminology
+
+The print endpoint returns print-ready HTML, not a generated binary PDF.
+
+The application UI must not imply that the endpoint directly generates a PDF file.
+
+Use:
+
+**"Print / Save as PDF"**
+
+The action may open a print-ready view from which the user can use the browser's print or save-to-PDF feature.
+
+Only call something a PDF export if an actual PDF is generated.
+
+---
+
+# 7. P0 — RELIABLE PERSISTENCE AND MUTATION SAFETY
+
+Inspect:
+
+`server.ts`
+
+The canonical JSON store must be reliable when a user changes financial data or investigation state.
+
+## 7.1 Audit every mutating route
+
+Inspect all API routes that modify canonical state.
+
+The existing implementation still contains direct `savePersistentStore()` calls in some mutation paths.
+
+Review and correct all such cases, including the known locations or related current equivalents:
+
+- Reconciliation evaluation, approximately line 1844.
+- Cancellation playbook step completion, approximately line 2213.
+- Cancellation evidence attachment, approximately line 2262.
+- Financial guardrail mutation, approximately line 2340.
+- StreamBox demonstration activation, approximately line 2966.
+- Simulated post-cancellation debit, approximately line 3036.
+
+Line numbers may have changed. Search the actual current code.
+
+Every canonical mutation must follow the same dependable persistence convention.
+
+## 7.2 Implement transactional mutation behaviour
+
+The existing `persistOrError(res)` approach is insufficient if the in-memory state is mutated first and persistence then fails.
+
+A failed save must not leave an unpersisted change active in memory.
+
+Implement a reliable pattern appropriate to the existing store.
+
+Preferred behaviour:
+
+1. Validate the request.
+2. Prepare the updated state or a safe mutation snapshot.
+3. Persist the new canonical state.
+4. Commit the in-memory state only when persistence succeeds, or restore the original state on failure.
+5. Return a truthful API result.
+6. Record graph synchronization separately.
+
+Use copy-on-write, staged mutation or another appropriate rollback-safe design.
+
+Do not introduce a complex transaction framework unnecessarily.
+
+The important guarantee is that a failed canonical save cannot be reported as successful or silently remain as a later-visible state change.
+
+## 7.3 Separate canonical persistence from graph synchronization
+
+Treat these as separate outcomes:
+
+- Canonical state saved.
+- Graph projection synchronized.
+- Graph projection synchronization failed or pending.
+
+A Neo4j failure must not erase a successfully persisted canonical user action.
+
+Likewise, a successful JSON save must not imply that the graph is synchronized.
+
+Expose truthful synchronization state and support a retry or reconciliation mechanism consistent with the existing graph architecture.
+
+## 7.4 Add mutation regression tests
+
+Test:
+
+- Successful canonical persistence.
+- Persistence failure.
+- In-memory rollback after failure.
+- No false success response.
+- Graph failure after canonical success.
+- Retry or later synchronization.
+- No accidental duplicate audit events caused by retry.
+
+Audit all state-changing routes, not only the six known examples.
+
+---
+
+# 8. P0 — MANDATE IMPORT SAFETY AND DATA VALIDATION
+
+Inspect:
+
+`POST /api/mandates/import`
+
+in:
+
+`server.ts`
+
+The implementation has already improved by removing fabricated defaults. Preserve that improvement.
+
+## 8.1 Fix duplicate overwrite behaviour
+
+The current implementation increments `duplicateRecords` but continues processing the duplicate.
+
+A later record can overwrite an existing complete mandate with an incomplete version.
+
+Correct the import behaviour.
+
+Preferred default policy:
+
+- Identify duplicates using a defensible stable reference.
+- Do not overwrite a complete existing mandate with an incomplete duplicate.
+- Reject or skip exact duplicates.
+- Return an explicit duplicate count.
+- Report conflicting duplicates separately.
+- Preserve the original record unless an explicit, safe update policy applies.
+- Record any permitted update in the audit history.
+
+Never let an incomplete CSV row silently destroy existing mandate data.
+
+## 8.2 Validate numeric fields
+
+Validate `maxAmountMinor` as:
+
+- A finite number.
+- A safe integer.
+- Positive where the schema requires a positive amount.
+- Within an appropriate supported limit.
+
+Reject invalid values with actionable error details.
+
+Do not trust `Number(...)` conversion by itself.
+
+## 8.3 Validate enums at runtime
+
+Validate all imported values against supported values.
+
+This includes:
+
+- Payment rail.
+- Frequency.
+- Mandate status.
+- Other enum-like fields.
+
+Do not rely on TypeScript type casts to validate incoming runtime data.
+
+Reject unknown values or preserve them explicitly as unknown where the data model supports that safely.
+
+Do not automatically convert unknown values into active or approved states.
+
+## 8.4 Validate dates
+
+Validate mandate dates strictly.
+
+Do not accept normalised invalid dates.
+
+Enforce actual calendar validity.
+
+For example, `31/02/2026` must not become a date in March.
+
+Use the same validated date utility throughout the application.
+
+## 8.5 Correct incomplete mandate status
+
+`getMissingMandateFields()` already tracks missing `startDate`, but `getEffectiveMandateStatus()` does not consistently enforce all required fields.
+
+Create one shared definition of missing required mandate fields.
+
+Use that helper in:
+
+- Mandate import.
+- Mandate status calculation.
+- Matching and reconciliation.
+- Passport generation.
+- Review queue.
+- Mandate UI.
+
+A record with missing required information must not silently be presented as an active, fully specified mandate just because its `isIncomplete` flag is missing or stale.
+
+Do not fabricate an active mandate from incomplete imported data.
+
+## 8.6 Add mandate import tests
+
+Test:
+
+- New complete mandate.
+- New incomplete mandate.
+- Existing complete mandate plus duplicate incomplete row.
+- Exact duplicate.
+- Conflicting duplicate.
+- Invalid amount.
+- Negative amount.
+- Decimal minor-unit amount where not permitted.
+- Invalid enum.
+- Invalid date.
+- Missing start date.
+- Incorrect or stale completeness flag.
+
+Ensure no test can silently overwrite a good existing record.
+
+---
+
+# 9. P0 — CSV MAPPING WIZARD: COMPLETE AND CORRECT IMPLEMENTATION
+
+Inspect:
+
+`src/engine/investigationEngine.ts`
+
+Relevant functions:
+
+- `previewCsvMapping()`
+- Existing transaction CSV parsing utilities.
+
+Inspect:
+
+`src/features/imports/ImportStudioView.tsx`
+
+Inspect backend route:
+
+`POST /api/import/transactions/preview-mapping`
+
+Inspect backend route:
+
+`POST /api/import/transactions/apply-mapped`
+
+The CSV Mapping Wizard must be reliable enough to import a real bank statement without silently dropping or misclassifying transactions.
+
+This section is one of the highest-priority areas.
+
+## 9.1 Reuse the existing RFC-4180 parser
+
+The current implementation uses:
+
+`csvText.trim().split(/\r?\n/)`
+
+This is not sufficient for RFC-4180 CSV parsing.
+
+It fails with quoted multiline fields and other normal CSV cases.
+
+Reuse or extend the existing tested RFC-4180 parser in the codebase.
+
+Do not introduce a second simplistic parser.
+
+Support:
+
+- Quoted fields.
+- Commas inside quoted fields.
+- Escaped quotes.
+- CRLF and LF line endings.
+- Quoted multiline descriptions.
+- Empty fields.
+- Header validation.
+
+Reject malformed files clearly rather than silently corrupting their records.
+
+## 9.2 Fix the ten-row import limitation
+
+The preview may display a limited sample, but the actual apply operation must process all validated rows.
+
+The existing implementation stores only the first ten parsed rows in `previewRows`, and the apply route then imports from that preview sample.
+
+Correct this architecture.
+
+The final import must process the complete validated CSV, not only the first ten rows.
+
+You may use a safe server-side preview token, stored validated mapping session, full parsed row set or another approach consistent with the project architecture.
+
+Do not trust a client-provided preview sample as the canonical import payload.
+
+Enforce reasonable file size and row count limits and communicate them clearly to the user.
+
+The final response must accurately report the number of rows processed.
+
+## 9.3 Correct duplicate-row behaviour
+
+The current duplicate logic increments `duplicateRowCount` but leaves the duplicate row valid and importable.
+
+Correct the row status.
+
+A duplicate must never simultaneously be reported as a skipped duplicate and remain eligible for import.
+
+Use explicit states such as:
+
+- Valid.
+- Invalid.
+- Duplicate.
+- Skipped.
+- Imported.
+
+Display accurate counts for each category.
+
+## 9.4 Make imports idempotent
+
+The current ID generator uses timestamp-based identifiers:
+
+`TXN-MAP-${Date.now()}`
+
+That can create different IDs on every import of the same CSV.
+
+Repeated submission or reimport can create duplicate financial transactions.
+
+Implement deterministic duplicate identification or stable source identifiers.
+
+Where available, use a combination of:
+
+- Account.
+- Currency.
+- Transaction date.
+- Direction.
+- Amount.
+- Description or normalized descriptor.
+- Bank reference or transaction identifier.
+
+Use a stable fingerprint to prevent repeated imports of identical records.
+
+Do not falsely merge two genuinely different transactions merely because their date, description and amount are similar.
+
+Return an accurate import summary.
+
+## 9.5 Preserve credit and refund transactions
+
+The current mapper treats credit/deposit transactions as invalid and drops them.
+
+Correct this.
+
+DebitLens must preserve credit-side transaction history in the canonical transaction dataset.
+
+Support:
+
+- Debit.
+- Credit.
+- Refund.
+- Reversal, where identifiable.
+- Unknown direction, where not sufficiently established.
+
+Credits and refunds must not be discarded simply because the recurring commitment engine primarily analyses debits.
+
+The recurring debit detector should exclude credits from debit recurrence calculations while preserving them in the transaction history.
+
+A refund may be important evidence when investigating a recurring charge or cancellation.
+
+## 9.6 Correct signed amount handling
+
+The current strict parser rejects negative amounts while later code attempts to inspect `num < 0`.
+
+That branch is effectively unreachable.
+
+Implement a proper signed amount parser separately from the positive amount parser.
+
+Use the signed value and configured bank-column semantics to determine transaction direction.
+
+Do not turn negative values into positive debit amounts without considering direction.
+
+Respect the source format and provide clear errors for ambiguous signs.
+
+## 9.7 Handle debit and credit columns safely
+
+If both debit and credit columns are positive for the same row, do not silently pick one.
+
+Flag the row as ambiguous and explain the issue.
+
+Support legitimate statement formats including:
+
+- One signed amount column.
+- Separate debit and credit columns.
+- Bank-specific transaction type or direction columns.
+
+Where the row cannot be interpreted safely, request mapping correction or mark it invalid with an explanation.
+
+Never quietly choose one column.
+
+## 9.8 Respect mapped account and currency fields
+
+The current wizard can detect/configure account and currency columns but the apply operation hardcodes:
+
+- Currency: `INR`
+- Account: `defaultAccountAlias`
+
+Correct this.
+
+When users select or map an account column, use its actual row value.
+
+When users select or map a currency column, use its actual row value.
+
+If there is a user-configured default, use it only when the corresponding column is genuinely absent or intentionally unmapped.
+
+Validate currency codes.
+
+Do not silently label foreign-currency transactions as INR.
+
+Keep account identity and currency available in the canonical transaction record.
+
+## 9.9 Correct date format handling
+
+The UI currently exposes `DD-MM-YYYY` and `AUTO`, but the configuration type only defines:
+
+- `DD/MM/YYYY`
+- `MM/DD/YYYY`
+- `YYYY-MM-DD`
+
+The implementation also uses general `Date.parse` fallback behaviour.
+
+Correct the mismatch between UI options, TypeScript types and parsing.
+
+Create a shared strict date parser supporting the actual advertised options.
+
+At minimum support:
+
+- `DD/MM/YYYY`
+- `DD-MM-YYYY`
+- `MM/DD/YYYY`
+- `MM-DD-YYYY`
+- `YYYY-MM-DD`
+- `AUTO`, only when unambiguous.
+
+Do not let ambiguous dates be silently interpreted differently across browsers or environments.
+
+For `AUTO`:
+
+- Detect an unambiguous format where possible.
+- Flag ambiguous date values.
+- Ask for an explicit format when necessary.
+- Do not guess when two valid interpretations exist.
+
+Validate calendar dates strictly.
+
+For example, reject `31/02/2026`.
+
+Do not allow `Date.parse()` to normalise invalid input into a different valid date.
+
+## 9.10 Improve duplicate matching
+
+A duplicate key based only on date, description and amount is insufficient.
+
+Include direction, account and currency, and use a transaction reference when available.
+
+The duplicate algorithm must reduce both:
+
+- False duplicate matches.
+- Repeated imports of the same transaction.
+
+Document the matching precedence and add regression tests.
+
+## 9.11 Fix preview recalculation
+
+Review the `useEffect` or equivalent mapping-preview update logic in `ImportStudioView.tsx`.
+
+Ensure every mapping configuration field that influences the preview is included in the relevant dependencies or is handled by a more reliable derived-state pattern.
+
+Changing any of these must update the preview:
+
+- Date column.
+- Date format.
+- Amount column.
+- Debit column.
+- Credit column.
+- Description column.
+- Direction column.
+- Account column.
+- Currency column.
+- Reference column.
+- Default account/currency.
+- Any other field that affects row interpretation.
+
+Avoid stale preview results.
+
+## 9.12 Add robust CSV tests
+
+Test at least:
+
+- Standard CSV.
+- Quoted description containing commas.
+- Escaped quote.
+- Multiline quoted field.
+- CRLF line endings.
+- Negative amount.
+- Separate debit and credit columns.
+- Positive debit.
+- Positive credit.
+- Refund.
+- Reversal where supported.
+- Ambiguous debit and credit values.
+- Multiple currencies.
+- Account mapping.
+- More than ten transactions.
+- Repeated import.
+- Duplicate bank reference.
+- Similar but distinct transactions.
+- Ambiguous date.
+- Invalid calendar date.
+- Every advertised date format.
+- Invalid row mixed with valid rows.
+- Large but permitted import.
+- File-size and row-count boundary behaviour.
+
+Verify that the total imported count matches the complete valid, non-duplicate row set.
+
+---
+
+# 10. P0 — UNKNOWN DEBIT INVESTIGATION: PREVENT FALSE MERCHANT CONFIRMATION
+
+Inspect:
+
+`src/engine/investigationEngine.ts`
+
+Function:
+
+`generateMerchantCandidates()`
+
+Component:
+
+`src/features/investigation/UnrecognizedDebitInvestigationDrawer.tsx`
+
+Routes:
+
+- `GET /api/investigations`
+- `POST /api/investigations`
+- `POST /api/investigations/:id/action`
+- `POST /api/investigations/:id/confirm-merchant`
+
+The Unknown Debit Investigation flow must help consumers understand an unfamiliar bank statement descriptor without making unsupported merchant claims.
+
+## 10.1 Separate processor-associated merchants from actual candidates
+
+The current logic can surface generic merchants simply because they use the same payment processor.
+
+A shared processor does not prove that a particular merchant initiated the user's debit.
+
+Separate these concepts clearly:
+
+**Potential merchant candidates**
+
+Merchants supported by relevant evidence associated with the actual descriptor or transaction.
+
+**Processor-associated merchants**
+
+Known merchants that may use the same processor but are not specifically linked to the user's transaction.
+
+Display processor-associated merchants as contextual information only.
+
+Do not present them as confirmable matches.
+
+## 10.2 Correct candidate confidence and confirmation controls
+
+The current drawer displays a Confirm option for every candidate, regardless of its evidence type or score.
+
+Correct the UI.
+
+A processor-only association must not offer a confirmation button.
+
+A candidate's score or confidence must not independently turn it into a verified merchant.
+
+Require an explicit, intentional user action to confirm a merchant.
+
+Before confirmation, display the evidence and clearly identify uncertainty.
+
+Keep the following statuses separate:
+
+- Suggested candidate.
+- Candidate requiring review.
+- User-selected merchant.
+- User-confirmed merchant.
+- Independently sourced merchant identity, if supported.
+
+## 10.3 Improve shared-token matching
+
+The current historical token approach accepts tokens longer than two characters.
+
+Improve matching through:
+
+- Token boundaries.
+- Normalized descriptors.
+- Relevant corroborating context.
+- Appropriate minimum token specificity.
+- Exclusion of generic payment words where appropriate.
+- Evidence-based scoring.
+
+Do not match every descriptor containing a common short token.
+
+Add negative tests for unrelated merchant names with shared generic words.
+
+## 10.4 Correct historical overrides
+
+Previous overrides currently use broad substring inclusion.
+
+This can map unrelated descriptions to the wrong merchant.
+
+Use safer normalized descriptor matching and sufficiently specific matching criteria.
+
+Store the override's source, user confirmation, timestamp and relevant transaction context.
+
+Do not automatically apply an old override to an unrelated descriptor merely because it contains a similar substring.
+
+## 10.5 Harden the merchant confirmation API
+
+Inspect:
+
+`POST /api/investigations/:id/confirm-merchant`
+
+The route must not trust arbitrary client-provided `merchantId` and `rawDescription`.
+
+Implement server-side validation.
+
+Required steps:
+
+1. Load the actual investigation case.
+2. Retrieve its linked transaction using the case's `transactionId`.
+3. Validate that the transaction exists.
+4. Validate that the requested merchant exists in the allowed merchant catalogue or another approved source.
+5. Verify the case and transaction association.
+6. Use the actual transaction description rather than trusting an arbitrary client replacement.
+7. Preserve the user's explicit confirmation event.
+8. Record timestamp, selected merchant, previous state and source in an audit event.
+9. Persist safely before returning success.
+10. Return an actionable error when the merchant or transaction cannot be validated.
+
+Do not allow a user to confirm an arbitrary merchant ID that does not exist.
+
+Do not allow an API client to rewrite the transaction description during merchant confirmation.
+
+## 10.6 Validate investigation actions
+
+The action route must validate:
+
+- Allowed action values.
+- Allowed status transitions.
+- Note type.
+- Note length.
+- Required fields.
+- Case existence.
+- Case/transaction consistency.
+
+Do not accept arbitrary status strings.
+
+Define explicit valid state transitions.
+
+Clarify whether a closed case can be reopened, and implement the behaviour consistently.
+
+Every important change must produce an audit event.
+
+## 10.7 Correct misleading mandate statement
+
+The drawer currently says:
+
+"Evidence Verified: No Mandate Registered"
+
+This overstates what the system knows.
+
+If no matching mandate exists in the user's imported records, use:
+
+**"No matching mandate record was found in the records imported into DebitLens."**
+
+This must not be interpreted as proof that no mandate exists at the bank.
+
+Keep these cases distinct:
+
+- No imported mandate found.
+- Matching mandate found but incomplete.
+- Matching mandate found and active according to available records.
+- Mandate status unknown.
+- Mandate revocation recorded.
+- Mandate revocation independently confirmed, if supported.
+
+## 10.8 Correct unsupported processor conclusions
+
+Do not use fallback text asserting that the transaction passed through an intermediary payment gateway if the processor is unknown.
+
+Use only the processor information actually supported by the evidence.
+
+Where unavailable, state:
+
+"Payment processor not identified from the available transaction details."
+
+## 10.9 Clarify case closure
+
+Define the meaning of investigation states.
+
+For example:
+
+- Open.
+- In review.
+- Waiting for user.
+- Merchant identified.
+- User-confirmed.
+- Resolved by recorded action.
+- Closed without resolution.
+
+Do not treat an investigation case being closed as proof that the underlying debit was legitimate, cancelled or refunded.
+
+---
+
+# 11. P0 — CORRECT RBI AND FINANCIAL LIABILITY GUIDANCE
+
+Review the RBI-related copy in:
+
+- `buildUnrecognizedDebitCase()`
+- `UnrecognizedDebitInvestigationDrawer.tsx`
+- Related help text and user guidance.
+
+The current language claims:
+
+"Under RBI zero-liability guidelines, notify your bank within 3 calendar days if unauthorised."
+
+It also implies a universal three-calendar-day deadline after which the customer has zero financial liability.
+
+Do not make this claim.
+
+RBI directions distinguish the circumstances and causes of an unauthorised electronic transaction. Applicable reporting timelines and customer liability depend on the circumstances and relevant directions.
+
+Replace the overgeneralised claim with neutral, accurate consumer guidance.
+
+Use wording such as:
+
+**"Report any suspected unauthorised transaction to your bank immediately through its official channels. Customer liability and reporting timelines depend on the cause of the transaction and the applicable RBI directions and bank policy. Keep your complaint acknowledgement or reference number."**
+
+Requirements:
+
+- Do not guarantee zero liability.
+- Do not imply one universal three-calendar-day rule.
+- Do not provide legal conclusions about an individual transaction.
+- Do not claim DebitLens can file the bank complaint unless an actual supported integration exists.
+- Encourage the user to contact their bank promptly.
+- Preserve official bank complaint references and submitted evidence where the user supplies them.
+- Clearly distinguish DebitLens guidance from official bank or regulatory determinations.
+
+Apply the same standard to any other legal, regulatory, consumer-protection or payment-guarantee statements.
+
+---
+
+# 12. P1 — REVIEW & RESOLVE: ACCURATE STATES, COUNTS AND DATES
+
+Inspect:
+
+`src/engine/investigationEngine.ts`
+
+Function:
+
+`buildReviewQueue()`
+
+Component:
+
+`src/features/review/ReviewAndResolveView.tsx`
+
+Route:
+
+`GET /api/review-queue`
+
+Route:
+
+`POST /api/review-queue/:id/status`
+
+## 12.1 Remove fabricated evidence counts
+
+The current builder sometimes hardcodes an evidence count of 2 when no count is supplied.
+
+Never invent supporting evidence counts.
+
+Calculate the count from actual available records.
+
+If the number is unavailable, show "Not available" rather than 2.
+
+Do not make a record appear more substantiated than it is.
+
+## 12.2 Correct dates at the data-building layer
+
+The current queue builder may append:
+
+`T00:00:00Z`
+
+to `createdAt` even when it already contains an ISO timestamp.
+
+This produces invalid dates such as `Invalid Date`.
+
+Correct the builder, not just the UI.
+
+Implement a shared date normalisation and validation utility.
+
+Handle:
+
+- Date-only values.
+- Valid ISO timestamps.
+- Missing dates.
+- Invalid dates.
+- Timezone-aware timestamps.
+
+Never append a second timestamp suffix to an already complete ISO string.
+
+If a date cannot be interpreted, show an honest unavailable state.
+
+Retest the dashboard and review queue screenshots.
+
+## 12.3 Improve category coverage
+
+Review the full range of review queue item categories produced by the engine.
+
+Expose the relevant categories in the UI filter.
+
+Do not generate categories the UI cannot filter or display correctly.
+
+Keep category values consistent between engine, API and UI.
+
+## 12.4 Correct empty-state claims
+
+The current empty-state message implies that all recurring debits, mandates and statements have been reconciled.
+
+An empty result may simply mean the current filter returns no matching items.
+
+Replace the global all-clear statement with a filter-aware message such as:
+
+"No items match the selected filters."
+
+Only display a global reconciliation statement when the system has actually evaluated the complete relevant dataset and can support that conclusion.
+
+## 12.5 Correct "Mark Resolved"
+
+The current action can mark an item resolved without requiring a reason and without a clear audit event.
+
+Improve the workflow.
+
+The action must:
+
+- Use a truthful label.
+- Record the user's action.
+- Record a timestamp.
+- Record the reason or resolution note when required.
+- Record the previous and new status.
+- Persist safely.
+- Add an audit event.
+
+Prefer "Mark reviewed" when the user has merely reviewed the item but has not resolved the underlying financial issue.
+
+Use "Mark resolved" only when the user supplies a meaningful resolution outcome and the product's status semantics support it.
+
+A review workflow state is not equivalent to proof that the payment issue has been resolved.
+
+## 12.6 Clarify priority statistics
+
+The current dashboard statistics count only `OPEN` for some priority metrics while total open work may include:
+
+- OPEN.
+- IN_REVIEW.
+- WAITING_FOR_USER.
+
+Use clearly defined labels.
+
+For example:
+
+- New critical items.
+- All unresolved items.
+- Awaiting user information.
+- Under review.
+
+Make sure the values and headings match the actual filtering logic.
+
+## 12.7 Validate status endpoint
+
+The status endpoint must reject arbitrary status strings.
+
+Create explicit supported statuses and transition rules.
+
+Validate notes and other required fields.
+
+Persist the status change and its audit event safely.
+
+---
+
+# 13. P1 — CSV AND DATA EXPERIENCE: FINAL UX POLISH
+
+Improve the import experience so ordinary users can understand what they are importing.
+
+The Import Studio should provide:
+
+1. File selection.
+2. Header detection.
+3. Column mapping.
+4. Date format selection.
+5. Currency/account configuration.
+6. Preview of representative records.
+7. Clear validation errors.
+8. Duplicate warnings.
+9. Complete import summary.
+10. Post-import next steps.
+
+The user must be able to see which rows are:
+
+- Ready to import.
+- Invalid.
+- Duplicates.
+- Ambiguous.
+- Skipped.
+
+Show why a row is excluded.
+
+Do not silently discard it.
+
+The wizard should make it clear whether an import was a preview or a completed import.
+
+Protect against repeat clicks and accidental duplicate submissions.
+
+Disable or safely handle duplicate submission while an import is being applied.
+
+Do not display success until canonical persistence succeeds.
+
+After import, update relevant dashboard data and reconciliation results through the established data-refresh pattern.
+
+---
+
+# 14. P1 — SYSTEM SETTINGS AND INTEGRATION TRANSPARENCY
+
+Move integration diagnostics into:
+
+**Settings → System Information → Technical Integrations**
+
+Keep Neo4j and Sarvam integrations operational.
+
+The settings page should display genuine information, such as:
+
+- Connection state.
+- Configuration state.
+- Last health-check result.
+- Last successful interaction.
+- Last error or failure.
+- Graph projection synchronization state.
+- Relevant configured model or database name.
+
+Avoid exposing secrets, credentials, tokens, API keys or sensitive connection strings.
+
+Never render full secret environment-variable values.
+
+Ensure system status is not confused with the user's financial data status.
+
+Do not show technical integration errors as consumer financial alerts.
+
+---
+
+# 15. DATA QUALITY, SOURCE PROVENANCE AND AUDIT TRAIL — APPLY CONSISTENTLY
+
+Implement a consistent data-quality approach throughout the product.
+
+Each important data record should retain the information already supported by the schema, extending it only where necessary:
+
+- Record ID.
+- Source.
+- Creation timestamp.
+- Relevant event timestamp.
+- Provenance.
+- Verification state.
+- Associated merchant or commitment.
+- Associated transaction or mandate.
+- Audit history where applicable.
+
+Do not introduce excessive new schemas without justification.
+
+## Required distinctions
+
+The UI and backend must never collapse these distinct concepts:
+
+| Concept | What it means |
+|---|---|
+| Imported | The user provided or imported the information |
+| Observed | The information was derived from recorded transaction activity |
+| Inferred | The system identified a possible relationship |
+| Suggested | The system proposed an explanation or candidate |
+| User-confirmed | The user explicitly confirmed the information |
+| Officially sourced | The information came from an identified official source |
+| Verified | The system has an actual verification basis and can describe it |
+
+Where the application cannot support a stronger status, retain the weaker, truthful status.
+
+## Audit trail
+
+Record important events such as:
+
+- Merchant confirmation.
+- Investigation status change.
+- Review action.
+- Commitment confirmation.
+- Mandate import/update.
+- Cancellation action.
+- Evidence upload.
+- Evidence review.
+- Financial reconciliation.
+- Import completion.
+- Relevant corrections.
+
+Audit entries must be associated with the relevant entity and timestamp.
+
+Do not generate fake audit events to make a workflow look complete.
+
+---
+
+# 16. FINANCIAL INTERPRETATION AND RECONCILIATION — PRESERVE DETERMINISTIC BEHAVIOUR
+
+Review the existing reconciliation and commitment engines for regressions introduced by the recent F2 changes.
+
+Protect the following distinctions:
+
+- Actual transaction versus predicted upcoming debit.
+- Debit versus credit.
+- Refund versus charge.
+- Observed recurrence versus contracted frequency.
+- Mandate limit versus actual amount.
+- Mandate imported versus mandate active.
+- Merchant candidate versus user-confirmed merchant.
+- Service cancellation request versus mandate revocation.
+- Cancellation evidence attached versus cancellation completed.
+- Reconciliation match versus legally authorised payment.
+- Missing data versus a verified negative finding.
+
+Do not use the LLM to decide any of these financial states.
+
+## Service cancellation and mandate revocation
+
+Keep these as separate user journeys.
+
+A user may need to:
+
+1. Cancel the underlying service or subscription.
+2. Revoke the related payment mandate or standing instruction.
+3. Verify the service cancellation.
+4. Verify the mandate revocation.
+5. Monitor subsequent transactions.
+
+Completing one action does not automatically mean the other is complete.
+
+The application should clearly guide the user through both where relevant.
+
+Do not tell the user a recurring debit will stop solely because a cancellation request was generated or a cancellation document was attached.
+
+---
+
+# 17. TYPESCRIPT, FRONTEND AND API CONSISTENCY
+
+Run a complete TypeScript review across the current project.
+
+## 17.1 Fix the DateFormatOption type issue
+
+The F2 source contains an import/reference to:
+
+`DateFormatOption`
+
+in:
+
+`src/features/imports/ImportStudioView.tsx`
+
+The previous source review did not find a matching declaration/export in `src`.
+
+Verify the current repository.
+
+If it is still missing, define a single shared, exported date-format type matching the formats genuinely supported by the parser, or import the correct existing configuration type.
+
+Do not use a type cast as a substitute for a missing type definition.
+
+Ensure UI options, configuration types, API validation and parser functionality all agree.
+
+## 17.2 Enable and run type checking
+
+The Vite production build alone does not guarantee correct TypeScript types.
+
+Inspect `package.json`.
+
+Ensure there is a proper type-check command, such as an appropriate:
+
+`npm run typecheck`
+
+Use the existing compiler configuration and project conventions.
+
+Do not weaken type checking by disabling important strictness options just to make the build pass.
+
+Resolve all relevant TypeScript errors introduced by the application code.
+
+## 17.3 API request validation
+
+Audit API routes added or modified during F2.
+
+At minimum inspect:
+
+- Investigation creation.
+- Investigation action.
+- Merchant confirmation.
+- Review queue status changes.
+- Mapped CSV preview.
+- Mapped CSV application.
+- Mandate import.
+- Passport generation.
+- Evidence Pack generation.
+- Cancellation actions.
+- Financial guardrail mutations.
+
+All externally supplied data must be validated at runtime.
+
+Validate:
+
+- Required identifiers.
+- Existing entity relationships.
+- Enumerated values.
+- Amounts.
+- Dates.
+- String lengths.
+- Array lengths.
+- File size.
+- Supported MIME or content type where relevant.
+- State transitions.
+
+Return consistent, actionable error responses.
+
+Do not return success for a partially applied mutation.
+
+Do not expose sensitive internal error details to consumers.
+
+---
+
+# 18. FRONTEND STATES, ACCESSIBILITY AND ERROR HANDLING
+
+Review all new and modified feature components.
+
+Important components include:
+
+- `UnrecognizedDebitInvestigationDrawer.tsx`
+- `ReviewAndResolveView.tsx`
+- `CommitmentPassportModal.tsx`
+- `ImportStudioView.tsx`
+
+Provide complete states for:
+
+- Loading.
+- Success.
+- Empty results.
+- Filtered empty results.
+- Missing record.
+- Partial evidence.
+- Invalid data.
+- Permission or validation failure, where applicable.
+- Server error.
+- Network failure.
+- Retryable synchronization failure.
+- Unavailable integration.
+
+Do not let an error state display a success message.
+
+Do not leave buttons that look active but have no real action.
+
+Disable duplicate submissions where appropriate.
+
+Preserve accessible labels, keyboard navigation, focus handling and readable contrast.
+
+Make destructive or significant confirmation actions explicit.
+
+Keep terminology consistent throughout the product.
+
+---
+
+# 19. TESTING — COMPREHENSIVE FINAL VERIFICATION
+
+The previous F2 action history reported:
+
+- 42/42 tests passing.
+- A successful production build.
+- Seven API smoke checks returning HTTP 200.
+
+Treat these as historical reported results, not proof that the current corrected code still passes.
+
+Preserve all useful existing tests, add the missing regression coverage, and run the tests again after implementation.
+
+Do not delete or weaken tests to achieve a green result.
+
+## 19.1 Mandatory final test commands
+
+Use the project's actual package manager and lockfile.
+
+Run the applicable equivalents of:
+
+1. Dependency installation using the committed lockfile.
+2. TypeScript type checking.
+3. Full automated test suite.
+4. Production build.
+5. Backend startup or API smoke test.
+6. Final package validation.
+
+If the project uses Bun, npm or another supported package manager, follow its committed lockfile rather than switching package managers casually.
+
+## 19.2 Regression coverage
+
+At minimum test the following areas:
+
+**Commitment Passport**
+- No invented contact details.
+- No invented website.
+- No hardcoded confirmation date.
+- Correct user-confirmation provenance.
+- No first-item mandate fallback.
+- No first-item terms fallback.
+- No observed recurrence represented as contractual frequency.
+- No typical amount represented as actual amount.
+- Correct distinction between coverage, verification and financial status.
+
+**Evidence Pack**
+- Escaped HTML.
+- No script execution.
+- Correct data-source notice.
+- Actual debit/credit counts.
+- Preserved provenance.
+- Correct evidence status.
+- Correct print wording.
+
+**Persistence**
+- Save success.
+- Save failure.
+- Rollback.
+- Graph synchronization failure independent of canonical persistence.
+- Audit integrity.
+
+**Mandate import**
+- Duplicate prevention.
+- No incomplete-over-complete overwrite.
+- Invalid amounts.
+- Invalid dates.
+- Invalid enums.
+- Missing required fields.
+- Correct mandate status.
+
+**CSV Mapping Wizard**
+- RFC-4180.
+- Multiline quoted fields.
+- Signed amounts.
+- Debit/credit distinction.
+- Credits and refunds preserved.
+- Account and currency mapping.
+- Ambiguous dates.
+- Invalid dates.
+- More than ten rows.
+- Duplicate prevention.
+- Reimport idempotency.
+- Full import count.
+
+**Unknown Debit Investigation**
+- Processor-only merchants not presented as confirmed candidates.
+- Correct matching confidence.
+- Exact transaction lookup.
+- Merchant existence validation.
+- User confirmation audit trail.
+- Invalid actions rejected.
+- Correct mandate wording.
+- Unknown processor wording.
+
+**Review & Resolve**
+- Accurate evidence counts.
+- Valid dates.
+- Correct filters.
+- Empty filter state.
+- Status validation.
+- Required resolution reason.
+- Audit trail.
+
+## 19.3 API smoke tests
+
+Retest the relevant existing routes, including:
+
+- Investigations.
+- Review Queue.
+- Commitment Passport.
+- Evidence Pack JSON.
+- Evidence Pack print HTML.
+- Reconciliation.
+- Commitment routes.
+- CSV mapping preview.
+- CSV mapping apply.
+- Mandate import.
+- Any newly modified cancellation or evidence endpoints.
+
+Do not merely check that every request returns HTTP 200.
+
+Verify the response content, state changes, relationships, validation and persistence.
+
+Negative tests must also confirm that invalid requests are rejected correctly.
+
+## 19.4 Live integrations
+
+Where credentials and network access are available:
+
+- Verify the real Neo4j connection.
+- Verify graph projection behaviour.
+- Verify relevant Sarvam requests.
+- Check that integration status represents actual outcomes.
+- Check that errors are handled properly.
+
+Where credentials are unavailable:
+
+- Run deterministic mock or unit tests.
+- Clearly report that live integration verification could not be performed.
+- Do not replace real integrations with fake successful responses.
+
+---
+
+# 20. REALISTIC DEMONSTRATION DATA AND END-TO-END USER JOURNEY
+
+Preserve the existing demonstration functionality, but isolate it behind explicit Demo Mode.
+
+The final prototype should provide a smooth demonstration journey showing why DebitLens is valuable.
+
+Demonstrate a user being able to:
+
+1. Import a bank statement.
+2. Map its columns correctly.
+3. Review imported debit and credit transactions.
+4. Identify recurring debit patterns.
+5. Discover an unfamiliar or cryptic debit descriptor.
+6. Open an Unknown Debit Investigation.
+7. See the transaction evidence and possible explanations.
+8. Distinguish a payment processor from the actual underlying merchant.
+9. Confirm a merchant only with explicit user action.
+10. Compare actual transaction activity with available mandate records.
+11. Identify missing or incomplete mandate records honestly.
+12. Open the Commitment Passport.
+13. See actual amounts, source information, service terms and mandate details where available.
+14. Review the evidence behind each important claim.
+15. Receive a clear distinction between service cancellation and payment mandate revocation.
+16. Record cancellation actions and supporting evidence.
+17. Generate an Evidence Pack.
+18. Print or save it as PDF.
+19. Monitor subsequent debits.
+20. Review new findings in Review & Resolve.
+
+Use consistent synthetic demo data for demonstration.
+
+Do not mix synthetic data with imported user data without a clear source label.
+
+Demonstrate missing-data states as well as successful identification states.
+
+Do not create unrealistic perfect evidence for every record. The prototype should demonstrate that it can honestly show uncertainty and evidence gaps.
+
+---
+
+# 21. DOCUMENTATION AND FINAL REPOSITORY CLEANUP
+
+Review and update the project's documentation so that it matches the actual implementation.
+
+Inspect:
+
+- `README.md`
+- `.env.example`
+- `docs/`
+- Relevant setup guides.
+- Architecture documentation.
+- API documentation.
+- Test instructions.
+- Import documentation.
+
+## 21.1 Correct the Sarvam environment variable
+
+The README reportedly uses:
+
+`SARVAM_TRANSLATE_MODEL`
+
+while the implementation and environment example use:
+
+`SARVAM_TRANSLATION_MODEL`
+
+Correct this inconsistency everywhere.
+
+Use the actual environment variable names supported by the backend.
+
+## 21.2 Correct test count claims
+
+The README previously referred to 36 tests while the F2 test history reported 42.
+
+After adding and running the final suite, update documentation to the actual verified final count.
+
+Never preserve a stale test count.
+
+## 21.3 Include missing setup files
+
+The previous compact final archive omitted:
+
+- `.env.example`
+- The canonical lockfile, such as `bun.lock`, if Bun is the chosen package manager.
+- Relevant `docs/` content.
+- `.gitignore`
+
+Include the files required for a clean setup and understandable project handoff.
+
+Ensure the setup instructions actually work with the included files.
+
+## 21.4 Clean final project package
+
+Create one clean, final submission ZIP.
+
+The final package must include the files necessary to install, configure, run, test and understand the final prototype.
+
+Include as applicable:
+
+- `src/`
+- `public/` with required application assets and relevant sample datasets.
+- `server.ts`
+- `package.json`
+- The canonical lockfile.
+- `tsconfig` files.
+- `vite.config` and other required build configuration.
+- `.env.example`
+- `.gitignore`
+- `README.md`
+- Relevant `docs/`
+- Required data fixtures or sample data.
+- Tests and test configuration.
+- Any assets required for the application to work.
+
+Exclude:
+
+- Actual `.env` secrets.
+- API keys and credentials.
+- `node_modules/`
+- Generated `dist/` unless explicitly required by the submission target.
+- Runtime persistence files containing personal or temporary information.
+- `.aistudio/`
+- Internal AI Studio history or action logs.
+- Internal planning PDFs and prompts placed in public application assets.
+- Temporary screenshots not needed by the application.
+- Stale nested submission ZIPs.
+- Old F1 submission archives.
+- Temporary debug outputs.
+- Unnecessary build/cache artifacts.
+
+Do not include a previous submission ZIP inside the final ZIP.
+
+Do not include the original large F2 archive inside the final project package.
+
+## 21.5 README acceptance
+
+The README must explain:
+
+- What DebitLens does.
+- Its main product capabilities.
+- The architecture.
+- Required runtime versions.
+- How to install dependencies.
+- How to configure `.env`.
+- How to start the frontend and backend.
+- How to run the tests.
+- How to run the production build.
+- How to configure Neo4j.
+- How to configure Sarvam.
+- Which integrations require credentials.
+- How to use Demo Mode.
+- Where sample data is located.
+- Known limitations, where any remain.
+
+Never claim a feature is complete if it is not implemented or verified.
+
+---
+
+# 22. REQUIRED FINAL ACCEPTANCE CRITERIA
+
+Do not call the refinement complete until the following conditions have been checked.
+
+## A. Product and branding
+
+- [ ] Product is consistently branded as DebitLens.
+- [ ] Tagline is consistently "Find it. Understand it. Reconcile it. Verify it."
+- [ ] No internal hackathon or partner-track messaging appears in normal consumer screens.
+- [ ] Neo4j and Sarvam technical details are in System Information, not the main dashboard.
+- [ ] Demo tools are hidden behind explicit Demo Mode.
+- [ ] Consumer dashboard focuses on financial commitments, transactions and investigations.
+- [ ] No misleading integration status is displayed.
+
+## B. Data and evidence integrity
+
+- [ ] No invented merchant email addresses.
+- [ ] No invented merchant websites.
+- [ ] No fabricated legal-entity names.
+- [ ] No fabricated grievance-officer information.
+- [ ] No fabricated confirmation timestamps.
+- [ ] No unrelated first-mandate or first-terms fallback.
+- [ ] Observed recurrence is distinct from contractual frequency.
+- [ ] Actual amounts are distinct from typical amounts.
+- [ ] Coverage is distinct from verification.
+- [ ] Imported information is not represented as independently verified.
+- [ ] Evidence status reflects actual provenance and review.
+
+## C. Security
+
+- [ ] Dynamic Evidence Pack HTML is escaped.
+- [ ] Script-injection regression tests pass.
+- [ ] API routes validate all important incoming values.
+- [ ] No secrets are included in the project package.
+- [ ] No raw user-imported content can become executable HTML.
+
+## D. Financial and investigation correctness
+
+- [ ] Canonical persistence is rollback-safe.
+- [ ] Graph synchronization is independently tracked.
+- [ ] No mandate duplicate can silently overwrite a complete record with an incomplete one.
+- [ ] Mandate values and dates are validated.
+- [ ] CSV parsing supports RFC-4180 records.
+- [ ] CSV imports process the complete file, not merely ten preview rows.
+- [ ] CSV reimports do not create duplicate transactions.
+- [ ] Credit, refund and reversal history is preserved.
+- [ ] Signed amount interpretation is correct.
+- [ ] Account and currency mappings are respected.
+- [ ] Ambiguous dates are not silently guessed.
+- [ ] Processor association is not treated as merchant identity.
+- [ ] Merchant confirmations are validated against the actual transaction.
+- [ ] Investigation actions use valid transitions.
+- [ ] Missing imported mandate information is not described as proof that no bank mandate exists.
+- [ ] RBI guidance does not promise zero liability or imply a universal three-calendar-day rule.
+
+## E. Review and user experience
+
+- [ ] Evidence counts are calculated, never fabricated.
+- [ ] Review queue dates are valid.
+- [ ] Filtered empty states do not claim the entire financial dataset is reconciled.
+- [ ] Mark-reviewed and mark-resolved behaviours are clearly distinguished.
+- [ ] Review status updates are validated and audited.
+- [ ] All loading, error, empty and success states are usable.
+- [ ] No button advertises an action that does not work.
+
+## F. Engineering quality
+
+- [ ] TypeScript typecheck passes.
+- [ ] Existing test suite passes.
+- [ ] New regression tests pass.
+- [ ] Production build passes.
+- [ ] API smoke tests pass.
+- [ ] Negative validation tests pass.
+- [ ] Important state mutations persist correctly.
+- [ ] No important test was removed or weakened to achieve success.
+- [ ] Real external integrations are accurately reported as verified or unverified.
+
+## G. Final handoff
+
+- [ ] README matches the actual implementation.
+- [ ] Environment variable names are correct.
+- [ ] Test count is current and verified.
+- [ ] `.env.example` is included.
+- [ ] Correct lockfile is included.
+- [ ] Relevant docs are included.
+- [ ] `.gitignore` is included.
+- [ ] No actual secrets are included.
+- [ ] No stale nested archives are included.
+- [ ] One clean final submission ZIP exists.
+- [ ] The final ZIP can be extracted and its setup instructions followed.
+
+---
+
+# 23. FINAL VISUAL AND FUNCTIONAL QUALITY REVIEW
+
+After all implementation work and tests:
+
+1. Start the application using the documented setup.
+2. Open the primary dashboard.
+3. Inspect the UI at normal desktop resolution.
+4. Check the important investigation, review, import and Passport screens.
+5. Generate and inspect a printable Evidence Pack.
+6. Test a realistic CSV import with more than ten rows.
+7. Test an invalid and ambiguous CSV import.
+8. Test a merchant candidate with only processor-level association.
+9. Test a commitment without a matching mandate or terms record.
+10. Test a persistence failure where possible.
+11. Check that no screen displays `Invalid Date`, `undefined`, `NaN`, raw JSON errors or meaningless placeholder values.
+12. Check navigation and return paths between the main product features.
+13. Confirm that user-facing terminology is consistent.
+14. Confirm that no internal developer or hackathon interface has leaked into ordinary product screens.
+
+Fix all issues discovered during this final quality review before packaging.
+
+Do not rely exclusively on screenshots. Exercise the actual UI interactions.
+
+---
+
+# 24. FINAL DELIVERABLES
+
+At the end of the work, provide:
+
+### 1. Final source project
+The complete corrected DebitLens source in the existing repository.
+
+### 2. One clean final ZIP
+Create one final submission-ready ZIP with a clear filename, such as:
+
+`DebitLens_Final_Prototype_Submission.zip`
+
+Do not create several competing archives.
+
+### 3. Final verification report
+Provide a short but meaningful report with:
+
+- Features corrected.
+- Critical security fixes.
+- Financial-integrity improvements.
+- Import improvements.
+- Investigation and evidence improvements.
+- UI and branding improvements.
+- Typecheck result.
+- Actual final test count and result.
+- Production build result.
+- API smoke-test result.
+- Neo4j live verification status.
+- Sarvam live verification status.
+- Any genuine remaining limitations.
+
+### 4. Submission contents
+Give a clear summary of what is included in the final ZIP and confirm that it excludes secrets, runtime data and stale archives.
+
+### 5. Remaining issues
+If something genuinely cannot be completed, disclose:
+
+- The exact issue.
+- Why it could not be completed.
+- Its practical impact.
+- Whether it blocks a final prototype demonstration or submission.
+- What is required to finish it.
+
+Do not hide incomplete requirements behind statements such as "all features implemented".
+
+---
+
+# 25. FINAL DEVELOPMENT PRIORITY
+
+Use the following implementation order, but complete all sections in the same coordinated refinement pass.
+
+**Priority 1 — Financial integrity and evidence correctness**
+
+Commitment Passport, mandate/terms associations, provenance, actual amount handling, Evidence Pack, HTML injection, persistence and data-source integrity.
+
+**Priority 2 — Import and investigation correctness**
+
+RFC-4180 CSV parsing, full-row processing, duplicate/idempotency, credit preservation, amount/date interpretation, mandate imports, merchant candidate validation and API safety.
+
+**Priority 3 — Review workflow and regulatory wording**
+
+Review queue date correctness, evidence counts, status transitions, audit trails and RBI guidance.
+
+**Priority 4 — Product finish**
+
+Branding, dashboard hierarchy, Demo Mode, integration diagnostics, accessibility and user-facing error states.
+
+**Priority 5 — Final engineering and release**
+
+Typecheck, regression tests, API smoke tests, production build, README, `.env.example`, lockfile and clean final ZIP.
+
+Do not stop after finishing only the first few priorities.
+
+---
+
+# FINAL INSTRUCTION
+
+Treat this as the final major refinement pass before the DebitLens prototype is demonstrated and submitted.
+
+The goal is not to add a large number of new features. The goal is to make the existing product truthful, coherent, secure, financially responsible, reliable and complete.
+
+**Preserve the existing architecture and working functionality. Fix the full set of known defects. Complete the missing edge cases. Validate the whole application. Polish the consumer experience. Package one clean final release.**
+
+Do not create multiple unnecessary intermediate versions. Do not leave known critical defects for a later iteration. Do not claim success without test evidence.
+
+At completion, DebitLens should function as one integrated consumer fintech product that can reliably help a user:
+
+**Find an unfamiliar debit → Understand the merchant and payment path → Reconcile transactions, service information and mandate records → Take the appropriate cancellation or revocation action → Preserve evidence → Verify what actually happened.**
