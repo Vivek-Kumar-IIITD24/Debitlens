@@ -61,6 +61,8 @@ export interface DashboardSummaryData {
   totalsByCurrency?: Record<string, CurrencyCommitmentSummary>;
   currencySummaries?: CurrencyCommitmentSummary[];
   unknownCurrencyCommitmentsCount?: number;
+  unknownCurrencyTransactionsCount?: number;
+  excludedUnknownCurrencyCount?: number;
   unsupportedCurrenciesCount?: number;
   isMultiCurrency?: boolean;
   activeCommitmentsCount: number;

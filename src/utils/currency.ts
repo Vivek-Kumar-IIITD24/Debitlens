@@ -32,7 +32,8 @@ export type StrictMoneyConversionError =
   | 'UNSAFE_INTEGER'
   | 'MISSING_CURRENCY'
   | 'UNKNOWN_CURRENCY'
-  | 'UNSUPPORTED_CURRENCY';
+  | 'UNSUPPORTED_CURRENCY'
+  | 'EXCESS_DECIMAL_PLACES';
 
 export type StrictMoneyConversionResult =
   | {
@@ -46,6 +47,7 @@ export type StrictMoneyConversionResult =
       value: null;
       error: StrictMoneyConversionError;
       currency: string | null;
+      decimals?: number;
     };
 
 export const SUPPORTED_CURRENCY_DECIMALS: Record<string, number> = {

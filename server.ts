@@ -1769,6 +1769,14 @@ app.get('/api/dashboard/summary', (req, res) => {
     .filter((cs) => cs.currencyStatus === 'UNSUPPORTED')
     .reduce((sum, cs) => sum + cs.activeCommitmentsCount, 0);
 
+  const unknownCurrencyTxnsCount = state.transactions.filter(
+    (t) => t.currency === UNKNOWN_CURRENCY || isUnknownCurrency(t.currency)
+  ).length;
+  const unknownCurrencyCommitmentsCount =
+    totalsByCurrency[UNKNOWN_CURRENCY]?.activeCommitmentsCount || 0;
+  const excludedUnknownCurrencyCount =
+    unknownCurrencyCommitmentsCount + unknownCurrencyTxnsCount;
+
   res.json({
     primaryCurrency,
     monthlyRecurringSpend: primaryBucket.monthlyRecurringSpend,
@@ -1777,8 +1785,9 @@ app.get('/api/dashboard/summary', (req, res) => {
     obligationAnnual: primaryBucket.obligationAnnual,
     totalsByCurrency,
     currencySummaries,
-    unknownCurrencyCommitmentsCount:
-      totalsByCurrency[UNKNOWN_CURRENCY]?.activeCommitmentsCount || 0,
+    unknownCurrencyCommitmentsCount,
+    unknownCurrencyTransactionsCount: unknownCurrencyTxnsCount,
+    excludedUnknownCurrencyCount,
     unsupportedCurrenciesCount,
     isMultiCurrency: currencySummaries.length > 1,
     activeCommitmentsCount: activeCommitments.length,
