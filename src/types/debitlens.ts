@@ -38,6 +38,11 @@ export type RecordSourceProvenance =
   | 'DEMO_SEED'
   | 'USER_IMPORTED'
   | 'USER_ENTERED'
+  | 'USER_UPLOADED'
+  | 'EXTERNAL_REFERENCE'
+  | 'CATALOGUE_DERIVED'
+  | 'AI_EXPLANATION'
+  | 'INDEPENDENTLY_VERIFIED'
   | 'SYSTEM_GENERATED'
   | 'UNKNOWN';
 
@@ -124,13 +129,30 @@ export type ServiceLifecycleStatus =
   | 'UNKNOWN'
   | 'ACTIVE'
   | 'CANCELLATION_REQUESTED'
+  | 'CANCELLATION_ACKNOWLEDGED'
   | 'CANCELLATION_REPORTED_BY_USER'
   | 'CANCELLATION_EVIDENCE_ATTACHED'
   | 'CANCELLED'
+  | 'CANCELLATION_VERIFIED'
   | 'CANCELLATION_REJECTED'
   | 'CANCELLATION_DISPUTED'
   | 'MERCHANT_UNRESPONSIVE'
   | 'EXPIRED';
+
+export const ALLOWED_SERVICE_LIFECYCLE_STATUSES: readonly ServiceLifecycleStatus[] = [
+  'UNKNOWN',
+  'ACTIVE',
+  'CANCELLATION_REQUESTED',
+  'CANCELLATION_ACKNOWLEDGED',
+  'CANCELLATION_REPORTED_BY_USER',
+  'CANCELLATION_EVIDENCE_ATTACHED',
+  'CANCELLED',
+  'CANCELLATION_VERIFIED',
+  'CANCELLATION_REJECTED',
+  'CANCELLATION_DISPUTED',
+  'MERCHANT_UNRESPONSIVE',
+  'EXPIRED',
+] as const;
 
 export type MandateLifecycleStatus =
   | 'UNKNOWN'
@@ -138,12 +160,30 @@ export type MandateLifecycleStatus =
   | 'PAUSED'
   | 'PAUSED_REPORTED_BY_USER'
   | 'REVOCATION_REQUESTED'
+  | 'REVOCATION_ACKNOWLEDGED'
   | 'REVOCATION_REPORTED_BY_USER'
   | 'REVOCATION_EVIDENCE_ATTACHED'
   | 'REVOKED'
+  | 'REVOCATION_VERIFIED'
   | 'REVOCATION_FAILED'
   | 'MANDATE_NOT_VISIBLE_IN_IMPORTED_DATA'
   | 'EXPIRED';
+
+export const ALLOWED_MANDATE_LIFECYCLE_STATUSES: readonly MandateLifecycleStatus[] = [
+  'UNKNOWN',
+  'ACTIVE',
+  'PAUSED',
+  'PAUSED_REPORTED_BY_USER',
+  'REVOCATION_REQUESTED',
+  'REVOCATION_ACKNOWLEDGED',
+  'REVOCATION_REPORTED_BY_USER',
+  'REVOCATION_EVIDENCE_ATTACHED',
+  'REVOKED',
+  'REVOCATION_VERIFIED',
+  'REVOCATION_FAILED',
+  'MANDATE_NOT_VISIBLE_IN_IMPORTED_DATA',
+  'EXPIRED',
+] as const;
 
 // Section 5.7: Truthful Neo4j execution modes
 export type GraphExecutionMode =
@@ -176,6 +216,14 @@ export type ReconciliationOutcomeStatus =
   | 'CONFLICTING_EVIDENCE'
   | 'UNRESOLVED';
 
+export type CurrencyProvenance =
+  | 'EXPLICIT_TRANSACTION'
+  | 'CONFIRMED_ACCOUNT_DEFAULT'
+  | 'USER_SELECTED_MAPPING'
+  | 'UNKNOWN_SOURCE';
+
+export type CurrencyStatus = 'SUPPORTED' | 'UNKNOWN' | 'UNSUPPORTED';
+
 export interface TransactionRecord {
   id: string;
   transactionId: string;
@@ -183,8 +231,10 @@ export interface TransactionRecord {
   rawDescription: string;
   normalisedDescription: string;
   amount: number;
-  amountMinor?: number;
+  amountMinor?: number | null;
   currency: string;
+  currencyProvenance?: CurrencyProvenance;
+  currencyStatus?: CurrencyStatus;
   direction: 'DEBIT' | 'CREDIT';
   paymentRail: PaymentRailType;
   accountAlias: string;
@@ -291,11 +341,12 @@ export interface CommitmentRecord {
   observedFrequency?: RecurrenceFrequency;
   recurrenceIntervalDays: number | null;
   typicalAmount: number;
-  expectedAmountMinor?: number;
+  expectedAmountMinor?: number | null;
   latestAmount: number;
-  latestAmountMinor?: number;
+  latestAmountMinor?: number | null;
   previousAmount: number | null;
   currency: string;
+  currencyStatus?: 'SUPPORTED' | 'UNKNOWN' | 'UNSUPPORTED';
   annualisedAmount: number;
   monthlyEquivalent: number;
   totalHistoricalSpend: number;
@@ -549,7 +600,9 @@ export interface DataCoverageSummary {
 export interface FinancialGuardrailConfig {
   commitmentId: string;
   currency: string;
-  maxExpectedAmountMinor: number;
+  precision?: number | null;
+  maxExpectedAmountMinor: number | null;
+  maxExpectedAmount?: number | null;
   alertOnAnyIncrease: boolean;
   preDebitReminderDays: number;
   requireTwoLayerCancellationConfirmation: boolean;
@@ -574,12 +627,26 @@ export interface CancellationPlaybookStep {
 export interface CancellationEvidenceRecord {
   id: string;
   cancellationSessionId?: string;
-  evidenceType: 'SERVICE_CONFIRMATION' | 'MANDATE_REVOCATION' | 'SUPPORT_TICKET' | 'MERCHANT_UNRESPONSIVE';
+  commitmentId?: string;
+  evidenceType:
+    | 'SERVICE_CONFIRMATION'
+    | 'MANDATE_REVOCATION'
+    | 'SUPPORT_TICKET'
+    | 'CONFIRMATION_NUMBER'
+    | 'MERCHANT_UNRESPONSIVE';
   description: string;
   referenceNumber: string;
   evidenceDate: string | null;
   effectiveDate?: string | null;
-  verificationStatus?: 'USER_REPORTED' | 'EVIDENCE_ATTACHED';
+  requestDate?: string | null;
+  acknowledgementDate?: string | null;
+  documentUploaded?: boolean;
+  documentContent?: string | null;
+  verificationStatus?:
+    | 'USER_REPORTED'
+    | 'EVIDENCE_ATTACHED'
+    | 'USER_CONFIRMED'
+    | 'INDEPENDENTLY_VERIFIED';
   evidenceRecordLifecycle?: EvidenceRecordLifecycleStatus;
   actionLifecycle?: ActionLifecycleStatus;
   sourceType?: RecordSourceProvenance;
@@ -605,6 +672,16 @@ export interface CancellationPlaybookRecord {
   steps: CancellationPlaybookStep[];
 }
 
+export interface EffectiveDateChangeRecord {
+  layer: 'LAYER_A_SERVICE' | 'LAYER_B_MANDATE' | 'SERVICE' | 'MANDATE';
+  previousDate: string | null;
+  newDate: string | null;
+  updatedAt?: string;
+  changedAt?: string;
+  sourceType?: RecordSourceProvenance;
+  reason?: string;
+}
+
 export interface CancellationSessionRecord {
   id: string;
   commitmentId: string;
@@ -615,8 +692,13 @@ export interface CancellationSessionRecord {
   serviceLifecycleStatus?: ServiceLifecycleStatus;
   mandateLifecycleStatus?: MandateLifecycleStatus;
   initiatedAt: string | null;
+  serviceCancellationRequestedAt?: string | null;
+  serviceCancellationAcknowledgedAt?: string | null;
   serviceCancelledAt: string | null;
+  mandateRevocationRequestedAt?: string | null;
+  mandateRevocationAcknowledgedAt?: string | null;
   paymentAuthorisationRevokedAt: string | null;
+  effectiveDateHistory?: EffectiveDateChangeRecord[];
   lastReviewedAt: string | null;
   steps: CancellationPlaybookStep[];
   evidence: CancellationEvidenceRecord[];
@@ -625,7 +707,7 @@ export interface CancellationSessionRecord {
   postMandateRevocationTransactionIds?: string[];
   serviceMonitoringEligible?: boolean;
   mandateMonitoringEligible?: boolean;
-  monitoringStatus?: 'MONITORING_ACTIVE' | 'POST_CANCELLATION_DEBIT_DETECTED' | 'NO_SUBSEQUENT_DEBIT_IN_IMPORTED_RECORDS';
+  monitoringStatus?: 'MONITORING_ACTIVE' | 'POST_CANCELLATION_DEBIT_DETECTED' | 'NO_SUBSEQUENT_DEBIT_IN_IMPORTED_RECORDS' | 'EFFECTIVE_DATE_UNAVAILABLE';
   monitoringSummary?: string;
 }
 
@@ -955,7 +1037,7 @@ export interface UnrecognizedDebitCase {
   transactionId: string;
   originalDescriptor: string;
   amount: number;
-  amountMinor: number;
+  amountMinor: number | null;
   transactionDate: string;
   currency: string;
   paymentRail: PaymentRailType;
@@ -1240,7 +1322,7 @@ export interface EvidencePackData {
   reconciliation: {
     outcome: ReconciliationOutcomeStatus;
     explanation: string;
-    currency?: string;
+    currency?: string | null;
     expectedServicePrice: number | null;
     actualDebitAmount: number | null;
     mandateCap: number | null;
@@ -1301,6 +1383,8 @@ export interface CsvMappingConfig {
   currencyColumn?: string;
   defaultRail?: string;
   defaultAccountAlias?: string;
+  defaultCurrency?: string | null;
+  confirmedAccountCurrencies?: Record<string, string>;
 }
 
 export interface CsvMappingPreviewRow {
@@ -1311,6 +1395,13 @@ export interface CsvMappingPreviewRow {
   rawAmount: string;
   interpretedAmount: number | null;
   direction: 'DEBIT' | 'CREDIT';
+  currency?: string;
+  currencyProvenance?:
+    | 'EXPLICIT_TRANSACTION'
+    | 'CONFIRMED_ACCOUNT_DEFAULT'
+    | 'USER_SELECTED_MAPPING'
+    | 'UNKNOWN_SOURCE';
+  currencyStatus?: 'SUPPORTED' | 'UNKNOWN' | 'UNSUPPORTED';
   isValid: boolean;
   rejectReason?: string;
   validationError?: string;
@@ -1319,6 +1410,12 @@ export interface CsvMappingPreviewRow {
     raw_description: string;
     amount: string;
     currency: string;
+    currency_provenance?:
+      | 'EXPLICIT_TRANSACTION'
+      | 'CONFIRMED_ACCOUNT_DEFAULT'
+      | 'USER_SELECTED_MAPPING'
+      | 'UNKNOWN_SOURCE';
+    currency_status?: 'SUPPORTED' | 'UNKNOWN' | 'UNSUPPORTED';
     direction: string;
     account_alias?: string;
     payment_rail?: string;

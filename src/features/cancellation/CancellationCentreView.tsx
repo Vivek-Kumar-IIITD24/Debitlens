@@ -25,15 +25,22 @@ interface CancellationCentreViewProps {
   selectedCommitmentId: string;
   onSelectCommitmentId: (id: string) => void;
   language: LanguageCode;
+  isDemoMode?: boolean;
   onToggleStep: (sessionId: string, stepId: string, completed: boolean) => Promise<void>;
   onAddEvidence: (
     sessionId: string,
     payload: {
-      evidenceType: 'SERVICE_CONFIRMATION' | 'MANDATE_REVOCATION' | 'SUPPORT_TICKET' | 'MERCHANT_UNRESPONSIVE';
+      evidenceType:
+        | 'SERVICE_CONFIRMATION'
+        | 'MANDATE_REVOCATION'
+        | 'SUPPORT_TICKET'
+        | 'CONFIRMATION_NUMBER'
+        | 'MERCHANT_UNRESPONSIVE';
       description: string;
       referenceNumber: string;
       evidenceDate?: string | null;
       effectiveDate?: string | null;
+      documentUploaded?: boolean;
     }
   ) => Promise<void>;
   onSimulatePostCancelDebit: (commitmentId: string) => Promise<void>;
@@ -44,6 +51,7 @@ interface CancellationCentreViewProps {
       effectiveDate?: string | null;
       referenceNumber?: string;
       notes?: string;
+      evidenceId?: string;
     }
   ) => Promise<void>;
   onUpdateMandateStatus?: (
@@ -53,6 +61,7 @@ interface CancellationCentreViewProps {
       revocationDate?: string | null;
       referenceNumber?: string;
       notes?: string;
+      evidenceId?: string;
     }
   ) => Promise<void>;
 }
@@ -64,6 +73,7 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
   selectedCommitmentId,
   onSelectCommitmentId,
   language,
+  isDemoMode = false,
   onToggleStep,
   onAddEvidence,
   onSimulatePostCancelDebit,
@@ -71,12 +81,17 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
   onUpdateMandateStatus,
 }) => {
   const [evidenceType, setEvidenceType] = useState<
-    'SERVICE_CONFIRMATION' | 'MANDATE_REVOCATION' | 'SUPPORT_TICKET' | 'MERCHANT_UNRESPONSIVE'
+    | 'SERVICE_CONFIRMATION'
+    | 'MANDATE_REVOCATION'
+    | 'SUPPORT_TICKET'
+    | 'CONFIRMATION_NUMBER'
+    | 'MERCHANT_UNRESPONSIVE'
   >('SERVICE_CONFIRMATION');
   const [referenceNumber, setReferenceNumber] = useState('');
   const [description, setDescription] = useState('');
   const [evidenceDate, setEvidenceDate] = useState('');
   const [evidenceEffectiveDate, setEvidenceEffectiveDate] = useState('');
+  const [documentUploaded, setDocumentUploaded] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -137,13 +152,17 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
         description: description.trim(),
         evidenceDate: evidenceDate.trim() || null,
         effectiveDate: evidenceEffectiveDate.trim() || null,
+        documentUploaded,
       });
       setReferenceNumber('');
       setDescription('');
       setEvidenceDate('');
       setEvidenceEffectiveDate('');
+      setDocumentUploaded(false);
       setStatusMessage(
-        'Cancellation evidence reference saved to canonical store (with separate evidence record date and effective completion date).'
+        documentUploaded
+          ? 'Cancellation evidence document saved to canonical store (DOCUMENT_UPLOADED · USER_UPLOADED).'
+          : 'Cancellation evidence reference saved to canonical store (EVIDENCE_REFERENCE_RECORDED · USER_ENTERED).'
       );
     } catch (err: any) {
       setFormError(err?.message || 'Failed to save cancellation evidence.');
@@ -221,18 +240,20 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
             ))}
           </select>
 
-          <button
-            type="button"
-            onClick={async () => {
-              await onSimulatePostCancelDebit(activeCommitment.id);
-              setStatusMessage(
-                `Simulated subsequent post-cancellation debit for ${activeCommitment.serviceName} on 2026-10-29! Check the Post-Cancellation Alert below.`
-              );
-            }}
-            className="px-3.5 py-2 text-xs font-medium text-rose-900 bg-rose-50 border border-rose-200 hover:bg-rose-100 rounded-lg transition-colors whitespace-nowrap"
-          >
-            Simulate Post-Cancellation Debit
-          </button>
+          {isDemoMode && (
+            <button
+              type="button"
+              onClick={async () => {
+                await onSimulatePostCancelDebit(activeCommitment.id);
+                setStatusMessage(
+                  `Simulated subsequent post-cancellation debit for ${activeCommitment.serviceName} on 2026-10-29! Check the Post-Cancellation Alert below.`
+                );
+              }}
+              className="px-3.5 py-2 text-xs font-medium text-rose-900 bg-rose-50 border border-rose-200 hover:bg-rose-100 rounded-lg transition-colors whitespace-nowrap"
+            >
+              Simulate Post-Cancellation Debit
+            </button>
+          )}
         </div>
       </div>
 
@@ -304,8 +325,10 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
           >
             <option value="ACTIVE">ACTIVE</option>
             <option value="CANCELLATION_REQUESTED">CANCELLATION_REQUESTED</option>
+            <option value="CANCELLATION_ACKNOWLEDGED">CANCELLATION_ACKNOWLEDGED</option>
             <option value="CANCELLATION_REPORTED_BY_USER">CANCELLATION_REPORTED_BY_USER</option>
             <option value="CANCELLATION_EVIDENCE_ATTACHED">CANCELLATION_EVIDENCE_ATTACHED</option>
+            <option value="CANCELLED">CANCELLED (Requires Effective Date)</option>
             <option value="MERCHANT_UNRESPONSIVE">MERCHANT_UNRESPONSIVE</option>
           </select>
           <div>
@@ -366,8 +389,11 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
           >
             <option value="ACTIVE">ACTIVE</option>
             <option value="PAUSED_REPORTED_BY_USER">PAUSED_REPORTED_BY_USER</option>
+            <option value="REVOCATION_REQUESTED">REVOCATION_REQUESTED</option>
+            <option value="REVOCATION_ACKNOWLEDGED">REVOCATION_ACKNOWLEDGED</option>
             <option value="REVOCATION_REPORTED_BY_USER">REVOCATION_REPORTED_BY_USER</option>
             <option value="REVOCATION_EVIDENCE_ATTACHED">REVOCATION_EVIDENCE_ATTACHED</option>
+            <option value="REVOKED">REVOKED (Requires Effective Date)</option>
             <option value="MANDATE_NOT_VISIBLE_IN_IMPORTED_DATA">
               MANDATE_NOT_VISIBLE_IN_IMPORTED_DATA
             </option>
@@ -601,7 +627,7 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
               >
                 <option value="SERVICE_CONFIRMATION">Layer A — Service Confirmation</option>
                 <option value="MANDATE_REVOCATION">Layer B — Mandate Revocation</option>
-                <option value="SUPPORT_TICKET">Support Grievance Ticket</option>
+                <option value="CONFIRMATION_NUMBER">Support / Confirmation Ticket</option>
                 <option value="MERCHANT_UNRESPONSIVE">Merchant Unresponsive — Escalated</option>
               </select>
             </div>
@@ -661,6 +687,19 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
             />
           </div>
 
+          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={documentUploaded}
+              onChange={(e) => setDocumentUploaded(e.target.checked)}
+              className="rounded border-slate-300 text-teal-700 focus:ring-teal-600"
+            />
+            <span>
+              Original confirmation document / screenshot uploaded (sets{' '}
+              <span className="font-mono font-semibold">DOCUMENT_UPLOADED · USER_UPLOADED</span>)
+            </span>
+          </label>
+
           <button
             type="submit"
             className="px-4 py-2 text-xs font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors"
@@ -694,7 +733,12 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
                   className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-1 text-xs"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-slate-700">
-                    <span className="font-semibold text-slate-900">{ev.referenceNumber}</span>
+                    <span className="font-semibold text-slate-900">
+                      {ev.referenceNumber}{' '}
+                      <span className="text-[10px] text-teal-800">
+                        ({ev.documentUploaded ? 'DOCUMENT_UPLOADED' : 'EVIDENCE_REFERENCE_RECORDED'} · {ev.sourceType})
+                      </span>
+                    </span>
                     <span>
                       {ev.evidenceType.replace(/_/g, ' ')} · Evidence Date:{' '}
                       {ev.evidenceDate || 'Not specified'}
@@ -704,6 +748,21 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
                   <p className="text-slate-600">{ev.description}</p>
                 </div>
               ))}
+            </div>
+          )}
+
+          {activeSession.effectiveDateHistory && activeSession.effectiveDateHistory.length > 0 && (
+            <div className="pt-2 space-y-1.5">
+              <div className="text-xs font-semibold text-slate-900">
+                Effective Date Correction History
+              </div>
+              <div className="space-y-1 text-[11px] font-mono text-slate-600">
+                {activeSession.effectiveDateHistory.map((h, idx) => (
+                  <div key={idx} className="p-2 rounded bg-slate-50 border border-slate-200">
+                    {h.layer}: {h.previousDate || 'null'} → {h.newDate || 'null'} (updated {h.updatedAt} · {h.sourceType})
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

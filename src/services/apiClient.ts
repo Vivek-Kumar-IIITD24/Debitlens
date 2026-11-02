@@ -44,6 +44,7 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 
 export interface CurrencyCommitmentSummary {
   currency: string;
+  currencyStatus?: 'SUPPORTED' | 'UNSUPPORTED' | 'UNKNOWN';
   monthlyRecurringSpend: number;
   annualCommitmentTotal: number;
   discretionaryAnnual: number;
@@ -59,6 +60,8 @@ export interface DashboardSummaryData {
   obligationAnnual: number;
   totalsByCurrency?: Record<string, CurrencyCommitmentSummary>;
   currencySummaries?: CurrencyCommitmentSummary[];
+  unknownCurrencyCommitmentsCount?: number;
+  unsupportedCurrenciesCount?: number;
   isMultiCurrency?: boolean;
   activeCommitmentsCount: number;
   totalCommitmentsCount: number;
@@ -67,6 +70,7 @@ export interface DashboardSummaryData {
   reviewRequiredCount: number;
   totalAlertsCount: number;
   unresolvedTransactionsCount: number;
+  demoModeEnabled?: boolean;
 }
 
 export interface MonthlyTrendPoint {
@@ -103,9 +107,47 @@ export interface DetectionMetricsData {
 }
 
 export const apiClient = {
+  getDemoMode: () => fetchJson<{ demoModeEnabled: boolean }>('/api/demo/mode'),
+  setDemoMode: (enabled: boolean) =>
+    fetchJson<{ demoModeEnabled: boolean; commitmentsCount: number; transactionsCount: number }>(
+      '/api/demo/mode',
+      {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
+      }
+    ),
+  getPreferences: () =>
+    fetchJson<{
+      primaryDisplayCurrency: string;
+      confirmedAccountCurrencies: Record<string, string>;
+      demoModeEnabled: boolean;
+    }>('/api/settings/preferences'),
+  updatePreferences: (payload: {
+    primaryCurrency?: string;
+    confirmedAccountCurrencies?: Record<string, string>;
+  }) =>
+    fetchJson<{
+      primaryDisplayCurrency: string;
+      confirmedAccountCurrencies: Record<string, string>;
+      demoModeEnabled: boolean;
+    }>('/api/settings/preferences', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
   getIntegrationsStatus: () => fetchJson<IntegrationStatusResponse>('/api/integrations/status'),
-  getDashboardSummary: () => fetchJson<DashboardSummaryData>('/api/dashboard/summary'),
-  getMonthlyTrend: () => fetchJson<MonthlyTrendPoint[]>('/api/dashboard/monthly-trend'),
+  getDashboardSummary: (currency?: string) =>
+    fetchJson<DashboardSummaryData>(
+      currency ? `/api/dashboard/summary?currency=${encodeURIComponent(currency)}` : '/api/dashboard/summary'
+    ),
+  getMonthlyTrend: (currency?: string, referenceDate?: string) => {
+    const params = new URLSearchParams();
+    if (currency) params.set('currency', currency);
+    if (referenceDate) params.set('referenceDate', referenceDate);
+    const qs = params.toString();
+    return fetchJson<MonthlyTrendPoint[]>(
+      qs ? `/api/dashboard/monthly-trend?${qs}` : '/api/dashboard/monthly-trend'
+    );
+  },
   getTransactions: () => fetchJson<TransactionRecord[]>('/api/transactions'),
   getCommitments: () => fetchJson<CommitmentRecord[]>('/api/commitments'),
   confirmCommitmentCandidate: (commitmentId: string) =>
@@ -190,11 +232,18 @@ export const apiClient = {
   addCancellationEvidence: (
     sessionId: string,
     payload: {
-      evidenceType: 'SERVICE_CONFIRMATION' | 'MANDATE_REVOCATION' | 'SUPPORT_TICKET' | 'MERCHANT_UNRESPONSIVE';
+      evidenceType:
+        | 'SERVICE_CONFIRMATION'
+        | 'MANDATE_REVOCATION'
+        | 'SUPPORT_TICKET'
+        | 'CONFIRMATION_NUMBER'
+        | 'MERCHANT_UNRESPONSIVE';
       description: string;
       referenceNumber: string;
       evidenceDate?: string | null;
       effectiveDate?: string | null;
+      documentUploaded?: boolean;
+      documentName?: string | null;
     }
   ) =>
     fetchJson<{ session: CancellationSessionRecord; commitment: CommitmentRecord }>(
@@ -209,9 +258,15 @@ export const apiClient = {
     payload: {
       serviceLifecycleStatus: ServiceLifecycleStatus;
       referenceNumber?: string;
+      evidenceId?: string;
       notes?: string;
       effectiveDate?: string | null;
       evidenceDate?: string | null;
+      requestDate?: string | null;
+      acknowledgementDate?: string | null;
+      documentUploaded?: boolean;
+      documentName?: string | null;
+      verifiedConfirmation?: boolean;
     }
   ) =>
     fetchJson<{ commitment: CommitmentRecord; session: CancellationSessionRecord }>(
@@ -226,10 +281,16 @@ export const apiClient = {
     payload: {
       mandateLifecycleStatus: MandateLifecycleStatus;
       referenceNumber?: string;
+      evidenceId?: string;
       notes?: string;
       revocationDate?: string | null;
       effectiveDate?: string | null;
       evidenceDate?: string | null;
+      requestDate?: string | null;
+      acknowledgementDate?: string | null;
+      documentUploaded?: boolean;
+      documentName?: string | null;
+      verifiedConfirmation?: boolean;
     }
   ) =>
     fetchJson<{ commitment: CommitmentRecord; session: CancellationSessionRecord }>(

@@ -32,6 +32,7 @@ interface ReconciliationCentreViewProps {
   findings: ReconciliationFindingRecord[];
   selectedCommitmentId: string;
   onSelectCommitment: (id: string) => void;
+  isDemoMode?: boolean;
   onUpsertServiceDocument: (payload: {
     commitmentId: string;
     rawText?: string;
@@ -96,6 +97,7 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
   findings,
   selectedCommitmentId,
   onSelectCommitment,
+  isDemoMode = false,
   onUpsertServiceDocument,
   onImportMandate,
   onLoadStreamBoxJudgeScenario,
@@ -218,6 +220,7 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
         merchantName: activeCommitment.merchantName,
         mandateReference: mandateRefInput.trim(),
         maxAmount: Number(mandateMaxInput || 999),
+        currency: activeCommitment.currency,
         paymentRail: mandateRailInput,
         frequency: activeCommitment.recurrenceType,
         mandateStatus: 'ACTIVE',
@@ -249,17 +252,19 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
             discrepancy as fraud.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={handleRunJudgeDemo}
-            disabled={busy}
-            data-testid="load-streambox-judge-demo-btn"
-            className="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs flex items-center gap-2 transition cursor-pointer disabled:opacity-50"
-          >
-            <Sparkles className="w-4 h-4" />
-            Load Judge Demo: StreamBox ₹499 vs ₹799 vs ₹999 Mandate
-          </button>
-        </div>
+        {isDemoMode && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleRunJudgeDemo}
+              disabled={busy}
+              data-testid="load-streambox-judge-demo-btn"
+              className="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs flex items-center gap-2 transition cursor-pointer disabled:opacity-50"
+            >
+              <Sparkles className="w-4 h-4" />
+              Load Judge Demo: StreamBox ₹499 vs ₹799 vs ₹999 Mandate
+            </button>
+          </div>
+        )}
       </div>
 
       {bannerMsg && (

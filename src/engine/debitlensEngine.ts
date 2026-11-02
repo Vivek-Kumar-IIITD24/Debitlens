@@ -25,6 +25,9 @@ import {
   MandateRecord,
   ServiceTermsRecord,
   ReconciliationFindingRecord,
+  CurrencyProvenance,
+  CurrencyStatus,
+  EffectiveDateChangeRecord,
 } from '../types/debitlens';
 import {
   MERCHANT_CATALOGUE,
@@ -34,10 +37,14 @@ import {
 } from './referenceData';
 import {
   toMinorUnits,
+  toMinorUnitsStrict,
   fromMinorUnits,
   formatCurrency,
   isValidCurrencyCode,
   normalizeCurrencyCode,
+  resolveTransactionCurrency,
+  isUnknownCurrency,
+  UNKNOWN_CURRENCY,
 } from '../utils/currency';
 import {
   isStrictValidIsoDate,
@@ -62,10 +69,14 @@ export interface RawCsvRow {
   raw_description: string;
   amount: string | number;
   currency: string;
+  currency_provenance?: CurrencyProvenance;
+  currency_status?: CurrencyStatus;
   direction: string;
   payment_rail: string;
   account_alias: string;
   external_reference: string;
+  source_type?: 'CSV_STATEMENT' | 'NOTIFICATION_JSON' | 'DEMO_SEED';
+  import_batch_id?: string;
 }
 
 export interface NotificationInput {
@@ -447,7 +458,8 @@ export function parseAndNormaliseTransactions(
   importBatchId = 'BATCH-SEED-01',
   sourceType: TransactionRecord['sourceType'] = 'DEMO_SEED',
   userConfirmedOverrides?: Record<string, string>,
-  defaultCurrency?: string
+  defaultCurrency?: string | null,
+  confirmedAccountCurrencies?: Record<string, string>
 ): {
   transactions: TransactionRecord[];
   invalidRows: { rowNumber: number; raw: unknown; reason: string }[];
@@ -511,29 +523,31 @@ export function parseAndNormaliseTransactions(
     }
     const dateStr = normalizedDate;
 
+    const accountAlias = (row.account_alias || 'PRIMARY-ACCT').trim();
+    const resolvedCurrency = resolveTransactionCurrency({
+      rawTransactionCurrency: row.currency,
+      accountAlias,
+      confirmedAccountCurrencies,
+      userSelectedMappingCurrency: defaultCurrency,
+      existingProvenance: row.currency_provenance,
+    });
+
+    if (resolvedCurrency.isMalformedCode) {
+      invalidRows.push({
+        rowNumber: rowNum,
+        raw: row,
+        reason: `Malformed ISO 4217 currency code: "${row.currency ?? ''}".`,
+      });
+      return;
+    }
+
     if (seenIds.has(txnId)) {
       duplicateRows.push({ rowNumber: rowNum, transactionId: txnId });
       return;
     }
     seenIds.add(txnId);
 
-    const rawCurrencyField =
-      row.currency !== undefined && row.currency !== null ? String(row.currency).trim().toUpperCase() : '';
-    const fallbackCurr =
-      defaultCurrency !== undefined
-        ? defaultCurrency.trim().toUpperCase()
-        : 'INR';
-    const rawCurrency = rawCurrencyField || fallbackCurr;
-    if (!rawCurrency || !isValidCurrencyCode(rawCurrency)) {
-      invalidRows.push({
-        rowNumber: rowNum,
-        raw: row,
-        reason: `Unsupported or missing ISO 4217 currency code: "${row.currency ?? ''}".`,
-      });
-      return;
-    }
-    const validCurrency = normalizeCurrencyCode(rawCurrency);
-
+    const validCurrency = resolvedCurrency.currency;
     const explicitRail = (row.payment_rail as PaymentRailType) || 'UNKNOWN';
     const resolved = resolveTransactionDescriptor(
       rawDesc,
@@ -549,11 +563,13 @@ export function parseAndNormaliseTransactions(
       rawDescription: rawDesc,
       normalisedDescription: resolved.normalisedDescription,
       amount: amt,
-      amountMinor: toMinorUnits(amt, validCurrency),
+      amountMinor: toMinorUnitsStrict(amt, validCurrency),
       currency: validCurrency,
+      currencyProvenance: resolvedCurrency.currencyProvenance,
+      currencyStatus: resolvedCurrency.currencyStatus,
       direction: direction === 'CREDIT' ? 'CREDIT' : 'DEBIT',
       paymentRail: resolved.paymentMechanism,
-      accountAlias: (row.account_alias || 'PRIMARY-ACCT').trim(),
+      accountAlias,
       merchantIdentity: {
         merchantId: resolved.merchantId,
         canonicalName: resolved.merchantName,
@@ -701,6 +717,11 @@ export interface UserCommitmentStateOverride {
   cancelledAtOverride?: string | null;
   serviceCancelledAtOverride?: string | null;
   mandateRevokedAtOverride?: string | null;
+  serviceCancellationRequestedAt?: string | null;
+  serviceCancellationAcknowledgedAt?: string | null;
+  mandateRevocationRequestedAt?: string | null;
+  mandateRevocationAcknowledgedAt?: string | null;
+  effectiveDateHistory?: EffectiveDateChangeRecord[];
   entityClass?: 'RECURRING_CANDIDATE' | 'FINANCIAL_COMMITMENT';
   verificationStatus?: 'PENDING_REVIEW' | 'CONFIRMED' | 'USER_CONFIRMED' | 'REJECTED';
   serviceLifecycleStatus?: ServiceLifecycleStatus;
@@ -726,11 +747,13 @@ export function detectCommitmentsAndAlerts(
     (t) => t.direction === 'DEBIT' && t.merchantId !== null
   );
 
-  // Gate C: Group recurring transactions by (merchantId, currency) so incompatible currencies are never combined
+  // Gate C: Group recurring transactions by (merchantId, currency) so incompatible or UNKNOWN currencies are never combined
   const groupedByMerchant = new Map<string, TransactionRecord[]>();
   for (const txn of debitTxns) {
     const mId = txn.merchantId!;
-    const curr = normalizeCurrencyCode(txn.currency, 'INR');
+    const curr = isUnknownCurrency(txn.currency)
+      ? UNKNOWN_CURRENCY
+      : txn.currency.trim().toUpperCase();
     const groupKey = `${mId}::${curr}`;
     const list = groupedByMerchant.get(groupKey) || [];
     list.push(txn);
@@ -802,7 +825,9 @@ export function detectCommitmentsAndAlerts(
 
   for (const [groupKey, txns] of groupedByMerchant.entries()) {
     const [merchantId, groupCurrencyRaw] = groupKey.split('::');
-    const groupCurrency = normalizeCurrencyCode(groupCurrencyRaw, 'INR');
+    const groupCurrency = isUnknownCurrency(groupCurrencyRaw)
+      ? UNKNOWN_CURRENCY
+      : groupCurrencyRaw.trim().toUpperCase();
     const merchant = MERCHANT_CATALOGUE.find((m) => m.id === merchantId);
     if (!merchant) continue;
 
@@ -1038,7 +1063,7 @@ export function detectCommitmentsAndAlerts(
       override.typicalAmountOverride !== undefined
         ? override.typicalAmountOverride
         : override.expectedAmountMinorOverride !== undefined
-        ? fromMinorUnits(override.expectedAmountMinorOverride)
+        ? fromMinorUnits(override.expectedAmountMinorOverride, groupCurrency) ?? typicalAmount
         : typicalAmount;
 
     const isDefaultCandidate =
@@ -1084,8 +1109,8 @@ export function detectCommitmentsAndAlerts(
       expectedAmountMinor:
         override.expectedAmountMinorOverride !== undefined
           ? override.expectedAmountMinorOverride
-          : toMinorUnits(effectiveTypicalAmount, groupCurrency),
-      latestAmountMinor: toMinorUnits(latestAmount, groupCurrency),
+          : toMinorUnitsStrict(effectiveTypicalAmount, groupCurrency),
+      latestAmountMinor: toMinorUnitsStrict(latestAmount, groupCurrency),
       currency: groupCurrency,
       annualisedAmount,
       monthlyEquivalent,
@@ -1235,15 +1260,37 @@ export function detectCommitmentsAndAlerts(
     if (hasPostCancelDebit) {
       const postTxnId = session.postCancellationTransactionIds[0];
       const postTxn = sorted.find((t) => t.id === postTxnId) || latestTxn;
-      const effectiveCancelDate = session.serviceCancelledAt || session.paymentAuthorisationRevokedAt;
+      const serviceDate = session.serviceCancelledAt;
+      const mandateDate = session.paymentAuthorisationRevokedAt;
+      const effectiveCancelDate = serviceDate || mandateDate;
       postTxn.isPostCancellationDebit = true;
+
+      const isAfterBothLayers =
+        Boolean(serviceDate && postTxn.transactionDate > serviceDate) &&
+        Boolean(mandateDate && postTxn.transactionDate > mandateDate);
+      const isAfterServiceBeforeMandate =
+        Boolean(serviceDate && postTxn.transactionDate > serviceDate) &&
+        (!mandateDate || postTxn.transactionDate <= mandateDate);
+      const isAfterMandateBeforeService =
+        Boolean(mandateDate && postTxn.transactionDate > mandateDate) &&
+        (!serviceDate || postTxn.transactionDate <= serviceDate);
+
+      let postCancelDescription = `A debit of ${formatCurrency(postTxn.amount, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, which is AFTER your recorded service & mandate cancellation on ${effectiveCancelDate}.`;
+      if (isAfterServiceBeforeMandate) {
+        postCancelDescription = `A debit of ${formatCurrency(postTxn.amount, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, AFTER your Layer A service cancellation effective date (${serviceDate}) while Layer B payment mandate remained active${mandateDate ? ` until ${mandateDate}` : ''}.`;
+      } else if (isAfterMandateBeforeService) {
+        postCancelDescription = `A debit of ${formatCurrency(postTxn.amount, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, AFTER your Layer B payment mandate revocation effective date (${mandateDate}) while Layer A service cancellation was not yet effective.`;
+      } else if (isAfterBothLayers) {
+        postCancelDescription = `A debit of ${formatCurrency(postTxn.amount, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, which is AFTER BOTH your Layer A service cancellation (${serviceDate}) and Layer B mandate revocation (${mandateDate}).`;
+      }
+
       alerts.push({
         id: `ALT-POSTCANCEL-${commitmentId}`,
         commitmentId,
         transactionId: postTxn.id,
         alertType: 'POST_CANCELLATION_DEBIT',
         title: `Possible Post-Cancellation Debit — Review Required: ${merchant.serviceName}`,
-        description: `A debit of ${formatCurrency(postTxn.amount, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, which is AFTER your recorded service & mandate cancellation on ${effectiveCancelDate}.`,
+        description: postCancelDescription,
         severity: 'HIGH',
         detectedValue: `${formatCurrency(postTxn.amount, groupCurrency)} on ${postTxn.transactionDate}`,
         previousValue: `Cancelled on ${effectiveCancelDate}`,
@@ -1265,7 +1312,9 @@ export function detectCommitmentsAndAlerts(
       (t.matchingMethod === 'PROCESSOR_ONLY_UNRESOLVED' || t.matchingMethod === 'GENERIC_MECHANISM_ONLY')
   );
   for (const uTxn of unresolvedTxns) {
-    const uCurr = normalizeCurrencyCode(uTxn.currency, 'INR');
+    const uCurr = isUnknownCurrency(uTxn.currency)
+      ? UNKNOWN_CURRENCY
+      : uTxn.currency.trim().toUpperCase();
     alerts.push({
       id: `ALT-UNRES-${uTxn.id}`,
       commitmentId: null,
@@ -1455,12 +1504,14 @@ export function buildPlaybookAndSessionForCommitment(params: {
     override.serviceLifecycleStatus === undefined ||
     override.serviceLifecycleStatus === 'CANCELLATION_REPORTED_BY_USER' ||
     override.serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED' ||
+    override.serviceLifecycleStatus === 'CANCELLATION_VERIFIED' ||
     override.serviceLifecycleStatus === 'CANCELLED';
 
   const isMandateCompletionStatus =
     override.mandateLifecycleStatus === undefined ||
     override.mandateLifecycleStatus === 'REVOCATION_REPORTED_BY_USER' ||
     override.mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED' ||
+    override.mandateLifecycleStatus === 'REVOCATION_VERIFIED' ||
     override.mandateLifecycleStatus === 'REVOKED';
 
   const serviceEvidenceWithEffectiveDate = evidence.find(
@@ -1497,6 +1548,7 @@ export function buildPlaybookAndSessionForCommitment(params: {
     Boolean(serviceCancelledAt) ||
     override.serviceLifecycleStatus === 'CANCELLATION_REPORTED_BY_USER' ||
     override.serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED' ||
+    override.serviceLifecycleStatus === 'CANCELLATION_VERIFIED' ||
     override.serviceLifecycleStatus === 'CANCELLED' ||
     (isServiceCompletionStatus && evidence.some((e) => e.evidenceType === 'SERVICE_CONFIRMATION'));
 
@@ -1504,6 +1556,7 @@ export function buildPlaybookAndSessionForCommitment(params: {
     Boolean(paymentAuthorisationRevokedAt) ||
     override.mandateLifecycleStatus === 'REVOCATION_REPORTED_BY_USER' ||
     override.mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED' ||
+    override.mandateLifecycleStatus === 'REVOCATION_VERIFIED' ||
     override.mandateLifecycleStatus === 'REVOKED' ||
     (isMandateCompletionStatus && evidence.some((e) => e.evidenceType === 'MANDATE_REVOCATION'));
 
@@ -1519,7 +1572,9 @@ export function buildPlaybookAndSessionForCommitment(params: {
   } else if (
     anyDone ||
     override.serviceLifecycleStatus === 'CANCELLATION_REQUESTED' ||
+    override.serviceLifecycleStatus === 'CANCELLATION_ACKNOWLEDGED' ||
     override.mandateLifecycleStatus === 'REVOCATION_REQUESTED' ||
+    override.mandateLifecycleStatus === 'REVOCATION_ACKNOWLEDGED' ||
     override.mandateLifecycleStatus === 'PAUSED_REPORTED_BY_USER'
   ) {
     status = 'SERVICE_CANCELLATION_PENDING';
@@ -1599,8 +1654,13 @@ export function buildPlaybookAndSessionForCommitment(params: {
     paymentRail,
     status,
     initiatedAt,
+    serviceCancellationRequestedAt: override.serviceCancellationRequestedAt ?? null,
+    serviceCancellationAcknowledgedAt: override.serviceCancellationAcknowledgedAt ?? null,
     serviceCancelledAt,
+    mandateRevocationRequestedAt: override.mandateRevocationRequestedAt ?? null,
+    mandateRevocationAcknowledgedAt: override.mandateRevocationAcknowledgedAt ?? null,
     paymentAuthorisationRevokedAt,
+    effectiveDateHistory: override.effectiveDateHistory ? [...override.effectiveDateHistory] : [],
     lastReviewedAt: initiatedAt || null,
     steps,
     evidence,
@@ -1732,7 +1792,7 @@ export function buildCommitmentGraphResponse(params: {
       },
     });
 
-    const cmtCcy = targetCommitment.currency || 'INR';
+    const cmtCcy = targetCommitment.currency || UNKNOWN_CURRENCY;
     const serviceNodeId = `SRV-${targetCommitment.id}`;
     addNode({
       id: serviceNodeId,
@@ -1995,7 +2055,7 @@ export function buildCommitmentGraphResponse(params: {
 
     cmtTxns.forEach((txn, idx) => {
       const isCoreTxn = idx === 0 || idx === cmtTxns.length - 1 || Boolean(txn.isPostCancellationDebit);
-      const txnCcy = txn.currency || targetCommitment.currency || 'INR';
+      const txnCcy = txn.currency || targetCommitment.currency || UNKNOWN_CURRENCY;
       addNode({
         id: txn.id,
         label: 'Transaction',
@@ -2146,7 +2206,7 @@ export function buildCommitmentGraphResponse(params: {
 
     const cmtNotifs = notifications.filter((n) => n.relatedCommitmentId === targetCommitment.id);
     for (const notif of cmtNotifs) {
-      const notifCcy = notif.currency || targetCommitment.currency || 'INR';
+      const notifCcy = notif.currency || targetCommitment.currency || UNKNOWN_CURRENCY;
       addNode({
         id: notif.id,
         label: 'NotificationEvent',
@@ -2231,7 +2291,7 @@ export function buildCommitmentGraphResponse(params: {
     // Attach Service Terms Document & Three-Way ReconciliationFinding nodes (Section 4.1 & 4.2)
     const matchedDoc = serviceTerms.find((d) => d.commitmentId === targetCommitment.id) || null;
     if (matchedDoc) {
-      const docCcy = matchedDoc.currency || targetCommitment.currency || 'INR';
+      const docCcy = matchedDoc.currency || targetCommitment.currency || UNKNOWN_CURRENCY;
       const docExpectedFormatted =
         matchedDoc.expectedAmount !== null
           ? formatCurrency(matchedDoc.expectedAmount, docCcy)
@@ -2290,12 +2350,12 @@ export function buildCommitmentGraphResponse(params: {
         recFinding.actualTransactionCurrency ||
         recFinding.currency ||
         targetCommitment.currency ||
-        'INR';
+        UNKNOWN_CURRENCY;
       const expectedCcy =
         recFinding.expectedServiceCurrency ||
         recFinding.currency ||
         targetCommitment.currency ||
-        'INR';
+        UNKNOWN_CURRENCY;
       addNode({
         id: recFinding.id,
         label: 'ReconciliationFinding',
@@ -2347,7 +2407,7 @@ export function buildCommitmentGraphResponse(params: {
         (t.processorName?.includes('Razorpay') || t.processorId === 'PROC-RAZORPAY')
     );
     for (const uTxn of unresolvedOnSameProcessor.slice(0, 1)) {
-      const uTxnCcy = uTxn.currency || 'INR';
+      const uTxnCcy = uTxn.currency || UNKNOWN_CURRENCY;
       addNode({
         id: 'PROC-RAZORPAY',
         label: 'PaymentProcessor',
@@ -2577,7 +2637,7 @@ ORDER BY t.transactionDate DESC`,
         date: t.transactionDate,
         rawDescriptor: t.rawDescription,
         amount: t.amount,
-        currency: t.currency || targetCommitment?.currency || 'INR',
+        currency: t.currency || targetCommitment?.currency || UNKNOWN_CURRENCY,
         accountAlias: t.accountAlias,
       })),
     },
@@ -2605,7 +2665,7 @@ export function redactTransactionForSarvam(
     processor: txn.processorName,
     service: txn.serviceName,
     amount: txn.amount,
-    currency: txn.currency || 'INR',
+    currency: txn.currency || UNKNOWN_CURRENCY,
     frequency: commitment?.recurrenceType || 'SINGLE_OR_UNRESOLVED',
     confidence: commitment?.confidenceScore ?? txn.confidenceScore,
     evidenceSummary: isVerified
@@ -2734,7 +2794,7 @@ export function buildGroundedMerchantExplanation(
   const isResolved = Boolean(txn.merchantId && txn.merchantName && txn.serviceName);
   const procName = txn.processorName || txn.paymentMechanism.replace(/_/g, ' ');
   const freq = commitment?.recurrenceType || 'RECURRING';
-  const formattedAmt = formatCurrency(txn.amount, txn.currency || commitment?.currency || 'INR');
+  const formattedAmt = formatCurrency(txn.amount, txn.currency || commitment?.currency || UNKNOWN_CURRENCY);
 
   const enBuilder = STATIC_MERCHANT_TRANSLATIONS['en-IN'];
   const targetBuilder = STATIC_MERCHANT_TRANSLATIONS[language] || enBuilder;
@@ -3099,7 +3159,7 @@ export function buildGroundedAlertExplanation(
 
   if (language === 'hi-IN') {
     if (alert.alertType === 'PRICE_INCREASE') {
-      const formattedAnnualImpact = formatCurrency(alert.annualImpact || 0, alert.currency || 'INR');
+      const formattedAnnualImpact = formatCurrency(alert.annualImpact || 0, alert.currency || UNKNOWN_CURRENCY);
       localizedTitle = `शुल्क वृद्धि की पहचान: ${alert.title}`;
       localizedExplanation = `इस प्रतिबद्धता की नवीनतम डेबिट राशि ${alert.detectedValue} है, जो पिछले मानक शुल्क ${alert.previousValue} से अधिक है (+${alert.percentageChange}% वृद्धि, वार्षिक प्रभाव ${formattedAnnualImpact})। विवरण: ${alert.evidenceReference}।`;
       localizedAction = `सत्यापित करें कि क्या आपने प्लान अपग्रेड किया है या मूल्य वृद्धि अनचाही है; आवश्यकता होने पर दो-स्तरीय रद्दीकरण (Two-Layer Cancellation) का उपयोग करें।`;

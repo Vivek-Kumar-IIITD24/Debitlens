@@ -47,7 +47,9 @@ import {
   toMinorUnits,
   fromMinorUnits,
   toMinorUnitsStrict,
+  toMinorUnitsStrictResult,
   fromMinorUnitsStrict,
+  fromMinorUnitsStrictResult,
   getCurrencyDecimalsOrNull,
   formatMinorINR,
   formatCurrency,
@@ -55,10 +57,19 @@ import {
   getCurrencyDecimals,
   isValidCurrencyCode,
   normalizeCurrencyCode,
+  resolveTransactionCurrency,
+  UNKNOWN_CURRENCY,
 } from '../utils/currency';
 import os from 'node:os';
 import http from 'node:http';
-import { normalizeDateString, isValidCalendarDate, isStrictValidIsoDate, getRuntimeDateISO } from '../utils/dateUtils';
+import {
+  normalizeDateString,
+  isValidCalendarDate,
+  isStrictValidIsoDate,
+  getRuntimeDateISO,
+  getDynamicMonthWindow,
+  formatDateTimeIN,
+} from '../utils/dateUtils';
 import { isPlaceholderEnvValue } from '../services/neo4jPersistenceService';
 import { MERCHANT_CATALOGUE } from './referenceData';
 
@@ -882,10 +893,10 @@ test('Dynamic Ground-Truth Evaluation computes genuine metrics against data/grou
 // ----------------------------------------------------------------------------
 
 test('Minor Units conversion (paise) is exact and free of floating-point drift', () => {
-  assert.equal(toMinorUnits(499), 49900);
-  assert.equal(toMinorUnits(799.5), 79950);
-  assert.equal(fromMinorUnits(49900), 499);
-  assert.equal(formatMinorINR(49900), '₹499');
+  assert.equal(toMinorUnits(499, 'INR'), 49900);
+  assert.equal(toMinorUnits(799.5, 'INR'), 79950);
+  assert.equal(fromMinorUnits(49900, 'INR'), 499);
+  assert.equal(formatMinorINR(49900, 'INR'), '₹499');
 
   const { transactions } = parseAndNormaliseTransactions(SAMPLE_ROWS);
   const { commitments } = detectCommitmentsAndAlerts(transactions, SAMPLE_NOTIFICATIONS);
@@ -3379,13 +3390,13 @@ test('Gate B Regression: Null/undefined monetary amounts never render as ₹0.00
   assert.ok(unsupportedMajor.includes('XYZ'));
   assert.ok(unsupportedMajor.includes('Unsupported currency'));
 
-  // 4. Omitted/undefined currency on formatCurrency / formatMinorCurrency returns explicit unavailable marker, never silently assuming INR
-  assert.equal(formatCurrency(499), '499.00 (Currency unavailable)');
-  assert.equal(formatCurrency(499, undefined), '499.00 (Currency unavailable)');
-  assert.equal(formatCurrency(499, null), '499.00 (Currency unavailable)');
-  assert.equal(formatMinorCurrency(49900), '499.00 (Currency unavailable)');
-  assert.equal(formatMinorCurrency(49900, undefined), '499.00 (Currency unavailable)');
-  assert.equal(formatMinorCurrency(49900, null), '499.00 (Currency unavailable)');
+  // 4. Omitted/undefined currency on formatCurrency / formatMinorCurrency returns explicit unavailable marker, never silently assuming INR or dividing by 100
+  assert.equal(formatCurrency(499), '499 (Currency unavailable)');
+  assert.equal(formatCurrency(499, undefined), '499 (Currency unavailable)');
+  assert.equal(formatCurrency(499, null), '499 (Currency unavailable)');
+  assert.equal(formatMinorCurrency(49900), '49900 minor units (Currency unavailable)');
+  assert.equal(formatMinorCurrency(49900, undefined), '49900 minor units (Currency unavailable)');
+  assert.equal(formatMinorCurrency(49900, null), '49900 minor units (Currency unavailable)');
 });
 
 test('Section 2 Currency Integrity: Multi-currency USD/EUR preservation across Alerts, Casebook, Graph, Bhasha & Investigation', () => {
@@ -3967,6 +3978,474 @@ test('Quality-Closure Gate: strict nullable minor-unit helpers, negative credit 
     'TXN-SC-AFTER-BOTH',
   ]);
 });
+
+// ============================================================================
+// PART 16: FINAL 10/10 QUALITY CLOSURE TESTS
+// ============================================================================
+
+test('Part 2 & 3 Closure: Currency Provenance, Missing Currency -> UNKNOWN (Never Silent INR), and Strict Minor-Unit Edge Cases', () => {
+  // 1. Missing currency without account default or user mapping -> UNKNOWN with UNKNOWN_SOURCE provenance
+  const missingCurrResolved = resolveTransactionCurrency({
+    rawTransactionCurrency: '',
+    accountAlias: 'UNMAPPED-ACCT',
+  });
+  assert.equal(missingCurrResolved.currency, UNKNOWN_CURRENCY);
+  assert.equal(missingCurrResolved.currencyProvenance, 'UNKNOWN_SOURCE');
+  assert.equal(missingCurrResolved.currencyStatus, 'UNKNOWN');
+  assert.equal(missingCurrResolved.decimals, null);
+
+  // 2. Confirmed account default -> CONFIRMED_ACCOUNT_DEFAULT
+  const acctDefaultResolved = resolveTransactionCurrency({
+    rawTransactionCurrency: '',
+    accountAlias: 'HDFC-XX4821',
+    confirmedAccountCurrencies: { 'HDFC-XX4821': 'INR' },
+  });
+  assert.equal(acctDefaultResolved.currency, 'INR');
+  assert.equal(acctDefaultResolved.currencyProvenance, 'CONFIRMED_ACCOUNT_DEFAULT');
+  assert.equal(acctDefaultResolved.currencyStatus, 'SUPPORTED');
+
+  // 3. Explicit user-selected mapping currency -> USER_SELECTED_MAPPING
+  const userMappingResolved = resolveTransactionCurrency({
+    rawTransactionCurrency: '',
+    accountAlias: 'AMEX-INTL',
+    userSelectedMappingCurrency: 'USD',
+  });
+  assert.equal(userMappingResolved.currency, 'USD');
+  assert.equal(userMappingResolved.currencyProvenance, 'USER_SELECTED_MAPPING');
+  assert.equal(userMappingResolved.currencyStatus, 'SUPPORTED');
+
+  // 4. Explicit transaction currency overrides defaults -> EXPLICIT_TRANSACTION
+  const explicitResolved = resolveTransactionCurrency({
+    rawTransactionCurrency: 'GBP',
+    accountAlias: 'HDFC-XX4821',
+    confirmedAccountCurrencies: { 'HDFC-XX4821': 'INR' },
+    userSelectedMappingCurrency: 'USD',
+  });
+  assert.equal(explicitResolved.currency, 'GBP');
+  assert.equal(explicitResolved.currencyProvenance, 'EXPLICIT_TRANSACTION');
+  assert.equal(explicitResolved.currencyStatus, 'SUPPORTED');
+
+  // 5. Unsupported ISO code vs UNKNOWN currency distinction
+  const unsupportedResolved = resolveTransactionCurrency({
+    rawTransactionCurrency: 'ZAR',
+  });
+  assert.equal(unsupportedResolved.currency, 'ZAR');
+  assert.equal(unsupportedResolved.currencyProvenance, 'EXPLICIT_TRANSACTION');
+  assert.equal(unsupportedResolved.currencyStatus, 'UNSUPPORTED');
+  assert.equal(unsupportedResolved.isMalformedCode, false);
+
+  // 6. parseAndNormaliseTransactions preserves UNKNOWN currency when currency is omitted and never converts to INR
+  const unknownRows: RawCsvRow[] = [
+    {
+      transaction_id: 'TXN-UNK-1',
+      transaction_date: '2026-08-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: '',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'ACCT-NO-CURRENCY',
+      external_reference: 'REF-UNK-1',
+    },
+    {
+      transaction_id: 'TXN-UNK-2',
+      transaction_date: '2026-09-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: '',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'ACCT-NO-CURRENCY',
+      external_reference: 'REF-UNK-2',
+    },
+  ];
+  const parsedUnknown = parseAndNormaliseTransactions(unknownRows, 'BATCH-UNK', 'CSV_STATEMENT');
+  assert.equal(parsedUnknown.transactions.length, 2);
+  assert.equal(parsedUnknown.transactions[0].currency, 'UNKNOWN');
+  assert.equal(parsedUnknown.transactions[0].currencyProvenance, 'UNKNOWN_SOURCE');
+  assert.equal(parsedUnknown.transactions[0].currencyStatus, 'UNKNOWN');
+  assert.equal(parsedUnknown.transactions[0].amountMinor, null);
+
+  // 7. UNKNOWN currency commitment is never matched against INR mandate in reconciliation
+  const { commitments: unkCommitments } = detectCommitmentsAndAlerts(parsedUnknown.transactions, []);
+  assert.equal(unkCommitments.length, 1);
+  assert.equal(unkCommitments[0].currency, 'UNKNOWN');
+  assert.equal(unkCommitments[0].expectedAmountMinor, null);
+
+  const inrMandate = buildInitialSeedMandates().find((m) => m.commitmentId === 'CMT-STREAMBOX')!;
+  const unkRec = reconcileCommitment({
+    commitment: unkCommitments[0],
+    transactions: parsedUnknown.transactions,
+    mandate: inrMandate,
+    serviceTerms: null,
+    cancellationSession: null,
+  });
+  assert.equal(unkRec.status, 'UNRESOLVED');
+  assert.equal(unkRec.discrepancyReason, 'CURRENCY_UNKNOWN');
+  assert.equal(unkRec.withinMandateLimit, null);
+
+  // 8. Smart CSV preview and apply produce identical currency and row outcomes when currency is missing vs user-selected
+  const smartCsvNoCurr = `Date,Narration,Debit,Credit\n05/10/2026,RZP*STREAMBOX,499.00,\n10/10/2026,UPI/DR/MUSICFLOW,199.00,`;
+  const baseMapConfig: any = {
+    dateColumn: 'Date',
+    descriptionColumn: 'Narration',
+    amountMode: 'SEPARATE_DEBIT_CREDIT',
+    debitAmountColumn: 'Debit',
+    creditAmountColumn: 'Credit',
+    dateFormat: 'DD/MM/YYYY',
+  };
+  const prevNoCurr = previewCsvMapping(smartCsvNoCurr, baseMapConfig);
+  const applyNoCurr = parseAllMappedCsvRows(smartCsvNoCurr, baseMapConfig, true);
+  assert.equal(prevNoCurr.validRowsCount, applyNoCurr.validCount);
+  assert.equal(prevNoCurr.previewRows[0].mappedRow?.currency, 'UNKNOWN');
+  assert.equal(prevNoCurr.previewRows[0].mappedRow?.currency_provenance, 'UNKNOWN_SOURCE');
+  assert.equal(applyNoCurr.validRows[0].currency, 'UNKNOWN');
+  assert.equal(applyNoCurr.validRows[0].currency_provenance, 'UNKNOWN_SOURCE');
+
+  const userUsdConfig = { ...baseMapConfig, defaultCurrency: 'USD' };
+  const prevUsd = previewCsvMapping(smartCsvNoCurr, userUsdConfig);
+  const applyUsd = parseAllMappedCsvRows(smartCsvNoCurr, userUsdConfig, true);
+  assert.equal(prevUsd.previewRows[0].mappedRow?.currency, 'USD');
+  assert.equal(prevUsd.previewRows[0].mappedRow?.currency_provenance, 'USER_SELECTED_MAPPING');
+  assert.equal(applyUsd.validRows[0].currency, 'USD');
+  assert.equal(applyUsd.validRows[0].currency_provenance, 'USER_SELECTED_MAPPING');
+
+  // 9. Strict minor-unit conversions for 0/2/3 decimals (JPY, INR/USD/EUR/GBP, KWD/BHD/OMR) and rejection of invalid precision/overflow
+  assert.equal(toMinorUnitsStrict(100, 'INR'), 10000);
+  assert.equal(toMinorUnitsStrict(100, 'USD'), 10000);
+  assert.equal(toMinorUnitsStrict(100, 'EUR'), 10000);
+  assert.equal(toMinorUnitsStrict(100, 'GBP'), 10000);
+  assert.equal(toMinorUnitsStrict(100, 'JPY'), 100);
+  assert.equal(toMinorUnitsStrict(12.345, 'KWD'), 12345);
+  assert.equal(toMinorUnitsStrict(12.345, 'BHD'), 12345);
+  assert.equal(toMinorUnitsStrict(12.345, 'OMR'), 12345);
+
+  // Reject fractional JPY (0-decimal currency) and >2 decimals in INR
+  const jpyFrac = toMinorUnitsStrictResult(100.5, 'JPY');
+  assert.equal(jpyFrac.ok, false);
+  assert.equal(jpyFrac.error, 'EXCESS_DECIMAL_PLACES');
+  assert.equal(toMinorUnitsStrict(100.5, 'JPY'), null);
+
+  const inrExcess = toMinorUnitsStrictResult(499.123, 'INR');
+  assert.equal(inrExcess.ok, false);
+  assert.equal(inrExcess.error, 'EXCESS_DECIMAL_PLACES');
+
+  // Reject NaN, Infinity, and safe-integer overflow
+  assert.equal(toMinorUnitsStrict(Number.NaN, 'INR'), null);
+  assert.equal(toMinorUnitsStrict(Number.POSITIVE_INFINITY, 'INR'), null);
+  assert.equal(toMinorUnitsStrict(Number.MAX_SAFE_INTEGER, 'INR'), null);
+  assert.equal(fromMinorUnitsStrictResult(100.5, 'INR').ok, false);
+  assert.equal(fromMinorUnitsStrictResult(Number.MAX_SAFE_INTEGER + 10, 'INR').ok, false);
+});
+
+test('Part 7 Closure: Asia/Kolkata Midnight Boundary, IST Formatting, and Dynamic Monthly Trend Window', () => {
+  // 1. Asia/Kolkata midnight boundary:
+  // 2026-10-31T20:00:00Z is 2026-11-01 01:30:00 IST -> must return '2026-11-01' in Asia/Kolkata!
+  const utcLateNight = new Date('2026-10-31T20:00:00.000Z');
+  assert.equal(
+    getRuntimeDateISO(undefined, utcLateNight),
+    '2026-11-01',
+    '2026-10-31T20:00:00Z is 01:30 IST on 2026-11-01 and must resolve to 2026-11-01 in Asia/Kolkata'
+  );
+
+  // 2026-10-31T18:29:00Z is 2026-10-31 23:59:00 IST -> must return '2026-10-31' in Asia/Kolkata!
+  const utcBeforeIstMidnight = new Date('2026-10-31T18:29:00.000Z');
+  assert.equal(
+    getRuntimeDateISO(undefined, utcBeforeIstMidnight),
+    '2026-10-31',
+    '2026-10-31T18:29:00Z is 23:59 IST on 2026-10-31 and must resolve to 2026-10-31 in Asia/Kolkata'
+  );
+
+  // 2. IST Timestamp formatting uses Asia/Kolkata and labels IST
+  const formattedIst = formatDateTimeIN('2026-10-31T20:00:00.000Z');
+  assert.ok(formattedIst.includes('Nov') && formattedIst.includes('IST'), `Expected Nov and IST in ${formattedIst}`);
+
+  // 3. Dynamic month window computes trailing N months from reference date instead of hardcoded 2026-06..2026-10
+  const windowNov = getDynamicMonthWindow('2026-11-15', 5);
+  assert.deepEqual(windowNov, ['2026-07', '2026-08', '2026-09', '2026-10', '2026-11']);
+
+  const windowFeb = getDynamicMonthWindow('2027-02-10', 5);
+  assert.deepEqual(windowFeb, ['2026-10', '2026-11', '2026-12', '2027-01', '2027-02']);
+});
+
+test('Part 4, 5 & 6 Server Closure: Demo Mode Server Enforcement, Simulated Data Isolation, Lifecycle Allowlist & Completion Semantics, Forged Provenance Rejection, and Evidence Ownership Validation', async () => {
+  const tmpStorePath = path.join(os.tmpdir(), `debitlens-closure-store-${Date.now()}.json`);
+  process.env.DEBITLENS_SKIP_LISTEN = '1';
+  process.env.DEBITLENS_STORE_PATH = tmpStorePath;
+
+  const serverMod = await import('../../server');
+  const { app, loadSeedData, setDemoModeForTesting } = serverMod;
+
+  loadSeedData();
+  setDemoModeForTesting(false);
+
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const addr = server.address() as { port: number };
+  const baseUrl = `http://127.0.0.1:${addr.port}`;
+
+  async function api(method: string, route: string, body?: any) {
+    const res = await fetch(`${baseUrl}${route}`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    const json = await res.json();
+    return { status: res.status, body: json };
+  }
+
+  try {
+    // 1. Part 4: Demo Mode defaults to OFF; all demo mutation endpoints return 403 Forbidden with zero state mutation
+    const modeInitial = await api('GET', '/api/demo/mode');
+    assert.equal(modeInitial.status, 200);
+    assert.equal(modeInitial.body.demoModeEnabled, false);
+
+    const txnsBeforeDemoAttempt = (await api('GET', '/api/transactions')).body.length;
+
+    const simBlocked = await api('POST', '/api/demo/simulate-post-cancel-debit', {
+      commitmentId: 'CMT-FITCLUB',
+    });
+    assert.equal(simBlocked.status, 403);
+    assert.equal(simBlocked.body.code, 'DEMO_MODE_DISABLED');
+
+    const streamboxBlocked = await api('POST', '/api/demo/streambox-judge-scenario', {});
+    assert.equal(streamboxBlocked.status, 403);
+    assert.equal(streamboxBlocked.body.code, 'DEMO_MODE_DISABLED');
+
+    const resetBlocked = await api('POST', '/api/demo/reset', {});
+    assert.equal(resetBlocked.status, 403);
+    assert.equal(resetBlocked.body.code, 'DEMO_MODE_DISABLED');
+
+    const rebuildBlocked = await api('POST', '/api/graph/rebuild-demo', {});
+    assert.equal(rebuildBlocked.status, 403);
+    assert.equal(rebuildBlocked.body.code, 'DEMO_MODE_DISABLED');
+
+    const txnsAfterDemoAttempt = (await api('GET', '/api/transactions')).body.length;
+    assert.equal(
+      txnsAfterDemoAttempt,
+      txnsBeforeDemoAttempt,
+      'Blocked demo endpoints when Demo Mode is OFF must cause zero state mutation'
+    );
+
+    // 2. Part 4: Enabling Demo Mode allows simulated scenario and isolates simulated records with DEMO_SEED provenance; turning Demo Mode OFF removes simulated overlays
+    const enableDemo = await api('POST', '/api/demo/mode', { enabled: true });
+    assert.equal(enableDemo.status, 200);
+    assert.equal(enableDemo.body.demoModeEnabled, true);
+
+    const judgeScenarioOk = await api('POST', '/api/demo/streambox-judge-scenario', {});
+    assert.equal(judgeScenarioOk.status, 200);
+    assert.equal(judgeScenarioOk.body.finding.status, 'AMOUNT_DISCREPANCY');
+    assert.equal(judgeScenarioOk.body.finding.actualTransactionAmount, 799);
+
+    const txnsInDemo = (await api('GET', '/api/transactions')).body;
+    const simTxn = txnsInDemo.find((t: any) => t.id === 'TXN-1005');
+    assert.ok(simTxn, 'Simulated TXN-1005 must appear while Demo Mode is ON');
+    assert.equal(simTxn.sourceType, 'DEMO_SEED');
+
+    // Turn Demo Mode OFF -> simulated overlay disappears and StreamBox returns to ₹499 MATCHED
+    await api('POST', '/api/demo/mode', { enabled: false });
+    const findingsAfterDemoOff = (await api('GET', '/api/reconciliation/findings')).body;
+    const sbAfterDemoOff = findingsAfterDemoOff.find((f: any) => f.commitmentId === 'CMT-STREAMBOX');
+    assert.equal(sbAfterDemoOff.status, 'MATCHED');
+    assert.equal(sbAfterDemoOff.actualTransactionAmount, 499);
+
+    // 3. Part 5: Forged privileged provenance (DEMO_SEED, SYSTEM_GENERATED, INDEPENDENTLY_VERIFIED) is rejected on user routes with HTTP 400 FORGED_PROVENANCE_REJECTED
+    const forgedMandate = await api('POST', '/api/mandates/import', {
+      mandate: {
+        commitmentId: 'CMT-STREAMBOX',
+        mandateReference: 'UMN-FORGED-01',
+        maxAmount: 999,
+        currency: 'INR',
+        paymentRail: 'UPI_AUTOPAY',
+        frequency: 'MONTHLY',
+        startDate: '2026-01-01',
+        sourceType: 'INDEPENDENTLY_VERIFIED',
+      },
+    });
+    assert.equal(forgedMandate.status, 400);
+    assert.equal(forgedMandate.body.code, 'FORGED_PROVENANCE_REJECTED');
+
+    const forgedTerms = await api('POST', '/api/service-documents', {
+      commitmentId: 'CMT-STREAMBOX',
+      expectedAmount: 499,
+      currency: 'INR',
+      billingFrequency: 'MONTHLY',
+      sourceType: 'DEMO_SEED',
+    });
+    assert.equal(forgedTerms.status, 400);
+    assert.equal(forgedTerms.body.code, 'FORGED_PROVENANCE_REJECTED');
+
+    const forgedEvid = await api('POST', '/api/cancellation/sessions/SESS-CMT-STREAMBOX/evidence', {
+      evidenceType: 'SERVICE_CONFIRMATION',
+      referenceNumber: 'REF-FORGED-1',
+      description: 'Attempted forged provenance',
+      sourceType: 'SYSTEM_GENERATED',
+    });
+    assert.equal(forgedEvid.status, 400);
+    assert.equal(forgedEvid.body.code, 'FORGED_PROVENANCE_REJECTED');
+
+    const forgedGuardrail = await api('PATCH', '/api/guardrails/CMT-STREAMBOX', {
+      currency: 'INR',
+      maxExpectedAmountMinor: 49900,
+      sourceType: 'DEMO_SEED',
+    });
+    assert.equal(forgedGuardrail.status, 400);
+    assert.equal(forgedGuardrail.body.code, 'FORGED_PROVENANCE_REJECTED');
+
+    // 4. Part 5: Lifecycle status allowlist enforcement, CANCELLED/REVOKED completion semantics, and effectiveDateHistory
+    const bogusServiceStatus = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/service-status', {
+      serviceLifecycleStatus: 'TOTALLY_INVALID_STATUS',
+    });
+    assert.equal(bogusServiceStatus.status, 400);
+
+    const bogusMandateStatus = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/mandate-status', {
+      mandateLifecycleStatus: 'TOTALLY_INVALID_MANDATE_STATUS',
+    });
+    assert.equal(bogusMandateStatus.status, 400);
+
+    // Reject self-declared CANCELLATION_VERIFIED / REVOCATION_VERIFIED without independent verification
+    const unverifiedCancelClaim = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/service-status', {
+      serviceLifecycleStatus: 'CANCELLATION_VERIFIED',
+      effectiveDate: '2026-10-15',
+    });
+    assert.equal(unverifiedCancelClaim.status, 400);
+
+    // Reject effectiveDate on CANCELLATION_REQUESTED or ACTIVE
+    const reqWithEffDate = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/service-status', {
+      serviceLifecycleStatus: 'CANCELLATION_REQUESTED',
+      effectiveDate: '2026-10-15',
+    });
+    assert.equal(reqWithEffDate.status, 400);
+
+    // Reject CANCELLED without effectiveDate
+    const cancelledNoDate = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/service-status', {
+      serviceLifecycleStatus: 'CANCELLED',
+    });
+    assert.equal(cancelledNoDate.status, 400);
+
+    // Accept CANCELLED with valid effectiveDate -> sets serviceCancelledAt; correcting it appends to effectiveDateHistory
+    const cancelledWithDate = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/service-status', {
+      serviceLifecycleStatus: 'CANCELLED',
+      effectiveDate: '2026-10-12',
+      notes: 'Cancelled service on 12 Oct',
+    });
+    assert.equal(cancelledWithDate.status, 200);
+    assert.equal(cancelledWithDate.body.commitment.serviceLifecycleStatus, 'CANCELLED');
+    assert.equal(cancelledWithDate.body.session.serviceCancelledAt, '2026-10-12');
+
+    const correctedCancelDate = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/service-status', {
+      serviceLifecycleStatus: 'CANCELLED',
+      effectiveDate: '2026-10-15',
+      notes: 'Corrected billing cycle end date to 15 Oct',
+    });
+    assert.equal(correctedCancelDate.status, 200);
+    assert.equal(correctedCancelDate.body.session.serviceCancelledAt, '2026-10-15');
+    assert.ok(correctedCancelDate.body.session.effectiveDateHistory.length >= 1);
+    assert.equal(correctedCancelDate.body.session.effectiveDateHistory[0].previousDate, '2026-10-12');
+    assert.equal(correctedCancelDate.body.session.effectiveDateHistory[0].newDate, '2026-10-15');
+
+    // Accept REVOKED with valid revocationDate -> sets paymentAuthorisationRevokedAt
+    const revokedNoDate = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/mandate-status', {
+      mandateLifecycleStatus: 'REVOKED',
+    });
+    assert.equal(revokedNoDate.status, 400);
+
+    const revokedWithDate = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/mandate-status', {
+      mandateLifecycleStatus: 'REVOKED',
+      revocationDate: '2026-10-16',
+    });
+    assert.equal(revokedWithDate.status, 200);
+    assert.equal(revokedWithDate.body.commitment.mandateLifecycleStatus, 'REVOKED');
+    assert.equal(revokedWithDate.body.session.paymentAuthorisationRevokedAt, '2026-10-16');
+
+    // 5. Part 5: Evidence ownership & layer validation (reject linking Layer B evidence or another commitment's evidence to Layer A CANCELLATION_EVIDENCE_ATTACHED)
+    const fitclubEv = await api('POST', '/api/cancellation/sessions/SESS-CMT-FITCLUB/evidence', {
+      evidenceType: 'SERVICE_CONFIRMATION',
+      referenceNumber: 'FIT-SRV-EV-101',
+      description: 'FitClub service confirmation',
+    });
+    assert.equal(fitclubEv.status, 200);
+    const fitclubEvId = fitclubEv.body.evidence.id;
+
+    // Attempt to attach FitClub's evidenceId to StreamBox -> rejected with 400 INVALID_EVIDENCE_LINK
+    const wrongCommitmentEvLink = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/service-status', {
+      serviceLifecycleStatus: 'CANCELLATION_EVIDENCE_ATTACHED',
+      evidenceId: fitclubEvId,
+      effectiveDate: '2026-10-15',
+    });
+    assert.equal(wrongCommitmentEvLink.status, 400);
+    assert.equal(wrongCommitmentEvLink.body.code, 'INVALID_EVIDENCE_LINK');
+
+    // Create a MANDATE_REVOCATION evidence on StreamBox and attempt to link it to Layer A SERVICE status -> rejected with 400 INVALID_EVIDENCE_LINK
+    const sbMandateEv = await api('POST', '/api/cancellation/sessions/SESS-CMT-STREAMBOX/evidence', {
+      evidenceType: 'MANDATE_REVOCATION',
+      referenceNumber: 'SB-MND-EV-202',
+      description: 'StreamBox UPI AutoPay revocation receipt',
+      documentUploaded: true,
+    });
+    assert.equal(sbMandateEv.status, 200);
+    assert.equal(sbMandateEv.body.evidence.evidenceRecordLifecycle, 'DOCUMENT_UPLOADED');
+    assert.equal(sbMandateEv.body.evidence.sourceType, 'USER_UPLOADED');
+
+    const wrongLayerEvLink = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/service-status', {
+      serviceLifecycleStatus: 'CANCELLATION_EVIDENCE_ATTACHED',
+      evidenceId: sbMandateEv.body.evidence.id,
+      effectiveDate: '2026-10-15',
+    });
+    assert.equal(wrongLayerEvLink.status, 400);
+    assert.equal(wrongLayerEvLink.body.code, 'INVALID_EVIDENCE_LINK');
+
+    // Linking sbMandateEv to Layer B REVOCATION_EVIDENCE_ATTACHED succeeds!
+    const validLayerBEvLink = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/mandate-status', {
+      mandateLifecycleStatus: 'REVOCATION_EVIDENCE_ATTACHED',
+      evidenceId: sbMandateEv.body.evidence.id,
+      revocationDate: '2026-10-16',
+    });
+    assert.equal(validLayerBEvLink.status, 200);
+
+    // 6. Part 2 & 7: Importing CSV row without currency stores UNKNOWN currency and never contaminates INR dashboard totals
+    const inrBeforeUnk = (await api('GET', '/api/dashboard/summary')).body.monthlyRecurringSpend;
+    const unkCsv = [
+      'transaction_id,transaction_date,raw_description,amount,currency,direction,payment_rail,account_alias,external_reference',
+      'TXN-API-UNK-1,2026-10-20,RZP*STREAMBOX,999.00,,DEBIT,UPI_AUTOPAY,UNMAPPED-ACCT-01,UTR-UNK-01',
+    ].join('\n');
+    const unkImportRes = await api('POST', '/api/import/transactions', {
+      csvContent: unkCsv,
+      filename: 'unknown-currency.csv',
+    });
+    assert.equal(unkImportRes.status, 200);
+    assert.equal(unkImportRes.body.batch.acceptedRecords, 1);
+
+    const allTxnsAfterUnk = (await api('GET', '/api/transactions')).body;
+    const importedUnkTxn = allTxnsAfterUnk.find((t: any) => t.id === 'TXN-API-UNK-1');
+    assert.ok(importedUnkTxn);
+    assert.equal(importedUnkTxn.currency, 'UNKNOWN');
+    assert.equal(importedUnkTxn.currencyProvenance, 'UNKNOWN_SOURCE');
+
+    const summaryAfterUnk = (await api('GET', '/api/dashboard/summary')).body;
+    assert.equal(
+      summaryAfterUnk.monthlyRecurringSpend,
+      inrBeforeUnk,
+      'Transaction with UNKNOWN currency must never be aggregated into INR monthlyRecurringSpend'
+    );
+    assert.ok(summaryAfterUnk.excludedUnknownCurrencyCount >= 1);
+
+    // 7. Part 7: Dynamic /api/dashboard/monthly-trend window responds to referenceDate
+    const dynamicTrend = await api('GET', '/api/dashboard/monthly-trend?referenceDate=2026-12-15&months=5');
+    assert.equal(dynamicTrend.status, 200);
+    assert.deepEqual(
+      dynamicTrend.body.map((m: any) => m.month),
+      ['2026-08', '2026-09', '2026-10', '2026-11', '2026-12']
+    );
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (fs.existsSync(tmpStorePath)) {
+      fs.unlinkSync(tmpStorePath);
+    }
+  }
+});
+
 
 
 

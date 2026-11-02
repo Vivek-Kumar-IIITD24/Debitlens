@@ -33,6 +33,7 @@ interface ImportHistoryItem {
 
 interface ImportStudioViewProps {
   importHistory: ImportHistoryItem[];
+  isDemoMode?: boolean;
   onImportCsv: (csvContent: string, filename: string) => Promise<void>;
   onImportNotifications?: (jsonContent: string, filename: string) => Promise<void>;
   onResetDemo: () => Promise<void>;
@@ -70,6 +71,7 @@ const SAMPLE_APPEND_NOTIFICATIONS_JSON = `[
 
 export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
   importHistory,
+  isDemoMode = false,
   onImportCsv,
   onImportNotifications,
   onResetDemo,
@@ -133,7 +135,18 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [activeImportTab, wizardCsvText, mappingConfig.dateColumn, mappingConfig.descriptionColumn, mappingConfig.amountMode, mappingConfig.debitAmountColumn, mappingConfig.dateFormat]);
+  }, [
+    activeImportTab,
+    wizardCsvText,
+    mappingConfig.dateColumn,
+    mappingConfig.descriptionColumn,
+    mappingConfig.amountMode,
+    mappingConfig.debitAmountColumn,
+    mappingConfig.creditAmountColumn,
+    mappingConfig.singleAmountColumn,
+    mappingConfig.dateFormat,
+    mappingConfig.defaultCurrency,
+  ]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -256,17 +269,19 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
             <Download className="w-3.5 h-3.5" />
             <span>Sample Standard CSV</span>
           </a>
-          <button
-            type="button"
-            onClick={async () => {
-              await onResetDemo();
-              setSuccessMsg('Reset synthetic dataset to baseline 45 transactions and 10 commitments.');
-            }}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg transition-colors whitespace-nowrap"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Demo Data</span>
-          </button>
+          {isDemoMode && (
+            <button
+              type="button"
+              onClick={async () => {
+                await onResetDemo();
+                setSuccessMsg('Reset synthetic dataset to baseline 45 transactions and 10 commitments.');
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Demo Data</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -489,6 +504,52 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
                     </div>
                   )}
                 </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1 border-t border-slate-200/60">
+                  <div>
+                    <label className="block text-slate-600 font-medium mb-1">
+                      Statement Mapping Currency (Optional — USER_SELECTED_MAPPING)
+                    </label>
+                    <select
+                      aria-label="Statement Mapping Currency"
+                      value={mappingConfig.defaultCurrency || ''}
+                      onChange={(e) =>
+                        setMappingConfig({
+                          ...mappingConfig,
+                          defaultCurrency: e.target.value || undefined,
+                        })
+                      }
+                      className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white text-slate-800 font-medium"
+                    >
+                      <option value="">
+                        Leave Unspecified (UNKNOWN unless CSV column or confirmed account specifies)
+                      </option>
+                      <option value="INR">INR — Indian Rupee (2 decimals)</option>
+                      <option value="USD">USD — US Dollar (2 decimals)</option>
+                      <option value="EUR">EUR — Euro (2 decimals)</option>
+                      <option value="GBP">GBP — British Pound (2 decimals)</option>
+                      <option value="JPY">JPY — Japanese Yen (0 decimals)</option>
+                      <option value="KWD">KWD — Kuwaiti Dinar (3 decimals)</option>
+                      <option value="BHD">BHD — Bahraini Dinar (3 decimals)</option>
+                      <option value="OMR">OMR — Omani Rial (3 decimals)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 font-medium mb-1">
+                      Target Account Alias
+                    </label>
+                    <input
+                      type="text"
+                      value={mappingConfig.defaultAccountAlias}
+                      onChange={(e) =>
+                        setMappingConfig({
+                          ...mappingConfig,
+                          defaultAccountAlias: e.target.value,
+                        })
+                      }
+                      className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white text-slate-800 font-mono"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Sample 10-Row Preview Table */}
@@ -505,7 +566,7 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
                         <th className="p-2.5">Row</th>
                         <th className="p-2.5">Parsed Date</th>
                         <th className="p-2.5">Extracted Narration</th>
-                        <th className="p-2.5">Amount</th>
+                        <th className="p-2.5">Amount &amp; Currency Provenance</th>
                         <th className="p-2.5">Status</th>
                       </tr>
                     </thead>
@@ -522,7 +583,22 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
                               {r.mappedRow?.raw_description || '—'}
                             </td>
                             <td className="p-2.5 font-bold font-mono">
-                              {r.mappedRow ? formatINR(Number(r.mappedRow.amount), r.mappedRow.currency || 'INR') : '—'}
+                              {r.mappedRow ? (
+                                <div>
+                                  <div>
+                                    {formatINR(
+                                      Number(r.mappedRow.amount),
+                                      r.mappedRow.currency || 'UNKNOWN'
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] font-normal text-slate-500">
+                                    {r.mappedRow.currency || 'UNKNOWN'} ·{' '}
+                                    {r.mappedRow.currency_provenance || 'UNKNOWN_SOURCE'}
+                                  </div>
+                                </div>
+                              ) : (
+                                '—'
+                              )}
                             </td>
                             <td className="p-2.5">
                               {r.isValid ? (

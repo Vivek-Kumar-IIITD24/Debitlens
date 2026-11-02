@@ -1,7 +1,10 @@
 /**
  * Safe, deterministic date formatting and normalisation utilities for DebitLens.
- * Strictly guarantees that 'Invalid Date' or 'NaN' is NEVER presented to the consumer.
+ * Strictly guarantees that 'Invalid Date' or 'NaN' is NEVER presented to the consumer,
+ * and enforces explicit Asia/Kolkata (IST) calendar extraction and timestamp formatting.
  */
+
+export const APPLICATION_TIMEZONE = 'Asia/Kolkata' as const;
 
 export function isValidCalendarDate(year: number, month: number, day: number): boolean {
   if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false;
@@ -25,11 +28,63 @@ export function isStrictValidIsoDate(d: string | null | undefined): d is string 
   return isValidCalendarDate(year, month, day);
 }
 
-export function getRuntimeDateISO(overrideDate?: string): string {
+/**
+ * Extracts the YYYY-MM-DD calendar date in Asia/Kolkata (IST, UTC+05:30)
+ * from a Date or epoch timestamp, avoiding UTC calendar drift around midnight.
+ */
+export function extractAsiaKolkataDateISO(instant: Date | number = new Date()): string {
+  const dt = instant instanceof Date ? instant : new Date(instant);
+  if (Number.isNaN(dt.getTime())) {
+    return extractAsiaKolkataDateISO(new Date());
+  }
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APPLICATION_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(dt);
+  const year = parts.find((p) => p.type === 'year')?.value || '1970';
+  const month = parts.find((p) => p.type === 'month')?.value || '01';
+  const day = parts.find((p) => p.type === 'day')?.value || '01';
+  return `${year}-${month}-${day}`;
+}
+
+export function getRuntimeDateISO(
+  overrideDate?: string | null,
+  referenceInstant?: Date | number
+): string {
   if (overrideDate && isStrictValidIsoDate(overrideDate)) {
     return overrideDate.trim();
   }
-  return new Date().toISOString().slice(0, 10);
+  if (referenceInstant !== undefined) {
+    return extractAsiaKolkataDateISO(referenceInstant);
+  }
+  return extractAsiaKolkataDateISO(new Date());
+}
+
+/**
+ * Computes a dynamic chronological window of YYYY-MM month strings ending at the
+ * calendar month of `referenceDateISO` (defaulting to current Asia/Kolkata date).
+ * Never includes future months beyond `referenceDateISO`.
+ */
+export function getDynamicMonthWindow(
+  referenceDateISO?: string | null,
+  monthCount: number = 6
+): string[] {
+  const safeCount = Math.max(1, Math.min(24, Math.floor(monthCount || 6)));
+  const resolvedDate = getRuntimeDateISO(referenceDateISO);
+  const [yStr, mStr] = resolvedDate.split('-');
+  const endYear = parseInt(yStr, 10);
+  const endMonth = parseInt(mStr, 10); // 1..12
+
+  const months: string[] = [];
+  for (let offset = safeCount - 1; offset >= 0; offset--) {
+    const totalMonths = endYear * 12 + (endMonth - 1) - offset;
+    const yr = Math.floor(totalMonths / 12);
+    const mo = (totalMonths % 12) + 1;
+    months.push(`${yr}-${String(mo).padStart(2, '0')}`);
+  }
+  return months;
 }
 
 export function normalizeDateString(input: unknown): string | null {
@@ -37,7 +92,7 @@ export function normalizeDateString(input: unknown): string | null {
   const str = String(input).trim();
   if (!str) return null;
 
-  // Check for ISO YYYY-MM-DD (or ISO timestamp prefix)
+  // Check for strict ISO YYYY-MM-DD (or ISO timestamp prefix)
   const isoMatch = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s].*)?$/);
   if (isoMatch) {
     const y = parseInt(isoMatch[1], 10);
@@ -126,10 +181,18 @@ export function formatDateIN(input: unknown, fallback: string = 'Date Unavailabl
   return `${d} ${monthName} ${y}`;
 }
 
+/**
+ * Formats an instant or ISO timestamp explicitly in Asia/Kolkata (IST, UTC+05:30).
+ * If given a date-only YYYY-MM-DD string, preserves the exact calendar date without shifting.
+ */
 export function formatDateTimeIN(input: unknown, fallback: string = 'Time Unavailable'): string {
   if (input === null || input === undefined) return fallback;
   const str = String(input).trim();
   if (!str) return fallback;
+
+  if (isStrictValidIsoDate(str)) {
+    return `${formatDateIN(str, fallback)}, 00:00 IST`;
+  }
 
   const ms = Date.parse(str);
   if (isNaN(ms)) return fallback;
@@ -137,11 +200,22 @@ export function formatDateTimeIN(input: unknown, fallback: string = 'Time Unavai
   const date = new Date(ms);
   if (isNaN(date.getTime())) return fallback;
 
-  const day = date.getDate();
-  const month = MONTH_NAMES[date.getMonth()];
-  const year = date.getFullYear();
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: APPLICATION_TIMEZONE,
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
 
-  return `${day} ${month} ${year}, ${hours}:${minutes} IST`;
+  const day = parts.find((p) => p.type === 'day')?.value || '';
+  const month = parts.find((p) => p.type === 'month')?.value || '';
+  const year = parts.find((p) => p.type === 'year')?.value || '';
+  const hour = parts.find((p) => p.type === 'hour')?.value || '00';
+  const minute = parts.find((p) => p.type === 'minute')?.value || '00';
+
+  if (!day || !month || !year) return fallback;
+  return `${parseInt(day, 10)} ${month} ${year}, ${hour}:${minute} IST`;
 }

@@ -22,11 +22,17 @@ import {
 } from '../types/debitlens';
 import {
   toMinorUnits,
+  toMinorUnitsStrict,
   fromMinorUnits,
+  fromMinorUnitsStrict,
   formatMinorINR,
   formatMinorCurrency,
+  formatCurrency,
   normalizeCurrencyCode,
   getMinorUnitLabel,
+  getCurrencyDecimalsOrNull,
+  isUnknownCurrency,
+  UNKNOWN_CURRENCY,
 } from '../utils/currency';
 import { SUPPORTED_LANGUAGES } from './referenceData';
 import { normalizeDateString } from '../utils/dateUtils';
@@ -542,18 +548,22 @@ export function extractServiceTermsFromText(params: {
   const text = rawText.trim();
   const isVerified = Boolean(userVerified);
 
-  // Extract currency token and amount — never invent a fallback price when missing
-  const amountRegex = /(INR|Rs\.?|₹|USD|\$|EUR|€|GBP|£|JPY|¥)\s*([0-9,]+(?:\.[0-9]{1,3})?)/i;
+  // Extract currency token and amount — never invent a fallback price or currency when missing
+  const amountRegex = /(INR|Rs\.?|₹|USD|US\$|\$|EUR|€|GBP|£|JPY|¥|KWD|BHD|OMR|AUD|CAD|SGD|AED)\s*([0-9,]+(?:\.[0-9]{1,3})?)/i;
   const amountMatch = text.match(amountRegex);
 
-  let detectedCurrency = normalizeCurrencyCode(params.currency) || 'INR';
+  let detectedCurrency = normalizeCurrencyCode(params.currency) || UNKNOWN_CURRENCY;
   if (amountMatch) {
     const token = amountMatch[1].toUpperCase();
-    if (token === 'USD' || token === '$') detectedCurrency = 'USD';
+    if (token === 'USD' || token === 'US$' || token === '$') detectedCurrency = 'USD';
     else if (token === 'EUR' || token === '€') detectedCurrency = 'EUR';
     else if (token === 'GBP' || token === '£') detectedCurrency = 'GBP';
     else if (token === 'JPY' || token === '¥') detectedCurrency = 'JPY';
-    else detectedCurrency = 'INR';
+    else if (token === 'KWD' || token === 'BHD' || token === 'OMR' || token === 'AUD' || token === 'CAD' || token === 'SGD' || token === 'AED') {
+      detectedCurrency = token;
+    } else {
+      detectedCurrency = 'INR';
+    }
   }
 
   const parsedAmount = amountMatch
@@ -561,11 +571,13 @@ export function extractServiceTermsFromText(params: {
     : null;
   const expectedAmountMinor =
     parsedAmount !== null && Number.isFinite(parsedAmount)
-      ? toMinorUnits(parsedAmount, detectedCurrency)
+      ? toMinorUnitsStrict(parsedAmount, detectedCurrency)
       : null;
   const expectedAmount =
     expectedAmountMinor !== null
-      ? fromMinorUnits(expectedAmountMinor, detectedCurrency)
+      ? fromMinorUnitsStrict(expectedAmountMinor, detectedCurrency)
+      : parsedAmount !== null && Number.isFinite(parsedAmount)
+      ? parsedAmount
       : null;
 
   // Extract billing frequency — missing billing frequency must remain UNKNOWN (never default to MONTHLY)
@@ -786,28 +798,35 @@ export function reconcileCommitment(params: {
     )
     .sort((a, b) => Date.parse(a.transactionDate) - Date.parse(b.transactionDate));
 
-  const cmtCurrency = normalizeCurrencyCode(commitment.currency || 'INR');
-  const termsCurrency = serviceTerms
-    ? normalizeCurrencyCode(serviceTerms.currency === undefined ? 'INR' : serviceTerms.currency)
+  const rawCmtCurrency = isUnknownCurrency(commitment.currency) ? UNKNOWN_CURRENCY : commitment.currency.trim().toUpperCase();
+  const cmtCurrency = normalizeCurrencyCode(rawCmtCurrency);
+  const rawTermsCurrency = serviceTerms
+    ? isUnknownCurrency(serviceTerms.currency)
+      ? UNKNOWN_CURRENCY
+      : serviceTerms.currency.trim().toUpperCase()
     : null;
-  const mandateCurrency = mandate
-    ? normalizeCurrencyCode(mandate.currency === undefined ? 'INR' : mandate.currency)
+  const termsCurrency = rawTermsCurrency ? normalizeCurrencyCode(rawTermsCurrency) : null;
+  const rawMandateCurrency = mandate
+    ? isUnknownCurrency(mandate.currency)
+      ? UNKNOWN_CURRENCY
+      : mandate.currency.trim().toUpperCase()
     : null;
+  const mandateCurrency = rawMandateCurrency ? normalizeCurrencyCode(rawMandateCurrency) : null;
 
   const expectedServiceAmountMinor =
-    serviceTerms && serviceTerms.expectedAmountMinor !== null
+    serviceTerms && serviceTerms.expectedAmountMinor !== null && termsCurrency
       ? serviceTerms.expectedAmountMinor
       : null;
   const expectedServiceAmount =
-    expectedServiceAmountMinor !== null
-      ? fromMinorUnits(expectedServiceAmountMinor, termsCurrency || 'INR')
-      : null;
+    expectedServiceAmountMinor !== null && termsCurrency
+      ? fromMinorUnitsStrict(expectedServiceAmountMinor, termsCurrency)
+      : serviceTerms?.expectedAmount ?? null;
 
-  const mandateMaxAmountMinor = mandate ? mandate.maxAmountMinor : null;
+  const mandateMaxAmountMinor = mandate && mandateCurrency ? mandate.maxAmountMinor : null;
   const mandateMaxAmount =
-    mandateMaxAmountMinor !== null
-      ? fromMinorUnits(mandateMaxAmountMinor, mandateCurrency || 'INR')
-      : null;
+    mandateMaxAmountMinor !== null && mandateCurrency
+      ? fromMinorUnitsStrict(mandateMaxAmountMinor, mandateCurrency)
+      : mandate?.maxAmount ?? null;
 
   // Handle commitment with an active mandate but zero debit transactions in the imported statement period
   if (cmtTxns.length === 0) {
@@ -816,7 +835,7 @@ export function reconcileCommitment(params: {
       Boolean(mandate) && effectiveStatusForZeroTxns === 'ACTIVE_VALID';
 
     if (isMandateActiveWithNoTxns && mandate) {
-      const mCcy = mandateCurrency || cmtCurrency || 'INR';
+      const mCcy = mandateCurrency || cmtCurrency || rawMandateCurrency || UNKNOWN_CURRENCY;
       return {
         id: `REC-${commitment.id}`,
         commitmentId: commitment.id,
@@ -872,10 +891,10 @@ export function reconcileCommitment(params: {
       merchantName: commitment.merchantName,
       serviceName: commitment.serviceName,
       status: 'UNRESOLVED',
-      currency: cmtCurrency || 'INR',
-      expectedServiceCurrency: termsCurrency,
+      currency: cmtCurrency || rawCmtCurrency || UNKNOWN_CURRENCY,
+      expectedServiceCurrency: termsCurrency || rawTermsCurrency,
       actualTransactionCurrency: null,
-      mandateCurrency,
+      mandateCurrency: mandateCurrency || rawMandateCurrency,
       expectedServiceAmountMinor,
       expectedServiceAmount,
       actualTransactionAmountMinor: null,
@@ -907,19 +926,26 @@ export function reconcileCommitment(params: {
   }
 
   const latestTxn = cmtTxns[cmtTxns.length - 1];
-  const rawTxnCurrency = latestTxn.currency === undefined ? (commitment.currency || 'INR') : latestTxn.currency;
+  const rawTxnCurrency = latestTxn.currency === undefined
+    ? (commitment.currency || UNKNOWN_CURRENCY)
+    : (isUnknownCurrency(latestTxn.currency) ? UNKNOWN_CURRENCY : latestTxn.currency.trim().toUpperCase());
   const txnCurrency = normalizeCurrencyCode(rawTxnCurrency);
-  const effectiveCurrency = txnCurrency || cmtCurrency || 'INR';
+  const effectiveCurrency = txnCurrency || rawTxnCurrency || cmtCurrency || UNKNOWN_CURRENCY;
 
   const actualTransactionAmountMinor =
-    latestTxn.amountMinor !== undefined && latestTxn.amountMinor !== null
-      ? latestTxn.amountMinor
-      : toMinorUnits(latestTxn.amount, effectiveCurrency);
-  const actualTransactionAmount = fromMinorUnits(actualTransactionAmountMinor, effectiveCurrency);
+    txnCurrency
+      ? latestTxn.amountMinor !== undefined && latestTxn.amountMinor !== null
+        ? latestTxn.amountMinor
+        : toMinorUnitsStrict(latestTxn.amount, txnCurrency)
+      : null;
+  const actualTransactionAmount =
+    actualTransactionAmountMinor !== null && txnCurrency
+      ? fromMinorUnitsStrict(actualTransactionAmountMinor, txnCurrency)
+      : latestTxn.amount;
   const latestTxnDate = latestTxn.transactionDate || commitment.lastPaymentDate;
 
   // Currency validation & cross-currency mismatch protection (Section 6.3):
-  // Never compare amounts in different currencies as equivalent or mark a cross-currency comparison as MATCHED.
+  // Never compare amounts in different currencies as equivalent or mark a cross-currency or UNKNOWN currency comparison as MATCHED.
   const hasInvalidTxnCurrency = !txnCurrency;
   const hasMandateCurrencyMismatch = Boolean(
     mandate && (!mandateCurrency || (txnCurrency && mandateCurrency !== txnCurrency))
@@ -930,17 +956,17 @@ export function reconcileCommitment(params: {
   const hasCurrencyMismatch = hasMandateCurrencyMismatch || hasTermsCurrencyMismatch;
 
   const withinMandateLimit =
-    !hasCurrencyMismatch && !hasInvalidTxnCurrency && mandateMaxAmountMinor !== null
+    !hasCurrencyMismatch && !hasInvalidTxnCurrency && mandateMaxAmountMinor !== null && actualTransactionAmountMinor !== null
       ? actualTransactionAmountMinor <= mandateMaxAmountMinor
       : null;
 
   const discrepancyAmountMinor =
-    !hasCurrencyMismatch && !hasInvalidTxnCurrency && expectedServiceAmountMinor !== null
+    !hasCurrencyMismatch && !hasInvalidTxnCurrency && expectedServiceAmountMinor !== null && actualTransactionAmountMinor !== null
       ? actualTransactionAmountMinor - expectedServiceAmountMinor
       : null;
   const discrepancyAmount =
-    discrepancyAmountMinor !== null
-      ? fromMinorUnits(discrepancyAmountMinor, effectiveCurrency)
+    discrepancyAmountMinor !== null && txnCurrency
+      ? fromMinorUnitsStrict(discrepancyAmountMinor, txnCurrency)
       : null;
 
   const discrepancyPercent =
@@ -968,11 +994,12 @@ export function reconcileCommitment(params: {
   for (let i = 1; i < cmtTxns.length; i++) {
     const prev = cmtTxns[i - 1];
     const curr = cmtTxns[i];
-    const prevCcy = normalizeCurrencyCode(prev.currency || effectiveCurrency) || effectiveCurrency;
-    const currCcy = normalizeCurrencyCode(curr.currency || effectiveCurrency) || effectiveCurrency;
-    if (prevCcy !== currCcy) continue;
-    const prevMinor = toMinorUnits(prev.amount, prevCcy);
-    const currMinor = toMinorUnits(curr.amount, currCcy);
+    const prevCcy = normalizeCurrencyCode(prev.currency);
+    const currCcy = normalizeCurrencyCode(curr.currency);
+    if (!prevCcy || !currCcy || prevCcy !== currCcy) continue;
+    const prevMinor = toMinorUnitsStrict(prev.amount, prevCcy);
+    const currMinor = toMinorUnitsStrict(curr.amount, currCcy);
+    if (prevMinor === null || currMinor === null) continue;
     const daysApart = Math.round(
       Math.abs(Date.parse(curr.transactionDate) - Date.parse(prev.transactionDate)) /
         (1000 * 60 * 60 * 24)
@@ -980,9 +1007,9 @@ export function reconcileCommitment(params: {
     if (daysApart <= 2 && prevMinor === currMinor) {
       const matchingReversal = cmtCreditTxns.find((cred) => {
         if (consumedCreditIds.has(cred.id)) return false;
-        const credCcy = normalizeCurrencyCode(cred.currency || currCcy) || currCcy;
-        if (credCcy !== currCcy) return false;
-        if (toMinorUnits(cred.amount, credCcy) !== currMinor) return false;
+        const credCcy = normalizeCurrencyCode(cred.currency);
+        if (!credCcy || credCcy !== currCcy) return false;
+        if (toMinorUnitsStrict(cred.amount, credCcy) !== currMinor) return false;
         const credTime = Date.parse(cred.transactionDate);
         const prevTime = Date.parse(prev.transactionDate);
         const daysSinceFirstDebit = (credTime - prevTime) / (1000 * 60 * 60 * 24);
@@ -1019,12 +1046,15 @@ export function reconcileCommitment(params: {
 
   if (hasInvalidTxnCurrency) {
     status = 'UNRESOLVED';
-    discrepancyReasonOverride = 'INVALID_CURRENCY';
-    explanation = `Cannot reconcile ${commitment.serviceName} because statement transaction ${latestTxn.id} has a missing or unsupported ISO 4217 currency code ("${rawTxnCurrency || 'UNSPECIFIED'}").`;
+    const isUnk = isUnknownCurrency(rawTxnCurrency);
+    discrepancyReasonOverride = isUnk ? 'CURRENCY_UNKNOWN' : 'INVALID_CURRENCY';
+    explanation = isUnk
+      ? `Cannot reconcile ${commitment.serviceName} because statement transaction ${latestTxn.id} has an UNKNOWN currency (the import source did not establish a currency code).`
+      : `Cannot reconcile ${commitment.serviceName} because statement transaction ${latestTxn.id} has an unsupported ISO 4217 currency code ("${rawTxnCurrency}").`;
     epistemicCaveat =
-      'Financial reconciliation requires a validated ISO 4217 currency code on all compared records.';
+      'Financial reconciliation requires a validated ISO 4217 currency code on all compared records and never assumes INR when currency is unknown.';
     recommendedAction =
-      'Correct the currency code on the imported statement record before running three-way reconciliation.';
+      'Specify or confirm the account/statement currency before running three-way reconciliation.';
   } else if (hasCurrencyMismatch) {
     status = 'CONFLICTING_EVIDENCE';
     discrepancyReasonOverride = 'CURRENCY_MISMATCH';
@@ -1465,7 +1495,7 @@ export function runFullReconciliation(params: {
   const unresolvedTxns = transactions.filter((t) => t.resolutionStatus === 'UNRESOLVED');
   if (unresolvedTxns.length > 0) {
     const latestUnres = unresolvedTxns[unresolvedTxns.length - 1];
-    const amtMinor = toMinorUnits(latestUnres.amount, latestUnres.currency);
+    const amtMinor = toMinorUnitsStrict(latestUnres.amount, latestUnres.currency);
     findings.push({
       id: 'REC-UNRESOLVED-POOL',
       commitmentId: 'UNRESOLVED-POOL',
@@ -1542,7 +1572,7 @@ export function buildCommitmentEvidenceCasebook(params: {
 
   // 1. Mandate record evidence (labelled IMPORTED_RECORD, never automatically CONFIRMED)
   if (mandate) {
-    const mndCcy = mandate.currency || commitment.currency || 'INR';
+    const mndCcy = mandate.currency || commitment.currency || UNKNOWN_CURRENCY;
     entries.push({
       id: `CB-MND-${mandate.id}`,
       commitmentId: commitment.id,
@@ -1565,7 +1595,7 @@ export function buildCommitmentEvidenceCasebook(params: {
 
   // 2. Service Terms / Invoice evidence (USER_CONFIRMED if userVerified=true, otherwise INFERRED)
   if (serviceTerms) {
-    const docCcy = serviceTerms.currency || commitment.currency || 'INR';
+    const docCcy = serviceTerms.currency || commitment.currency || UNKNOWN_CURRENCY;
     const formattedPrice =
       serviceTerms.expectedAmountMinor !== null
         ? formatMinorCurrency(serviceTerms.expectedAmountMinor, docCcy)
@@ -1590,14 +1620,14 @@ export function buildCommitmentEvidenceCasebook(params: {
 
   // 3. Supporting transactions
   for (const txn of cmtTxns) {
-    const txnCcy = txn.currency || commitment.currency || 'INR';
-    const amtMinor = txn.amountMinor ?? toMinorUnits(txn.amount, txnCcy);
+    const txnCcy = txn.currency || commitment.currency || UNKNOWN_CURRENCY;
+    const amtMinor = txn.amountMinor ?? toMinorUnitsStrict(txn.amount, txnCcy);
     entries.push({
       id: `CB-TXN-${txn.id}`,
       commitmentId: commitment.id,
       timestamp: `${txn.transactionDate}T12:00:00Z`,
       category: 'TRANSACTION_EVIDENCE',
-      title: `${txn.direction} ${formatMinorCurrency(amtMinor, txnCcy)} — ${txn.rawDescription}`,
+      title: `${txn.direction} ${amtMinor !== null ? formatMinorCurrency(amtMinor, txnCcy) : formatCurrency(txn.amount, txnCcy)} — ${txn.rawDescription}`,
       description: `Resolved to ${txn.merchantName || 'Unresolved'} via ${txn.matchingMethod} (${
         txn.confidenceScore
       }% confidence). Account: ${txn.accountAlias}. Rail: ${txn.paymentRail}.${
@@ -1628,9 +1658,9 @@ export function buildCommitmentEvidenceCasebook(params: {
         description: ev.description,
         sourceReference: ev.referenceNumber,
         amountMinor: null,
-        currency: commitment.currency || 'INR',
+        currency: commitment.currency || UNKNOWN_CURRENCY,
         verificationStatus: (ev.verificationStatus as any) || 'EVIDENCE_ATTACHED',
-        evidenceRecordLifecycle: ev.evidenceRecordLifecycle || 'EVIDENCE_REFERENCE_RECORDED',
+        evidenceRecordLifecycle: ev.evidenceRecordLifecycle || (ev.documentUploaded ? 'DOCUMENT_UPLOADED' : 'EVIDENCE_REFERENCE_RECORDED'),
         sourceType: ev.sourceType || 'USER_ENTERED',
         actor: 'USER_EVIDENCE_SUBMISSION',
       });
@@ -1762,11 +1792,15 @@ export function buildInitialSeedGuardrails(
 ): FinancialGuardrailConfig[] {
   const nowIso = new Date().toISOString();
   return commitments.map((c) => {
-    const guardrailCurrency = normalizeCurrencyCode(c.currency, 'INR');
+    const guardrailCurrency = isUnknownCurrency(c.currency)
+      ? UNKNOWN_CURRENCY
+      : c.currency.trim().toUpperCase();
     return {
       commitmentId: c.id,
       currency: guardrailCurrency,
-      maxExpectedAmountMinor: toMinorUnits(c.typicalAmount, guardrailCurrency),
+      precision: getCurrencyDecimalsOrNull(guardrailCurrency),
+      maxExpectedAmountMinor: toMinorUnitsStrict(c.typicalAmount, guardrailCurrency),
+      maxExpectedAmount: c.typicalAmount,
       alertOnAnyIncrease: true,
       preDebitReminderDays: 3,
       requireTwoLayerCancellationConfirmation: true,
@@ -1876,18 +1910,21 @@ export function buildGroundedContextualQuestionResponse(params: {
     .sort((a, b) => Date.parse(a.transactionDate) - Date.parse(b.transactionDate));
   const latestTxn = cmtTxns[cmtTxns.length - 1];
 
-  const cmtCcy = reconciliation?.currency || commitment.currency || 'INR';
-  const actualFormatted = formatMinorINR(
-    reconciliation?.actualTransactionAmountMinor ?? toMinorUnits(commitment.latestAmount, cmtCcy),
-    cmtCcy
-  );
+  const cmtCcy = reconciliation?.currency || commitment.currency || UNKNOWN_CURRENCY;
+  const actualMinor = reconciliation?.actualTransactionAmountMinor ?? toMinorUnitsStrict(commitment.latestAmount, cmtCcy);
+  const actualFormatted = actualMinor !== null
+    ? formatMinorINR(actualMinor, cmtCcy)
+    : formatCurrency(commitment.latestAmount, cmtCcy);
+  const expectedMinor = reconciliation?.expectedServiceAmountMinor ?? toMinorUnitsStrict(commitment.typicalAmount, cmtCcy);
   const expectedFormatted =
     reconciliation?.expectedServiceAmountMinor != null
       ? formatMinorINR(
           reconciliation.expectedServiceAmountMinor,
           reconciliation.expectedServiceCurrency || serviceTerms?.currency || cmtCcy
         )
-      : formatMinorINR(toMinorUnits(commitment.typicalAmount, cmtCcy), cmtCcy);
+      : expectedMinor !== null
+      ? formatMinorINR(expectedMinor, cmtCcy)
+      : formatCurrency(commitment.typicalAmount, cmtCcy);
   const mandateFormatted =
     reconciliation?.mandateMaxAmountMinor != null
       ? formatMinorINR(

@@ -36,7 +36,11 @@ import {
   parseAllMappedCsvRows,
   computeCanonicalCsvRowFingerprint,
 } from './src/engine/debitlensEngine';
-import { normalizeDateString } from './src/utils/dateUtils';
+import {
+  normalizeDateString,
+  getRuntimeDateISO,
+  getDynamicMonthWindow,
+} from './src/utils/dateUtils';
 import {
   MERCHANT_CATALOGUE,
   PAYMENT_PROCESSORS,
@@ -62,14 +66,23 @@ import {
   ReviewQueueStatus,
   CsvMappingConfig,
   MerchantConfirmationRecord,
+  ALLOWED_SERVICE_LIFECYCLE_STATUSES,
+  ALLOWED_MANDATE_LIFECYCLE_STATUSES,
+  EffectiveDateChangeRecord,
 } from './src/types/debitlens';
 import {
   toMinorUnits,
   fromMinorUnits,
+  toMinorUnitsStrict,
+  fromMinorUnitsStrict,
   normalizeCurrencyCode,
   isValidCurrencyCode,
   getMinorUnitLabel,
   formatCurrency,
+  resolveTransactionCurrency,
+  isUnknownCurrency,
+  UNKNOWN_CURRENCY,
+  getCurrencyDecimalsOrNull,
 } from './src/utils/currency';
 import {
   neo4jPersistenceService,
@@ -116,6 +129,13 @@ export interface PersistentAppStore {
   guardrails: FinancialGuardrailConfig[];
   investigationCases?: UnrecognizedDebitCase[];
   reviewQueueStatusOverrides?: Record<string, ReviewQueueStatus>;
+  demoModeEnabled?: boolean;
+  primaryDisplayCurrency?: string;
+  confirmedAccountCurrencies?: Record<string, string>;
+  demoSimulatedRows?: RawCsvRow[];
+  demoCommitmentOverrides?: Record<string, UserCommitmentStateOverride>;
+  demoServiceTerms?: ServiceTermsRecord[];
+  demoMandates?: MandateRecord[];
 }
 
 let rawCsvRows: RawCsvRow[] = [];
@@ -132,6 +152,72 @@ let auditEventsStore: AuditEventRecord[] = [];
 let guardrailsStore: FinancialGuardrailConfig[] = [];
 let investigationCasesStore: UnrecognizedDebitCase[] = [];
 let reviewQueueStatusOverrides: Record<string, ReviewQueueStatus> = {};
+let demoModeEnabled = false;
+let primaryDisplayCurrency = 'INR';
+let confirmedAccountCurrencies: Record<string, string> = {};
+let demoSimulatedRows: RawCsvRow[] = [];
+let demoCommitmentOverrides: Record<string, UserCommitmentStateOverride> = {};
+let demoServiceTerms: ServiceTermsRecord[] = [];
+let demoMandates: MandateRecord[] = [];
+
+export function getDemoModeState(): boolean {
+  return demoModeEnabled;
+}
+
+export function setDemoModeForTesting(enabled: boolean): void {
+  demoModeEnabled = Boolean(enabled);
+}
+
+const PRIVILEGED_PROVENANCE_SOURCES: ReadonlySet<string> = new Set([
+  'SYSTEM_GENERATED',
+  'DEMO_SEED',
+  'INDEPENDENTLY_VERIFIED',
+]);
+
+function isForgedPrivilegedProvenance(claimedSourceType: unknown): boolean {
+  if (typeof claimedSourceType !== 'string') return false;
+  return PRIVILEGED_PROVENANCE_SOURCES.has(claimedSourceType.trim().toUpperCase());
+}
+
+function getEffectiveMandates(): MandateRecord[] {
+  if (!demoModeEnabled || demoMandates.length === 0) {
+    return mandatesStore;
+  }
+  const merged = [...mandatesStore];
+  for (const dm of demoMandates) {
+    const idx = merged.findIndex(
+      (m) => m.id === dm.id || (dm.commitmentId && m.commitmentId === dm.commitmentId)
+    );
+    if (idx >= 0) {
+      if (merged[idx].sourceType === 'DEMO_SEED' || merged[idx].sourceType === 'SYSTEM_GENERATED') {
+        merged[idx] = dm;
+      }
+    } else {
+      merged.push(dm);
+    }
+  }
+  return merged;
+}
+
+function getEffectiveServiceTerms(): ServiceTermsRecord[] {
+  if (!demoModeEnabled || demoServiceTerms.length === 0) {
+    return serviceTermsStore;
+  }
+  const merged = [...serviceTermsStore];
+  for (const ds of demoServiceTerms) {
+    const idx = merged.findIndex(
+      (s) => s.id === ds.id || (ds.commitmentId && s.commitmentId === ds.commitmentId)
+    );
+    if (idx >= 0) {
+      if (merged[idx].sourceType === 'DEMO_SEED' || merged[idx].sourceType === 'SYSTEM_GENERATED') {
+        merged[idx] = ds;
+      }
+    } else {
+      merged.push(ds);
+    }
+  }
+  return merged;
+}
 
 function recordAuditEvent(params: {
   commitmentId: string | null;
@@ -188,6 +274,13 @@ export function snapshotState(): PersistentAppStore {
     guardrails: guardrailsStore,
     investigationCases: investigationCasesStore,
     reviewQueueStatusOverrides,
+    demoModeEnabled,
+    primaryDisplayCurrency,
+    confirmedAccountCurrencies,
+    demoSimulatedRows,
+    demoCommitmentOverrides,
+    demoServiceTerms,
+    demoMandates,
   });
 }
 
@@ -207,6 +300,13 @@ export function restoreStateSnapshot(snapshot: PersistentAppStore) {
   guardrailsStore = cloned.guardrails;
   investigationCasesStore = cloned.investigationCases || [];
   reviewQueueStatusOverrides = cloned.reviewQueueStatusOverrides || {};
+  demoModeEnabled = Boolean(cloned.demoModeEnabled);
+  primaryDisplayCurrency = cloned.primaryDisplayCurrency || 'INR';
+  confirmedAccountCurrencies = cloned.confirmedAccountCurrencies || {};
+  demoSimulatedRows = cloned.demoSimulatedRows || [];
+  demoCommitmentOverrides = cloned.demoCommitmentOverrides || {};
+  demoServiceTerms = cloned.demoServiceTerms || [];
+  demoMandates = cloned.demoMandates || [];
 }
 
 function savePersistentStore(): { saved: boolean; error?: string } {
@@ -236,6 +336,13 @@ function savePersistentStore(): { saved: boolean; error?: string } {
       guardrails: guardrailsStore,
       investigationCases: investigationCasesStore,
       reviewQueueStatusOverrides,
+      demoModeEnabled,
+      primaryDisplayCurrency,
+      confirmedAccountCurrencies,
+      demoSimulatedRows,
+      demoCommitmentOverrides,
+      demoServiceTerms,
+      demoMandates,
     };
     fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf-8');
     fs.renameSync(tmpPath, storePath);
@@ -260,7 +367,7 @@ function savePersistentStore(): { saved: boolean; error?: string } {
 export function computeCanonicalTxnFingerprint(row: RawCsvRow): string {
   return computeCanonicalCsvRowFingerprint({
     accountAlias: row.account_alias || 'PRIMARY-ACCOUNT',
-    currency: row.currency || 'INR',
+    currency: row.currency || UNKNOWN_CURRENCY,
     parsedDate: row.transaction_date || '',
     direction: row.direction || 'DEBIT',
     amount: Number(row.amount) || 0,
@@ -359,6 +466,13 @@ export function loadSeedData(forceReset = false) {
         guardrailsStore = saved.guardrails || [];
         investigationCasesStore = saved.investigationCases || [];
         reviewQueueStatusOverrides = saved.reviewQueueStatusOverrides || {};
+        demoModeEnabled = Boolean(saved.demoModeEnabled);
+        primaryDisplayCurrency = saved.primaryDisplayCurrency || 'INR';
+        confirmedAccountCurrencies = saved.confirmedAccountCurrencies || {};
+        demoSimulatedRows = saved.demoSimulatedRows || [];
+        demoCommitmentOverrides = saved.demoCommitmentOverrides || {};
+        demoServiceTerms = saved.demoServiceTerms || [];
+        demoMandates = saved.demoMandates || [];
         lastCommittedSnapshot = snapshotState();
         return;
       }
@@ -381,6 +495,12 @@ export function loadSeedData(forceReset = false) {
   customCasebookEntries = [];
   investigationCasesStore = [];
   reviewQueueStatusOverrides = {};
+  primaryDisplayCurrency = 'INR';
+  confirmedAccountCurrencies = {};
+  demoSimulatedRows = [];
+  demoCommitmentOverrides = {};
+  demoServiceTerms = [];
+  demoMandates = [];
   auditEventsStore = [
     {
       id: 'AUD-SEED-01',
@@ -452,16 +572,48 @@ export function loadSeedData(forceReset = false) {
 loadSeedData(false);
 
 export function computeCurrentState() {
+  const effectiveRawRows = demoModeEnabled
+    ? [
+        ...rawCsvRows.map((r) => {
+          const demoRowReplacement = demoSimulatedRows.find(
+            (dr) => dr.transaction_id === r.transaction_id && (dr as any).__replacesBaseRow
+          );
+          return demoRowReplacement || r;
+        }),
+        ...demoSimulatedRows.filter((dr) => !(dr as any).__replacesBaseRow),
+      ]
+    : rawCsvRows;
+
   const { transactions, invalidRows, duplicateRows } = parseAndNormaliseTransactions(
-    rawCsvRows,
+    effectiveRawRows,
     'BATCH-SEED-01',
     'DEMO_SEED',
-    userMerchantOverrides
+    userMerchantOverrides,
+    undefined,
+    confirmedAccountCurrencies
   );
+
+  // Merge demoCommitmentOverrides ONLY when demoModeEnabled is true, without overwriting user overrides
+  const effectiveCommitmentOverrides: Record<string, UserCommitmentStateOverride> = {
+    ...userCommitmentOverrides,
+  };
+  if (demoModeEnabled) {
+    for (const [cmtId, demoOvr] of Object.entries(demoCommitmentOverrides)) {
+      if (!effectiveCommitmentOverrides[cmtId]) {
+        effectiveCommitmentOverrides[cmtId] = demoOvr;
+      } else {
+        effectiveCommitmentOverrides[cmtId] = {
+          ...demoOvr,
+          ...effectiveCommitmentOverrides[cmtId],
+        };
+      }
+    }
+  }
+
   const { commitments, alerts, playbooks, sessions } = detectCommitmentsAndAlerts(
     transactions,
     notificationEvents,
-    userCommitmentOverrides
+    effectiveCommitmentOverrides
   );
 
   for (const alt of alerts) {
@@ -470,11 +622,14 @@ export function computeCurrentState() {
     }
   }
 
+  const effectiveMandates = getEffectiveMandates();
+  const effectiveServiceTerms = getEffectiveServiceTerms();
+
   const reconciliationFindings = runFullReconciliation({
     commitments,
     transactions,
-    mandates: mandatesStore,
-    serviceTerms: serviceTermsStore,
+    mandates: effectiveMandates,
+    serviceTerms: effectiveServiceTerms,
     sessions,
   });
 
@@ -510,6 +665,9 @@ export function computeCurrentState() {
     reconciliationFindings,
     investigations: investigationCasesStore,
     auditEvents: auditEventsStore,
+    demoModeEnabled,
+    primaryDisplayCurrency,
+    confirmedAccountCurrencies,
   };
 }
 
@@ -992,6 +1150,13 @@ app.get('/api/graph/unresolved-transactions', async (_req, res) => {
 });
 
 app.post('/api/graph/rebuild-demo', async (_req, res) => {
+  if (!demoModeEnabled) {
+    res.status(403).json({
+      error: 'Demo Mode is disabled. Enable Demo Mode before rebuilding demo graph data.',
+      code: 'DEMO_MODE_DISABLED',
+    });
+    return;
+  }
   await executeSerializedMutation(res, async () => {
     loadSeedData(true);
     const state = computeCurrentState();
@@ -1002,8 +1167,8 @@ app.post('/api/graph/rebuild-demo', async (_req, res) => {
       playbooks: state.playbooks,
       sessions: state.sessions,
       notifications: notificationEvents,
-      mandates: mandatesStore,
-      serviceTerms: serviceTermsStore,
+      mandates: getEffectiveMandates(),
+      serviceTerms: getEffectiveServiceTerms(),
       reconciliationFindings: state.reconciliationFindings,
     });
     return {
@@ -1422,22 +1587,108 @@ if (process.env.DEBITLENS_SKIP_LISTEN !== '1') {
 // ============================================================================
 // REST API ENDPOINTS — CORE DEBITLENS DASHBOARD, COMMITMENTS, TRANSACTIONS
 // ============================================================================
+app.get('/api/demo/mode', (_req, res) => {
+  res.json({
+    demoModeEnabled,
+  });
+});
+
+app.post('/api/demo/mode', async (req, res) => {
+  const { enabled } = (req.body || {}) as { enabled?: boolean };
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'Boolean "enabled" parameter is required.' });
+    return;
+  }
+  await executeSerializedMutation(res, () => {
+    demoModeEnabled = enabled;
+    const state = computeCurrentState();
+    return {
+      syncGraph: false,
+      body: {
+        demoModeEnabled,
+        commitmentsCount: state.commitments.length,
+        transactionsCount: state.transactions.length,
+      },
+    };
+  });
+});
+
+app.get('/api/settings/preferences', (_req, res) => {
+  res.json({
+    primaryDisplayCurrency,
+    confirmedAccountCurrencies,
+    demoModeEnabled,
+  });
+});
+
+app.patch('/api/settings/preferences', async (req, res) => {
+  const { primaryCurrency, confirmedAccountCurrencies: incomingAccountMap } = (req.body || {}) as {
+    primaryCurrency?: string;
+    confirmedAccountCurrencies?: Record<string, string>;
+  };
+  await executeSerializedMutation(res, () => {
+    if (primaryCurrency !== undefined) {
+      const norm = normalizeCurrencyCode(primaryCurrency);
+      if (!norm) {
+        return {
+          errorStatus: 400,
+          errorBody: { error: `Unsupported primaryDisplayCurrency "${primaryCurrency}".` },
+        };
+      }
+      primaryDisplayCurrency = norm;
+    }
+    if (incomingAccountMap && typeof incomingAccountMap === 'object') {
+      const nextMap: Record<string, string> = { ...confirmedAccountCurrencies };
+      for (const [alias, curr] of Object.entries(incomingAccountMap)) {
+        if (!curr) {
+          delete nextMap[alias];
+          continue;
+        }
+        const norm = normalizeCurrencyCode(curr);
+        if (!norm) {
+          return {
+            errorStatus: 400,
+            errorBody: {
+              error: `Unsupported confirmed account currency "${curr}" for account "${alias}".`,
+            },
+          };
+        }
+        nextMap[alias.trim()] = norm;
+      }
+      confirmedAccountCurrencies = nextMap;
+    }
+    return {
+      syncGraph: false,
+      body: {
+        primaryDisplayCurrency,
+        confirmedAccountCurrencies,
+        demoModeEnabled,
+      },
+    };
+  });
+});
+
 app.get('/api/state', (_req, res) => {
   const state = computeCurrentState();
   res.json(state);
 });
 
-app.get('/api/dashboard/summary', (_req, res) => {
+app.get('/api/dashboard/summary', (req, res) => {
   const state = computeCurrentState();
   const activeCommitments = state.commitments.filter(
     (c) => c.status !== 'CANCELLED_USER_CONFIRMED' && c.verificationStatus !== 'REJECTED'
   );
 
-  const primaryCurrency = 'INR';
+  const requestedCurrency = req.query.currency
+    ? normalizeCurrencyCode(String(req.query.currency))
+    : null;
+  const primaryCurrency = requestedCurrency || primaryDisplayCurrency || 'INR';
+
   const totalsByCurrency: Record<
     string,
     {
       currency: string;
+      currencyStatus: 'SUPPORTED' | 'UNSUPPORTED' | 'UNKNOWN';
       monthlyRecurringSpend: number;
       annualCommitmentTotal: number;
       discretionaryAnnual: number;
@@ -1449,10 +1700,19 @@ app.get('/api/dashboard/summary', (_req, res) => {
   for (const c of activeCommitments) {
     const rawCurr =
       c.currency !== undefined && c.currency !== null ? String(c.currency).trim().toUpperCase() : '';
-    const curr = isValidCurrencyCode(rawCurr) ? rawCurr : 'UNKNOWN';
-    if (!totalsByCurrency[curr]) {
-      totalsByCurrency[curr] = {
-        currency: curr,
+    const isUnknown = isUnknownCurrency(rawCurr);
+    const isSupported = !isUnknown && isValidCurrencyCode(rawCurr);
+    const currKey = isUnknown ? UNKNOWN_CURRENCY : rawCurr;
+    const currencyStatus: 'SUPPORTED' | 'UNSUPPORTED' | 'UNKNOWN' = isUnknown
+      ? 'UNKNOWN'
+      : isSupported
+      ? 'SUPPORTED'
+      : 'UNSUPPORTED';
+
+    if (!totalsByCurrency[currKey]) {
+      totalsByCurrency[currKey] = {
+        currency: currKey,
+        currencyStatus,
         monthlyRecurringSpend: 0,
         annualCommitmentTotal: 0,
         discretionaryAnnual: 0,
@@ -1460,7 +1720,7 @@ app.get('/api/dashboard/summary', (_req, res) => {
         activeCommitmentsCount: 0,
       };
     }
-    const bucket = totalsByCurrency[curr];
+    const bucket = totalsByCurrency[currKey];
     bucket.monthlyRecurringSpend = Number(
       (bucket.monthlyRecurringSpend + c.monthlyEquivalent).toFixed(2)
     );
@@ -1481,6 +1741,7 @@ app.get('/api/dashboard/summary', (_req, res) => {
 
   const primaryBucket = totalsByCurrency[primaryCurrency] || {
     currency: primaryCurrency,
+    currencyStatus: 'SUPPORTED' as const,
     monthlyRecurringSpend: 0,
     annualCommitmentTotal: 0,
     discretionaryAnnual: 0,
@@ -1504,6 +1765,9 @@ app.get('/api/dashboard/summary', (_req, res) => {
     ).length + unresolvedTxnsCount;
 
   const currencySummaries = Object.values(totalsByCurrency);
+  const unsupportedCurrenciesCount = currencySummaries
+    .filter((cs) => cs.currencyStatus === 'UNSUPPORTED')
+    .reduce((sum, cs) => sum + cs.activeCommitmentsCount, 0);
 
   res.json({
     primaryCurrency,
@@ -1513,7 +1777,9 @@ app.get('/api/dashboard/summary', (_req, res) => {
     obligationAnnual: primaryBucket.obligationAnnual,
     totalsByCurrency,
     currencySummaries,
-    unknownCurrencyCommitmentsCount: totalsByCurrency['UNKNOWN']?.activeCommitmentsCount || 0,
+    unknownCurrencyCommitmentsCount:
+      totalsByCurrency[UNKNOWN_CURRENCY]?.activeCommitmentsCount || 0,
+    unsupportedCurrenciesCount,
     isMultiCurrency: currencySummaries.length > 1,
     activeCommitmentsCount: activeCommitments.length,
     totalCommitmentsCount: state.commitments.length,
@@ -1522,26 +1788,61 @@ app.get('/api/dashboard/summary', (_req, res) => {
     reviewRequiredCount,
     totalAlertsCount: state.alerts.filter((a) => a.status === 'OPEN').length,
     unresolvedTransactionsCount: unresolvedTxnsCount,
+    demoModeEnabled,
   });
 });
 
 app.get('/api/dashboard/monthly-trend', (req, res) => {
   const state = computeCurrentState();
-  const targetCurrency = String(req.query.currency || 'INR')
+  const targetCurrency = String(req.query.currency || primaryDisplayCurrency || 'INR')
     .trim()
     .toUpperCase();
-  const months = ['2026-06', '2026-07', '2026-08', '2026-09', '2026-10'];
+  const requestedMonthsCount = Math.min(
+    24,
+    Math.max(1, Number(req.query.months) || 5)
+  );
+
+  const explicitReferenceDate = req.query.referenceDate
+    ? normalizeDateString(String(req.query.referenceDate))
+    : null;
+
+  let anchorDateISO = explicitReferenceDate;
+  if (!anchorDateISO) {
+    const currencyDebitDates = state.transactions
+      .filter(
+        (t) =>
+          t.direction === 'DEBIT' &&
+          !isUnknownCurrency(t.currency) &&
+          (normalizeCurrencyCode(t.currency) || String(t.currency).trim().toUpperCase()) ===
+            targetCurrency
+      )
+      .map((t) => t.transactionDate)
+      .sort();
+    anchorDateISO =
+      currencyDebitDates.length > 0
+        ? currencyDebitDates[currencyDebitDates.length - 1]
+        : getRuntimeDateISO();
+  }
+
+  const months = getDynamicMonthWindow(anchorDateISO, requestedMonthsCount);
+  const obligationIds = new Set(
+    state.commitments.filter((c) => c.isFinancialObligation).map((c) => c.id)
+  );
+
   const trend = months.map((m) => {
     const monthTxns = state.transactions.filter(
       (t) =>
         t.direction === 'DEBIT' &&
         t.transactionDate.startsWith(m) &&
-        normalizeCurrencyCode(t.currency) === targetCurrency
+        !isUnknownCurrency(t.currency) &&
+        (normalizeCurrencyCode(t.currency) || String(t.currency).trim().toUpperCase()) ===
+          targetCurrency
     );
     const subscriptions = monthTxns
       .filter(
         (t) =>
           t.commitmentId &&
+          !obligationIds.has(t.commitmentId) &&
           !['CMT-BAJAJEMI', 'CMT-MAXLIFE', 'CMT-BESCOM'].includes(t.commitmentId)
       )
       .reduce((s, t) => s + t.amount, 0);
@@ -1549,7 +1850,8 @@ app.get('/api/dashboard/monthly-trend', (req, res) => {
       .filter(
         (t) =>
           t.commitmentId &&
-          ['CMT-BAJAJEMI', 'CMT-MAXLIFE', 'CMT-BESCOM'].includes(t.commitmentId)
+          (obligationIds.has(t.commitmentId) ||
+            ['CMT-BAJAJEMI', 'CMT-MAXLIFE', 'CMT-BESCOM'].includes(t.commitmentId))
       )
       .reduce((s, t) => s + t.amount, 0);
     const unresolved = monthTxns
@@ -2009,6 +2311,15 @@ app.post('/api/mandates/import', async (req, res) => {
     const fieldsRequiringVerification: string[] = [];
 
     for (const item of incoming) {
+      if (isForgedPrivilegedProvenance((item as any).sourceType)) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: `Client-forged privileged sourceType "${(item as any).sourceType}" is not permitted on user mandate imports.`,
+            code: 'FORGED_PROVENANCE_REJECTED',
+          },
+        };
+      }
       if (!item.mandateReference) {
         rejectedRows++;
         continue;
@@ -2019,8 +2330,9 @@ app.post('/api/mandates/import', async (req, res) => {
         continue;
       }
 
-      const rawCurr = item.currency !== undefined && item.currency !== null ? String(item.currency).trim() : 'INR';
-      const validCurrency = normalizeCurrencyCode(rawCurr || 'INR');
+      const rawCurr =
+        item.currency !== undefined && item.currency !== null ? String(item.currency).trim() : '';
+      const validCurrency = rawCurr ? normalizeCurrencyCode(rawCurr) : null;
       if (!validCurrency) {
         rejectedRows++;
         continue;
@@ -2033,12 +2345,12 @@ app.post('/api/mandates/import', async (req, res) => {
         const num = Number(item.maxAmountMinor);
         if (Number.isSafeInteger(num) && num > 0) {
           maxMinor = num;
-          maxAmount = fromMinorUnits(maxMinor, validCurrency);
+          maxAmount = fromMinorUnitsStrict(maxMinor, validCurrency);
         }
       } else if (item.maxAmount !== undefined && item.maxAmount !== null && String(item.maxAmount) !== '') {
         const parsed = parseStrictAmount(item.maxAmount);
         if (parsed !== null && parsed > 0) {
-          maxMinor = toMinorUnits(parsed, validCurrency);
+          maxMinor = toMinorUnitsStrict(parsed, validCurrency);
           maxAmount = parsed;
         }
       }
@@ -2247,12 +2559,20 @@ const handleUpsertServiceDocument = async (req: express.Request, res: express.Re
     return;
   }
 
+  if (isForgedPrivilegedProvenance((req.body || {}).sourceType)) {
+    res.status(400).json({
+      error: `Client-forged privileged sourceType "${(req.body || {}).sourceType}" is not permitted on user service document submissions.`,
+      code: 'FORGED_PROVENANCE_REJECTED',
+    });
+    return;
+  }
+
   await executeSerializedMutation(res, () => {
     const stateBefore = computeCurrentState();
     const targetCmt = stateBefore.commitments.find((c) => c.id === commitmentId);
     const existingDoc = serviceTermsStore.find((s) => s.commitmentId === commitmentId) || null;
 
-    if (currency !== undefined && currency !== null && !isValidCurrencyCode(currency)) {
+    if (currency !== undefined && currency !== null && String(currency).trim() !== '' && !isValidCurrencyCode(currency)) {
       return {
         errorStatus: 400,
         errorBody: { error: `Invalid ISO 4217 currency code "${currency}".` },
@@ -2271,20 +2591,27 @@ const handleUpsertServiceDocument = async (req: express.Request, res: express.Re
         documentSource: 'PASTED_INVOICE_TEXT',
         userVerified: isVerified,
       });
-      if (currency) {
+      if (currency && isValidCurrencyCode(currency)) {
         docRecord.currency = normalizeCurrencyCode(currency)!;
       }
       if (expectedAmountMinor !== undefined || expectedAmount !== undefined) {
         if (expectedAmountMinor === null || expectedAmount === null) {
           docRecord.expectedAmountMinor = null;
           docRecord.expectedAmount = null;
-        } else {
+        } else if (isValidCurrencyCode(docRecord.currency)) {
           const minor =
             expectedAmountMinor !== undefined
               ? Number(expectedAmountMinor)
-              : toMinorUnits(Number(expectedAmount), docRecord.currency);
+              : toMinorUnitsStrict(Number(expectedAmount), docRecord.currency);
           docRecord.expectedAmountMinor = minor;
-          docRecord.expectedAmount = fromMinorUnits(minor, docRecord.currency);
+          docRecord.expectedAmount = fromMinorUnitsStrict(minor, docRecord.currency);
+        } else {
+          return {
+            errorStatus: 400,
+            errorBody: {
+              error: 'Cannot convert expectedAmount to minor units without a valid supported currency.',
+            },
+          };
         }
       }
       if (billingFrequency) {
@@ -2306,7 +2633,7 @@ const handleUpsertServiceDocument = async (req: express.Request, res: express.Re
       const isVerified = Boolean(userVerified);
       docRecord = {
         ...existingDoc,
-        currency: currency ? normalizeCurrencyCode(currency)! : existingDoc.currency,
+        currency: currency && isValidCurrencyCode(currency) ? normalizeCurrencyCode(currency)! : existingDoc.currency,
         billingFrequency: billingFrequency || existingDoc.billingFrequency,
         userVerified: isVerified,
         extractedFields: existingDoc.extractedFields.map((f) => ({
@@ -2316,17 +2643,41 @@ const handleUpsertServiceDocument = async (req: express.Request, res: express.Re
       };
     } else {
       const isVerified = userVerified !== undefined ? Boolean(userVerified) : true;
-      const effectiveCurrency = normalizeCurrencyCode(
-        currency || existingDoc?.currency || targetCmt?.currency || 'INR'
-      )!;
-      const minorLabel = getMinorUnitLabel(effectiveCurrency);
+      const candidateCurrency =
+        currency ||
+        (existingDoc?.currency && !isUnknownCurrency(existingDoc.currency)
+          ? existingDoc.currency
+          : null) ||
+        (targetCmt?.currency && !isUnknownCurrency(targetCmt.currency) ? targetCmt.currency : null);
+      const effectiveCurrency = candidateCurrency
+        ? normalizeCurrencyCode(candidateCurrency) || UNKNOWN_CURRENCY
+        : UNKNOWN_CURRENCY;
+
+      if (
+        (expectedAmountMinor !== undefined || expectedAmount !== undefined) &&
+        effectiveCurrency === UNKNOWN_CURRENCY
+      ) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error:
+              'Explicit currency is required when specifying expectedAmount or expectedAmountMinor for a commitment without an established currency.',
+          },
+        };
+      }
+
+      const minorLabel =
+        effectiveCurrency !== UNKNOWN_CURRENCY ? getMinorUnitLabel(effectiveCurrency) : 'minor units';
       const minor =
         expectedAmountMinor !== undefined && expectedAmountMinor !== null
           ? Number(expectedAmountMinor)
-          : expectedAmount !== undefined && expectedAmount !== null
-          ? toMinorUnits(Number(expectedAmount), effectiveCurrency)
+          : expectedAmount !== undefined && expectedAmount !== null && effectiveCurrency !== UNKNOWN_CURRENCY
+          ? toMinorUnitsStrict(Number(expectedAmount), effectiveCurrency)
           : existingDoc?.expectedAmountMinor ?? null;
-      const major = minor !== null ? fromMinorUnits(minor, effectiveCurrency) : null;
+      const major =
+        minor !== null && effectiveCurrency !== UNKNOWN_CURRENCY
+          ? fromMinorUnitsStrict(minor, effectiveCurrency)
+          : null;
       docRecord = {
         id: existingDoc?.id || `DOC-${commitmentId}-${Date.now()}`,
         commitmentId,
@@ -2506,6 +2857,8 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
     sourceReference,
     amountMinor = null,
     evidenceDate = null,
+    documentUploaded = false,
+    sourceType,
   } = (req.body || {}) as {
     category?: EvidenceCasebookEntry['category'];
     title: string;
@@ -2513,7 +2866,17 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
     sourceReference: string;
     amountMinor?: number | null;
     evidenceDate?: string | null;
+    documentUploaded?: boolean;
+    sourceType?: RecordSourceProvenance;
   };
+
+  if (isForgedPrivilegedProvenance(sourceType)) {
+    res.status(400).json({
+      error: `Client-forged privileged sourceType "${sourceType}" is not permitted on user evidence submissions.`,
+      code: 'FORGED_PROVENANCE_REJECTED',
+    });
+    return;
+  }
 
   if (!title || !description || !sourceReference) {
     res.status(400).json({ error: 'title, description, and sourceReference are required.' });
@@ -2541,6 +2904,7 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
       };
     }
 
+    const isUploadedDoc = Boolean(documentUploaded);
     const entry: EvidenceCasebookEntry = {
       id: `CB-USER-${Date.now()}`,
       commitmentId: id,
@@ -2553,9 +2917,9 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
       description,
       sourceReference,
       amountMinor,
-      currency: targetCmt.currency || 'INR',
-      sourceType: 'USER_ENTERED',
-      evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
+      currency: targetCmt.currency || UNKNOWN_CURRENCY,
+      sourceType: isUploadedDoc ? 'USER_UPLOADED' : 'USER_ENTERED',
+      evidenceRecordLifecycle: isUploadedDoc ? 'DOCUMENT_UPLOADED' : 'EVIDENCE_REFERENCE_RECORDED',
       verificationStatus: 'USER_CONFIRMED',
       actor: 'USER_CASEBOOK_ATTACHMENT',
     };
@@ -2564,7 +2928,7 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
     recordAuditEvent({
       commitmentId: id,
       eventType: 'EVIDENCE_ATTACHED',
-      summary: `Attached evidence record "${title}" (Ref: ${sourceReference}${
+      summary: `Attached ${isUploadedDoc ? 'uploaded document' : 'evidence reference'} "${title}" (Ref: ${sourceReference}${
         parsedEvidenceDate ? `, Date: ${parsedEvidenceDate}` : ''
       }).`,
       previousState: null,
@@ -2573,12 +2937,13 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
 
     const state = computeCurrentState();
     const cmt = state.commitments.find((c) => c.id === id)!;
+    const effectiveMandates = getEffectiveMandates();
+    const effectiveServiceTerms = getEffectiveServiceTerms();
     const mandate =
-      mandatesStore.find(
-        (m) =>
-          m.commitmentId === cmt.id || (cmt.mandateRef && m.mandateReference === cmt.mandateRef)
+      effectiveMandates.find(
+        (m) => m.commitmentId === cmt.id || (cmt.mandateRef && m.mandateReference === cmt.mandateRef)
       ) || null;
-    const serviceTerms = serviceTermsStore.find((s) => s.commitmentId === cmt.id) || null;
+    const serviceTerms = effectiveServiceTerms.find((s) => s.commitmentId === cmt.id) || null;
     const reconciliation =
       state.reconciliationFindings.find((r) => r.commitmentId === cmt.id) || null;
     const session = state.sessions.find((s) => s.commitmentId === cmt.id) || null;
@@ -2671,14 +3036,53 @@ app.post('/api/commitments/:id/cancellation', async (req, res) => {
 });
 
 app.patch('/api/cancellations/:id/service-status', async (req, res) => {
-  const { serviceLifecycleStatus, referenceNumber, notes, effectiveDate, evidenceDate, sourceType } = (req.body || {}) as {
+  const {
+    serviceLifecycleStatus,
+    referenceNumber,
+    evidenceId,
+    notes,
+    effectiveDate,
+    evidenceDate,
+    requestDate,
+    acknowledgementDate,
+    documentUploaded,
+    documentName,
+    sourceType,
+    verifiedConfirmation,
+  } = (req.body || {}) as {
     serviceLifecycleStatus: ServiceLifecycleStatus;
     referenceNumber?: string;
+    evidenceId?: string;
     notes?: string;
     effectiveDate?: string | null;
     evidenceDate?: string | null;
+    requestDate?: string | null;
+    acknowledgementDate?: string | null;
+    documentUploaded?: boolean;
+    documentName?: string | null;
     sourceType?: RecordSourceProvenance;
+    verifiedConfirmation?: boolean;
   };
+
+  if (
+    !serviceLifecycleStatus ||
+    !ALLOWED_SERVICE_LIFECYCLE_STATUSES.includes(serviceLifecycleStatus)
+  ) {
+    res.status(400).json({
+      error: `Invalid serviceLifecycleStatus "${serviceLifecycleStatus}". Allowed values: ${ALLOWED_SERVICE_LIFECYCLE_STATUSES.join(', ')}.`,
+      code: 'INVALID_SERVICE_LIFECYCLE_STATUS',
+    });
+    return;
+  }
+
+  if (isForgedPrivilegedProvenance(sourceType)) {
+    res.status(400).json({
+      error: `Client-forged privileged sourceType "${sourceType}" is not permitted on user lifecycle updates.`,
+      code: 'FORGED_PROVENANCE_REJECTED',
+    });
+    return;
+  }
+
   await executeSerializedMutation(res, () => {
     const state = computeCurrentState();
     const sess =
@@ -2717,9 +3121,55 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
       }
     }
 
+    let parsedRequestDate: string | null | undefined = undefined;
+    if (requestDate !== undefined) {
+      if (requestDate === null || String(requestDate).trim() === '') {
+        parsedRequestDate = null;
+      } else {
+        parsedRequestDate = normalizeDateString(String(requestDate));
+        if (!parsedRequestDate) {
+          return {
+            errorStatus: 400,
+            errorBody: { error: `Invalid requestDate "${requestDate}".` },
+          };
+        }
+      }
+    }
+
+    let parsedAckDate: string | null | undefined = undefined;
+    if (acknowledgementDate !== undefined) {
+      if (acknowledgementDate === null || String(acknowledgementDate).trim() === '') {
+        parsedAckDate = null;
+      } else {
+        parsedAckDate = normalizeDateString(String(acknowledgementDate));
+        if (!parsedAckDate) {
+          return {
+            errorStatus: 400,
+            errorBody: { error: `Invalid acknowledgementDate "${acknowledgementDate}".` },
+          };
+        }
+      }
+    }
+
+    if (
+      (serviceLifecycleStatus === 'ACTIVE' ||
+        serviceLifecycleStatus === 'CANCELLATION_REQUESTED') &&
+      parsedEffectiveDate !== null
+    ) {
+      return {
+        errorStatus: 400,
+        errorBody: {
+          error: `effectiveDate cannot be set when Layer A status is ${serviceLifecycleStatus}. Use requestDate for CANCELLATION_REQUESTED.`,
+          code: 'EFFECTIVE_DATE_NOT_ALLOWED_FOR_STATUS',
+        },
+      };
+    }
+
     const isServiceCompletion =
       serviceLifecycleStatus === 'CANCELLATION_REPORTED_BY_USER' ||
-      serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED';
+      serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED' ||
+      serviceLifecycleStatus === 'CANCELLATION_VERIFIED' ||
+      serviceLifecycleStatus === 'CANCELLED';
 
     const cmtId = sess.commitmentId;
     const prevCmt = state.commitments.find((c) => c.id === cmtId);
@@ -2728,10 +3178,56 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
     const existingEvid = currentOverride.evidenceRecords ?? sess.evidence;
     const updatedEvid = [...existingEvid];
 
+    const existingEffectiveDate =
+      currentOverride.serviceCancelledAtOverride ?? sess.serviceCancelledAt ?? null;
+
+    if (
+      serviceLifecycleStatus === 'CANCELLED' &&
+      !parsedEffectiveDate &&
+      !existingEffectiveDate
+    ) {
+      return {
+        errorStatus: 400,
+        errorBody: {
+          error:
+            'Setting Layer A status to CANCELLED requires a valid effectiveDate (YYYY-MM-DD).',
+          code: 'EFFECTIVE_DATE_REQUIRED',
+        },
+      };
+    }
+
+    // Validate evidenceId if explicitly provided
+    if (evidenceId !== undefined && evidenceId !== null && String(evidenceId).trim() !== '') {
+      const cleanEvidId = String(evidenceId).trim();
+      const matchedEvid = updatedEvid.find((e) => e.id === cleanEvidId);
+      if (!matchedEvid || matchedEvid.cancellationSessionId !== sess.id) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: `Evidence record "${cleanEvidId}" does not exist or does not belong to commitment "${cmtId}" (session "${sess.id}").`,
+            code: 'INVALID_EVIDENCE_LINK',
+          },
+        };
+      }
+      if (matchedEvid.evidenceType !== 'SERVICE_CONFIRMATION') {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: `Evidence record "${cleanEvidId}" has type "${matchedEvid.evidenceType}", which cannot satisfy Layer A SERVICE_CONFIRMATION.`,
+            code: 'INVALID_EVIDENCE_LINK',
+          },
+        };
+      }
+    }
+
     const cleanRef = referenceNumber ? referenceNumber.trim() : '';
     const hasExistingServiceEvidence = updatedEvid.some(
-      (e) => e.evidenceType === 'SERVICE_CONFIRMATION' && Boolean(e.referenceNumber?.trim())
+      (e) =>
+        e.cancellationSessionId === sess.id &&
+        e.evidenceType === 'SERVICE_CONFIRMATION' &&
+        Boolean(e.referenceNumber?.trim())
     );
+
     if (
       serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED' &&
       !cleanRef &&
@@ -2742,9 +3238,28 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
         errorBody: {
           error:
             'Cannot set Layer A status to CANCELLATION_EVIDENCE_ATTACHED without a valid SERVICE_CONFIRMATION evidence reference number.',
+          code: 'EVIDENCE_REQUIRED',
         },
       };
     }
+
+    if (serviceLifecycleStatus === 'CANCELLATION_VERIFIED') {
+      if (verifiedConfirmation !== true || (!cleanRef && !hasExistingServiceEvidence)) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error:
+              'Cannot self-declare CANCELLATION_VERIFIED without verifiedConfirmation=true and attached SERVICE_CONFIRMATION evidence.',
+            code: 'UNVERIFIED_STATUS_REJECTED',
+          },
+        };
+      }
+    }
+
+    const isUploadedDoc = Boolean(documentUploaded);
+    const assignedSourceType: RecordSourceProvenance = isUploadedDoc
+      ? 'USER_UPLOADED'
+      : 'USER_ENTERED';
 
     if (cleanRef) {
       const evidType =
@@ -2766,10 +3281,16 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
           referenceNumber: cleanRef,
           evidenceDate: parsedEvidDate,
           ...(isServiceCompletion && parsedEffectiveDate ? { effectiveDate: parsedEffectiveDate } : {}),
-          evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
-          sourceType: sourceType || 'USER_ENTERED',
+          documentUploaded: isUploadedDoc,
+          ...(documentName ? { documentName } : {}),
+          evidenceRecordLifecycle: isUploadedDoc
+            ? 'DOCUMENT_UPLOADED'
+            : 'EVIDENCE_REFERENCE_RECORDED',
+          sourceType: assignedSourceType,
           verificationStatus:
-            serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED'
+            serviceLifecycleStatus === 'CANCELLATION_VERIFIED'
+              ? 'USER_CONFIRMED'
+              : serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED'
               ? 'EVIDENCE_ATTACHED'
               : 'USER_REPORTED',
           createdAt: new Date().toISOString(),
@@ -2780,13 +3301,40 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
     const nextServiceCancelledAt = isServiceCompletion
       ? effectiveDate !== undefined
         ? parsedEffectiveDate
-        : currentOverride.serviceCancelledAtOverride ?? sess.serviceCancelledAt ?? null
+        : existingEffectiveDate
       : null;
+
+    const historyList: EffectiveDateChangeRecord[] = [
+      ...(currentOverride.effectiveDateHistory ?? sess.effectiveDateHistory ?? []),
+    ];
+    if (
+      existingEffectiveDate &&
+      nextServiceCancelledAt &&
+      existingEffectiveDate !== nextServiceCancelledAt
+    ) {
+      const nowIso = new Date().toISOString();
+      historyList.push({
+        layer: 'SERVICE',
+        previousDate: existingEffectiveDate,
+        newDate: nextServiceCancelledAt,
+        updatedAt: nowIso,
+        changedAt: nowIso,
+        sourceType: assignedSourceType,
+        reason: notes || 'Corrected Layer A effective cancellation date',
+      });
+    }
 
     userCommitmentOverrides[cmtId] = {
       ...currentOverride,
       serviceLifecycleStatus,
       serviceCancelledAtOverride: nextServiceCancelledAt,
+      ...(parsedRequestDate !== undefined
+        ? { serviceCancellationRequestedAtOverride: parsedRequestDate }
+        : {}),
+      ...(parsedAckDate !== undefined
+        ? { serviceCancellationAcknowledgedAtOverride: parsedAckDate }
+        : {}),
+      effectiveDateHistory: historyList,
       evidenceRecords: updatedEvid,
     };
 
@@ -2815,15 +3363,55 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
 });
 
 app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
-  const { mandateLifecycleStatus, referenceNumber, notes, revocationDate, effectiveDate, evidenceDate, sourceType } = (req.body || {}) as {
+  const {
+    mandateLifecycleStatus,
+    referenceNumber,
+    evidenceId,
+    notes,
+    revocationDate,
+    effectiveDate,
+    evidenceDate,
+    requestDate,
+    acknowledgementDate,
+    documentUploaded,
+    documentName,
+    sourceType,
+    verifiedConfirmation,
+  } = (req.body || {}) as {
     mandateLifecycleStatus: MandateLifecycleStatus;
     referenceNumber?: string;
+    evidenceId?: string;
     notes?: string;
     revocationDate?: string | null;
     effectiveDate?: string | null;
     evidenceDate?: string | null;
+    requestDate?: string | null;
+    acknowledgementDate?: string | null;
+    documentUploaded?: boolean;
+    documentName?: string | null;
     sourceType?: RecordSourceProvenance;
+    verifiedConfirmation?: boolean;
   };
+
+  if (
+    !mandateLifecycleStatus ||
+    !ALLOWED_MANDATE_LIFECYCLE_STATUSES.includes(mandateLifecycleStatus)
+  ) {
+    res.status(400).json({
+      error: `Invalid mandateLifecycleStatus "${mandateLifecycleStatus}". Allowed values: ${ALLOWED_MANDATE_LIFECYCLE_STATUSES.join(', ')}.`,
+      code: 'INVALID_MANDATE_LIFECYCLE_STATUS',
+    });
+    return;
+  }
+
+  if (isForgedPrivilegedProvenance(sourceType)) {
+    res.status(400).json({
+      error: `Client-forged privileged sourceType "${sourceType}" is not permitted on user mandate lifecycle updates.`,
+      code: 'FORGED_PROVENANCE_REJECTED',
+    });
+    return;
+  }
+
   await executeSerializedMutation(res, () => {
     const state = computeCurrentState();
     const sess =
@@ -2868,9 +3456,55 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
       }
     }
 
+    let parsedRequestDate: string | null | undefined = undefined;
+    if (requestDate !== undefined) {
+      if (requestDate === null || String(requestDate).trim() === '') {
+        parsedRequestDate = null;
+      } else {
+        parsedRequestDate = normalizeDateString(String(requestDate));
+        if (!parsedRequestDate) {
+          return {
+            errorStatus: 400,
+            errorBody: { error: `Invalid requestDate "${requestDate}".` },
+          };
+        }
+      }
+    }
+
+    let parsedAckDate: string | null | undefined = undefined;
+    if (acknowledgementDate !== undefined) {
+      if (acknowledgementDate === null || String(acknowledgementDate).trim() === '') {
+        parsedAckDate = null;
+      } else {
+        parsedAckDate = normalizeDateString(String(acknowledgementDate));
+        if (!parsedAckDate) {
+          return {
+            errorStatus: 400,
+            errorBody: { error: `Invalid acknowledgementDate "${acknowledgementDate}".` },
+          };
+        }
+      }
+    }
+
+    if (
+      (mandateLifecycleStatus === 'ACTIVE' ||
+        mandateLifecycleStatus === 'REVOCATION_REQUESTED') &&
+      parsedRevocationDate !== null
+    ) {
+      return {
+        errorStatus: 400,
+        errorBody: {
+          error: `effectiveDate / revocationDate cannot be set when Layer B status is ${mandateLifecycleStatus}. Use requestDate for REVOCATION_REQUESTED.`,
+          code: 'EFFECTIVE_DATE_NOT_ALLOWED_FOR_STATUS',
+        },
+      };
+    }
+
     const isMandateCompletion =
       mandateLifecycleStatus === 'REVOCATION_REPORTED_BY_USER' ||
-      mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED';
+      mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED' ||
+      mandateLifecycleStatus === 'REVOCATION_VERIFIED' ||
+      mandateLifecycleStatus === 'REVOKED';
 
     const cmtId = sess.commitmentId;
     const prevCmt = state.commitments.find((c) => c.id === cmtId);
@@ -2879,9 +3513,54 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
     const existingEvid = currentOverride.evidenceRecords ?? sess.evidence;
     const updatedEvid = [...existingEvid];
 
+    const existingRevocationDate =
+      currentOverride.mandateRevokedAtOverride ?? sess.paymentAuthorisationRevokedAt ?? null;
+
+    if (
+      mandateLifecycleStatus === 'REVOKED' &&
+      !parsedRevocationDate &&
+      !existingRevocationDate
+    ) {
+      return {
+        errorStatus: 400,
+        errorBody: {
+          error:
+            'Setting Layer B status to REVOKED requires a valid effectiveDate / revocationDate (YYYY-MM-DD).',
+          code: 'EFFECTIVE_DATE_REQUIRED',
+        },
+      };
+    }
+
+    // Validate evidenceId if explicitly provided
+    if (evidenceId !== undefined && evidenceId !== null && String(evidenceId).trim() !== '') {
+      const cleanEvidId = String(evidenceId).trim();
+      const matchedEvid = updatedEvid.find((e) => e.id === cleanEvidId);
+      if (!matchedEvid || matchedEvid.cancellationSessionId !== sess.id) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: `Evidence record "${cleanEvidId}" does not exist or does not belong to commitment "${cmtId}" (session "${sess.id}").`,
+            code: 'INVALID_EVIDENCE_LINK',
+          },
+        };
+      }
+      if (matchedEvid.evidenceType !== 'MANDATE_REVOCATION') {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: `Evidence record "${cleanEvidId}" has type "${matchedEvid.evidenceType}", which cannot satisfy Layer B MANDATE_REVOCATION.`,
+            code: 'INVALID_EVIDENCE_LINK',
+          },
+        };
+      }
+    }
+
     const cleanRef = referenceNumber ? referenceNumber.trim() : '';
     const hasExistingMandateEvidence = updatedEvid.some(
-      (e) => e.evidenceType === 'MANDATE_REVOCATION' && Boolean(e.referenceNumber?.trim())
+      (e) =>
+        e.cancellationSessionId === sess.id &&
+        e.evidenceType === 'MANDATE_REVOCATION' &&
+        Boolean(e.referenceNumber?.trim())
     );
     if (
       mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED' &&
@@ -2893,9 +3572,28 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
         errorBody: {
           error:
             'Cannot set Layer B status to REVOCATION_EVIDENCE_ATTACHED without a valid MANDATE_REVOCATION evidence reference number.',
+          code: 'EVIDENCE_REQUIRED',
         },
       };
     }
+
+    if (mandateLifecycleStatus === 'REVOCATION_VERIFIED') {
+      if (verifiedConfirmation !== true || (!cleanRef && !hasExistingMandateEvidence)) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error:
+              'Cannot self-declare REVOCATION_VERIFIED without verifiedConfirmation=true and attached MANDATE_REVOCATION evidence.',
+            code: 'UNVERIFIED_STATUS_REJECTED',
+          },
+        };
+      }
+    }
+
+    const isUploadedDoc = Boolean(documentUploaded);
+    const assignedSourceType: RecordSourceProvenance = isUploadedDoc
+      ? 'USER_UPLOADED'
+      : 'USER_ENTERED';
 
     if (cleanRef) {
       const alreadyExists = updatedEvid.some(
@@ -2915,10 +3613,16 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
           ...(isMandateCompletion && parsedRevocationDate
             ? { effectiveDate: parsedRevocationDate }
             : {}),
-          evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
-          sourceType: sourceType || 'USER_ENTERED',
+          documentUploaded: isUploadedDoc,
+          ...(documentName ? { documentName } : {}),
+          evidenceRecordLifecycle: isUploadedDoc
+            ? 'DOCUMENT_UPLOADED'
+            : 'EVIDENCE_REFERENCE_RECORDED',
+          sourceType: assignedSourceType,
           verificationStatus:
-            mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED'
+            mandateLifecycleStatus === 'REVOCATION_VERIFIED'
+              ? 'USER_CONFIRMED'
+              : mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED'
               ? 'EVIDENCE_ATTACHED'
               : 'USER_REPORTED',
           createdAt: new Date().toISOString(),
@@ -2929,24 +3633,51 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
     const nextMandateRevokedAt = isMandateCompletion
       ? hasExplicitRevocationParam
         ? parsedRevocationDate
-        : currentOverride.mandateRevokedAtOverride ?? sess.paymentAuthorisationRevokedAt ?? null
+        : existingRevocationDate
       : null;
+
+    const historyList: EffectiveDateChangeRecord[] = [
+      ...(currentOverride.effectiveDateHistory ?? sess.effectiveDateHistory ?? []),
+    ];
+    if (
+      existingRevocationDate &&
+      nextMandateRevokedAt &&
+      existingRevocationDate !== nextMandateRevokedAt
+    ) {
+      const nowIso = new Date().toISOString();
+      historyList.push({
+        layer: 'MANDATE',
+        previousDate: existingRevocationDate,
+        newDate: nextMandateRevokedAt,
+        updatedAt: nowIso,
+        changedAt: nowIso,
+        sourceType: assignedSourceType,
+        reason: notes || 'Corrected Layer B effective mandate revocation date',
+      });
+    }
 
     userCommitmentOverrides[cmtId] = {
       ...currentOverride,
       mandateLifecycleStatus,
       mandateRevokedAtOverride: nextMandateRevokedAt,
+      ...(parsedRequestDate !== undefined
+        ? { mandateRevocationRequestedAtOverride: parsedRequestDate }
+        : {}),
+      ...(parsedAckDate !== undefined
+        ? { mandateRevocationAcknowledgedAtOverride: parsedAckDate }
+        : {}),
+      effectiveDateHistory: historyList,
       evidenceRecords: updatedEvid,
     };
 
     // Also sync status into mandatesStore if matching mandate exists
     const mndIdx = mandatesStore.findIndex((m) => m.commitmentId === cmtId);
     if (mndIdx >= 0) {
-      if (
-        mandateLifecycleStatus === 'REVOCATION_REPORTED_BY_USER' ||
-        mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED'
-      ) {
-        mandatesStore[mndIdx].mandateStatus = 'REVOCATION_REPORTED';
+      if (isMandateCompletion) {
+        mandatesStore[mndIdx].mandateStatus =
+          mandateLifecycleStatus === 'REVOKED' || mandateLifecycleStatus === 'REVOCATION_VERIFIED'
+            ? 'REVOKED'
+            : 'REVOCATION_REPORTED';
       } else if (mandateLifecycleStatus === 'PAUSED_REPORTED_BY_USER') {
         mandatesStore[mndIdx].mandateStatus = 'PAUSED';
       } else if (mandateLifecycleStatus === 'ACTIVE') {
@@ -3009,10 +3740,14 @@ app.get('/api/cancellations/:id/monitoring', (req, res) => {
   const mndStatus = cmt?.mandateLifecycleStatus || 'ACTIVE';
   const hasServiceCancelReported =
     srvStatus === 'CANCELLATION_REPORTED_BY_USER' ||
-    srvStatus === 'CANCELLATION_EVIDENCE_ATTACHED';
+    srvStatus === 'CANCELLATION_EVIDENCE_ATTACHED' ||
+    srvStatus === 'CANCELLATION_VERIFIED' ||
+    srvStatus === 'CANCELLED';
   const hasMandateRevokeReported =
     mndStatus === 'REVOCATION_REPORTED_BY_USER' ||
-    mndStatus === 'REVOCATION_EVIDENCE_ATTACHED';
+    mndStatus === 'REVOCATION_EVIDENCE_ATTACHED' ||
+    mndStatus === 'REVOCATION_VERIFIED' ||
+    mndStatus === 'REVOKED';
   const hasCancelOrRevokeReported = hasServiceCancelReported || hasMandateRevokeReported;
 
   const serviceMonitoringEligible = Boolean(sess.serviceCancelledAt);
@@ -3124,22 +3859,59 @@ app.patch('/api/cancellation/sessions/:id/steps/:stepId', async (req, res) => {
 });
 
 app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
-  const { evidenceType, description, referenceNumber, evidenceDate, effectiveDate, sourceType } = req.body as {
+  const {
+    evidenceType,
+    description,
+    referenceNumber,
+    evidenceDate,
+    effectiveDate,
+    documentUploaded,
+    documentName,
+    documentMimeType,
+    sourceType,
+  } = req.body as {
     evidenceType: CancellationEvidenceRecord['evidenceType'];
     description: string;
     referenceNumber: string;
     evidenceDate?: string | null;
     effectiveDate?: string | null;
+    documentUploaded?: boolean;
+    documentName?: string | null;
+    documentMimeType?: string | null;
     sourceType?: RecordSourceProvenance;
   };
+
+  if (isForgedPrivilegedProvenance(sourceType)) {
+    res.status(400).json({
+      error: `Client-forged privileged sourceType "${sourceType}" is not permitted on cancellation evidence submissions.`,
+      code: 'FORGED_PROVENANCE_REJECTED',
+    });
+    return;
+  }
+
   if (!referenceNumber || !description) {
     res.status(400).json({ error: 'Reference number and description are required.' });
     return;
   }
 
+  const ALLOWED_EVIDENCE_TYPES: CancellationEvidenceRecord['evidenceType'][] = [
+    'SERVICE_CONFIRMATION',
+    'MANDATE_REVOCATION',
+    'MERCHANT_UNRESPONSIVE',
+    'CONFIRMATION_NUMBER',
+  ];
+  if (evidenceType && !ALLOWED_EVIDENCE_TYPES.includes(evidenceType)) {
+    res.status(400).json({
+      error: `Invalid evidenceType "${evidenceType}". Allowed values: ${ALLOWED_EVIDENCE_TYPES.join(', ')}.`,
+    });
+    return;
+  }
+
   await executeSerializedMutation(res, () => {
     const state = computeCurrentState();
-    const sess = state.sessions.find((s) => s.id === req.params.id);
+    const sess = state.sessions.find(
+      (s) => s.id === req.params.id || s.commitmentId === req.params.id
+    );
     if (!sess) {
       return {
         errorStatus: 404,
@@ -3178,6 +3950,11 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
     const existingEvidence = userCommitmentOverrides[cmtId]?.evidenceRecords ?? sess.evidence;
     const cleanRef = referenceNumber.trim();
     const resolvedType = evidenceType || 'SERVICE_CONFIRMATION';
+    const isUploadedDoc = Boolean(documentUploaded);
+    const assignedSourceType: RecordSourceProvenance = isUploadedDoc
+      ? 'USER_UPLOADED'
+      : 'USER_ENTERED';
+
     const existingDuplicate = existingEvidence.find(
       (e) =>
         e.referenceNumber === cleanRef &&
@@ -3194,9 +3971,14 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
         referenceNumber: cleanRef,
         evidenceDate: parsedEvidenceDate,
         ...(parsedEffectiveDate ? { effectiveDate: parsedEffectiveDate } : {}),
-        evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
-        sourceType: sourceType || 'USER_ENTERED',
-        verificationStatus: 'USER_REPORTED',
+        documentUploaded: isUploadedDoc,
+        ...(documentName ? { documentName } : {}),
+        ...(documentMimeType ? { documentMimeType } : {}),
+        evidenceRecordLifecycle: isUploadedDoc
+          ? 'DOCUMENT_UPLOADED'
+          : 'EVIDENCE_REFERENCE_RECORDED',
+        sourceType: assignedSourceType,
+        verificationStatus: isUploadedDoc ? 'EVIDENCE_ATTACHED' : 'USER_REPORTED',
         createdAt: new Date().toISOString(),
       };
     if (!existingDuplicate) {
@@ -3207,7 +3989,9 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
       recordAuditEvent({
         commitmentId: cmtId,
         eventType: 'EVIDENCE_ATTACHED',
-        summary: `Attached ${resolvedType} evidence reference (Ref: ${cleanRef}${
+        summary: `Attached ${resolvedType} ${
+          isUploadedDoc ? 'uploaded document' : 'evidence reference'
+        } (Ref: ${cleanRef}${
           parsedEvidenceDate ? `, Evidence Date: ${parsedEvidenceDate}` : ''
         }${parsedEffectiveDate ? `, Effective Date: ${parsedEffectiveDate}` : ''}).`,
         previousState: null,
@@ -3218,7 +4002,7 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
     return {
       body: {
         evidence: newEvid,
-        session: updatedState.sessions.find((s) => s.id === req.params.id),
+        session: updatedState.sessions.find((s) => s.id === sess.id),
         commitment: updatedState.commitments.find((c) => c.id === cmtId),
       },
     };
@@ -3233,8 +4017,8 @@ app.get('/api/import/coverage', (_req, res) => {
   const coverage = buildDataCoverageSummary({
     transactions: state.transactions,
     commitments: state.commitments,
-    mandates: mandatesStore,
-    serviceTerms: serviceTermsStore,
+    mandates: getEffectiveMandates(),
+    serviceTerms: getEffectiveServiceTerms(),
     notificationsCount: notificationEvents.length,
   });
   res.json(coverage);
@@ -3250,15 +4034,28 @@ app.patch('/api/guardrails/:commitmentId', async (req, res) => {
   const {
     currency,
     maxExpectedAmountMinor,
+    maxExpectedAmount,
     alertOnAnyIncrease,
     preDebitReminderDays,
     requireTwoLayerCancellationConfirmation,
+    sourceType,
   } = (req.body || {}) as Partial<FinancialGuardrailConfig>;
+
+  if (isForgedPrivilegedProvenance(sourceType)) {
+    res.status(400).json({
+      error: `Client-forged privileged sourceType "${sourceType}" is not permitted on guardrail updates.`,
+      code: 'FORGED_PROVENANCE_REJECTED',
+    });
+    return;
+  }
 
   await executeSerializedMutation(res, () => {
     const state = computeCurrentState();
     const targetCommitment = state.commitments.find((c) => c.id === cmtId);
-    const commitmentCurrency = normalizeCurrencyCode(targetCommitment?.currency, 'INR');
+    const commitmentCurrency =
+      targetCommitment?.currency && !isUnknownCurrency(targetCommitment.currency)
+        ? normalizeCurrencyCode(targetCommitment.currency)
+        : null;
 
     if (currency !== undefined && currency !== null && String(currency).trim() !== '') {
       if (!isValidCurrencyCode(currency)) {
@@ -3270,7 +4067,7 @@ app.patch('/api/guardrails/:commitmentId', async (req, res) => {
         };
       }
       const normalizedReqCurrency = normalizeCurrencyCode(currency);
-      if (targetCommitment && normalizedReqCurrency !== commitmentCurrency) {
+      if (commitmentCurrency && normalizedReqCurrency !== commitmentCurrency) {
         return {
           errorStatus: 400,
           errorBody: {
@@ -3281,53 +4078,70 @@ app.patch('/api/guardrails/:commitmentId', async (req, res) => {
     }
 
     const idx = guardrailsStore.findIndex((g) => g.commitmentId === cmtId);
-    const nowIso = new Date().toISOString();
-    const existing: FinancialGuardrailConfig =
-      idx >= 0
-        ? guardrailsStore[idx]
-        : {
-            commitmentId: cmtId,
-            currency: commitmentCurrency,
-            maxExpectedAmountMinor: toMinorUnits(
-              targetCommitment?.typicalAmount ?? 499,
-              commitmentCurrency
-            ),
-            alertOnAnyIncrease: true,
-            preDebitReminderDays: 3,
-            requireTwoLayerCancellationConfirmation: true,
-            sourceType: 'SYSTEM_GENERATED',
-            provenance: 'SYSTEM_DERIVED',
-            createdAt: nowIso,
-            updatedAt: nowIso,
-          };
-
+    const existingGuardrail = idx >= 0 ? guardrailsStore[idx] : null;
     const resolvedCurrency =
-      currency && isValidCurrencyCode(currency)
-        ? normalizeCurrencyCode(currency)
-        : existing.currency || commitmentCurrency;
+      (currency && isValidCurrencyCode(currency) ? normalizeCurrencyCode(currency) : null) ||
+      existingGuardrail?.currency ||
+      commitmentCurrency;
 
+    if (!resolvedCurrency || !isValidCurrencyCode(resolvedCurrency)) {
+      return {
+        errorStatus: 400,
+        errorBody: {
+          error: `Explicit valid currency is required to configure a financial guardrail for commitment ${cmtId}.`,
+        },
+      };
+    }
+
+    let resolvedMinor = existingGuardrail?.maxExpectedAmountMinor ?? null;
+    if (maxExpectedAmountMinor !== undefined && maxExpectedAmountMinor !== null) {
+      const numMinor = Number(maxExpectedAmountMinor);
+      if (!Number.isSafeInteger(numMinor) || numMinor <= 0) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: `maxExpectedAmountMinor must be a positive safe integer, received "${maxExpectedAmountMinor}".`,
+          },
+        };
+      }
+      resolvedMinor = numMinor;
+    } else if (maxExpectedAmount !== undefined && maxExpectedAmount !== null) {
+      const parsedMajor = parseStrictAmount(maxExpectedAmount);
+      if (parsedMajor === null || parsedMajor <= 0) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: `maxExpectedAmount must be a positive finite amount, received "${maxExpectedAmount}".`,
+          },
+        };
+      }
+      resolvedMinor = toMinorUnitsStrict(parsedMajor, resolvedCurrency);
+    } else if (resolvedMinor === null) {
+      resolvedMinor = toMinorUnitsStrict(targetCommitment?.typicalAmount ?? 499, resolvedCurrency);
+    }
+
+    const nowIso = new Date().toISOString();
     const updated: FinancialGuardrailConfig = {
-      ...existing,
+      commitmentId: cmtId,
       currency: resolvedCurrency,
-      ...(maxExpectedAmountMinor !== undefined
-        ? { maxExpectedAmountMinor: Number(maxExpectedAmountMinor) }
-        : {}),
-      ...(alertOnAnyIncrease !== undefined
-        ? { alertOnAnyIncrease: Boolean(alertOnAnyIncrease) }
-        : {}),
-      ...(preDebitReminderDays !== undefined
-        ? { preDebitReminderDays: Number(preDebitReminderDays) }
-        : {}),
-      ...(requireTwoLayerCancellationConfirmation !== undefined
-        ? {
-            requireTwoLayerCancellationConfirmation: Boolean(
-              requireTwoLayerCancellationConfirmation
-            ),
-          }
-        : {}),
+      precision: getCurrencyDecimalsOrNull(resolvedCurrency) ?? 2,
+      maxExpectedAmountMinor: resolvedMinor,
+      maxExpectedAmount: fromMinorUnitsStrict(resolvedMinor, resolvedCurrency),
+      alertOnAnyIncrease:
+        alertOnAnyIncrease !== undefined
+          ? Boolean(alertOnAnyIncrease)
+          : existingGuardrail?.alertOnAnyIncrease ?? true,
+      preDebitReminderDays:
+        preDebitReminderDays !== undefined
+          ? Number(preDebitReminderDays)
+          : existingGuardrail?.preDebitReminderDays ?? 3,
+      requireTwoLayerCancellationConfirmation:
+        requireTwoLayerCancellationConfirmation !== undefined
+          ? Boolean(requireTwoLayerCancellationConfirmation)
+          : existingGuardrail?.requireTwoLayerCancellationConfirmation ?? true,
       sourceType: 'USER_ENTERED',
       provenance: 'USER_CONFIGURED',
-      createdAt: existing.createdAt || nowIso,
+      createdAt: existingGuardrail?.createdAt || nowIso,
       updatedAt: nowIso,
     };
 
@@ -3341,7 +4155,9 @@ app.patch('/api/guardrails/:commitmentId', async (req, res) => {
       commitmentId: cmtId,
       eventType: 'GUARDRAIL_UPDATED',
       summary: `Updated financial guardrail for ${cmtId} (${resolvedCurrency} minor cap: ${updated.maxExpectedAmountMinor}, reminder: ${updated.preDebitReminderDays}d).`,
-      previousState: `${existing.currency} ${existing.maxExpectedAmountMinor}`,
+      previousState: existingGuardrail
+        ? `${existingGuardrail.currency} ${existingGuardrail.maxExpectedAmountMinor}`
+        : null,
       newState: `${updated.currency} ${updated.maxExpectedAmountMinor}`,
     });
 
@@ -3365,9 +4181,16 @@ app.get('/api/import/template', (_req, res) => {
 });
 
 app.post('/api/import/transactions', async (req, res) => {
-  const { csvContent, filename = 'uploaded-statement.csv' } = req.body as {
+  const {
+    csvContent,
+    filename = 'uploaded-statement.csv',
+    defaultCurrency = null,
+    confirmedAccountCurrencies: incomingAccountMap,
+  } = req.body as {
     csvContent: string;
     filename?: string;
+    defaultCurrency?: string | null;
+    confirmedAccountCurrencies?: Record<string, string>;
   };
   if (!csvContent || !csvContent.trim()) {
     res.status(400).json({ error: 'CSV content cannot be empty.' });
@@ -3380,6 +4203,10 @@ app.post('/api/import/transactions', async (req, res) => {
   }
 
   await executeSerializedMutation(res, () => {
+    const effectiveAccountMap = {
+      ...confirmedAccountCurrencies,
+      ...(incomingAccountMap || {}),
+    };
     const existingIds = new Set(rawCsvRows.map((r) => r.transaction_id));
     const existingFingerprints = new Set(rawCsvRows.map(computeCanonicalTxnFingerprint));
     const combinedRows = [...rawCsvRows];
@@ -3390,15 +4217,18 @@ app.post('/api/import/transactions', async (req, res) => {
     for (const r of parsedRows) {
       const amt = parseStrictAmount(r.amount);
       const validDate = normalizeDateString(r.transaction_date);
-      const validCurrency = normalizeCurrencyCode(
-        r.currency !== undefined && r.currency !== null && String(r.currency).trim() !== ''
-          ? String(r.currency)
-          : 'INR'
-      );
+      const accountAlias = r.account_alias?.trim() || 'PRIMARY-ACCOUNT';
+      const accountConfirmedCurr = effectiveAccountMap[accountAlias] || null;
+      const resolvedCurr = resolveTransactionCurrency({
+        explicitCurrency: r.currency,
+        userSelectedMappingCurrency: defaultCurrency,
+        confirmedAccountCurrency: accountConfirmedCurr,
+      });
+
       if (
         !r.transaction_id ||
         !validDate ||
-        !validCurrency ||
+        resolvedCurr.isMalformedCode ||
         !r.raw_description ||
         amt === null ||
         amt <= 0
@@ -3409,7 +4239,9 @@ app.post('/api/import/transactions', async (req, res) => {
       const normalizedRow: RawCsvRow = {
         ...r,
         transaction_date: validDate,
-        currency: validCurrency,
+        currency: resolvedCurr.currency,
+        currency_provenance: resolvedCurr.currencyProvenance,
+        currency_status: resolvedCurr.currencyStatus,
       };
       (normalizedRow as any).source_type = 'CSV_STATEMENT';
       const fp = computeCanonicalTxnFingerprint(normalizedRow);
@@ -3482,13 +4314,11 @@ app.post('/api/import/notifications', async (req, res) => {
         rejected++;
         continue;
       }
-      const validCurrency = normalizeCurrencyCode(
-        item.currency !== undefined && item.currency !== null && String(item.currency).trim() !== ''
-          ? String(item.currency)
-          : 'INR'
-      );
+      const resolvedCurr = resolveTransactionCurrency({
+        explicitCurrency: item.currency,
+      });
       const validDate = normalizeDateString(String(item.eventDate));
-      if (!validCurrency || !validDate) {
+      if (resolvedCurr.isMalformedCode || !validDate) {
         rejected++;
         continue;
       }
@@ -3513,7 +4343,7 @@ app.post('/api/import/notifications', async (req, res) => {
         trialStartDate: item.trialStartDate ?? null,
         trialEndDate: item.trialEndDate ?? null,
         expectedAmount: parsedNotifAmt,
-        currency: validCurrency,
+        currency: resolvedCurr.currency,
         relatedCommitmentId: String(item.relatedCommitmentId || ''),
         sourceType: String(item.sourceType || 'UPLOADED_JSON'),
         description: String(
@@ -4027,7 +4857,14 @@ app.post('/api/import/transactions/preview-mapping', (req, res) => {
     res.status(400).json({ error: 'csvContent string is required' });
     return;
   }
-  const result = previewCsvMapping(csvContent, config);
+  const mergedConfig: Partial<CsvMappingConfig> = {
+    ...(config || {}),
+    confirmedAccountCurrencies: {
+      ...confirmedAccountCurrencies,
+      ...(config?.confirmedAccountCurrencies || {}),
+    },
+  };
+  const result = previewCsvMapping(csvContent, mergedConfig);
   res.json(result);
 });
 
@@ -4040,7 +4877,14 @@ app.post('/api/import/transactions/apply-mapped', async (req, res) => {
     res.status(400).json({ error: 'csvContent and config are required' });
     return;
   }
-  const parseResult = parseAllMappedCsvRows(csvContent, config, true);
+  const mergedConfig: CsvMappingConfig = {
+    ...config,
+    confirmedAccountCurrencies: {
+      ...confirmedAccountCurrencies,
+      ...(config.confirmedAccountCurrencies || {}),
+    },
+  };
+  const parseResult = parseAllMappedCsvRows(csvContent, mergedConfig, true);
   if (parseResult.validRows.length === 0) {
     res.status(400).json({
       error: 'No valid transaction rows could be parsed using the supplied column mapping.',
@@ -4107,16 +4951,34 @@ app.post('/api/import/transactions/apply-mapped', async (req, res) => {
 
 // Section 22 Judge Demo Scenario: StreamBox ₹499 invoice vs ₹799 actual debit vs ₹999 UPI AutoPay mandate
 app.post('/api/demo/streambox-judge-scenario', async (_req, res) => {
+  if (!demoModeEnabled) {
+    res.status(403).json({
+      error: 'Demo Mode is disabled. Enable Demo Mode before loading demonstration scenarios.',
+      code: 'DEMO_MODE_DISABLED',
+    });
+    return;
+  }
   await executeSerializedMutation(res, () => {
-    // Update TXN-1004 (Sept) and TXN-1005 (Oct) to ₹799 so StreamBox has 3 debits of ₹499 (Jun-Aug) and 2 debits of ₹799 (Sep-Oct)
+    // Isolate StreamBox demo row overrides into demoSimulatedRows (never mutate user rawCsvRows)
     for (const row of rawCsvRows) {
       if (row.transaction_id === 'TXN-1004' || row.transaction_id === 'TXN-1005') {
-        row.amount = '799';
+        const simCopy: RawCsvRow & { __replacesBaseRow?: boolean } = {
+          ...row,
+          amount: '799',
+          source_type: 'DEMO_SEED',
+          __replacesBaseRow: true,
+        };
+        const existingSimIdx = demoSimulatedRows.findIndex(
+          (dr) => dr.transaction_id === row.transaction_id
+        );
+        if (existingSimIdx >= 0) {
+          demoSimulatedRows[existingSimIdx] = simCopy;
+        } else {
+          demoSimulatedRows.push(simCopy);
+        }
       }
     }
 
-    // Ensure StreamBox service terms are ₹499 (49900 paise) and mandate max is ₹999 (99900 paise)
-    const sbTermsIdx = serviceTermsStore.findIndex((s) => s.commitmentId === 'CMT-STREAMBOX');
     const sbTerms: ServiceTermsRecord = {
       id: 'DOC-STREAMBOX-01',
       commitmentId: 'CMT-STREAMBOX',
@@ -4153,10 +5015,10 @@ app.post('/api/demo/streambox-judge-scenario', async (_req, res) => {
       userVerified: true,
       createdAt: new Date().toISOString(),
     };
-    if (sbTermsIdx >= 0) serviceTermsStore[sbTermsIdx] = sbTerms;
-    else serviceTermsStore.push(sbTerms);
+    const sbTermsIdx = demoServiceTerms.findIndex((s) => s.commitmentId === 'CMT-STREAMBOX');
+    if (sbTermsIdx >= 0) demoServiceTerms[sbTermsIdx] = sbTerms;
+    else demoServiceTerms.push(sbTerms);
 
-    const sbMandateIdx = mandatesStore.findIndex((m) => m.commitmentId === 'CMT-STREAMBOX');
     const sbMandate: MandateRecord = {
       id: 'MND-STREAMBOX-01',
       mandateReference: 'UMN-STREAMBOX-9821@okaxis',
@@ -4174,11 +5036,12 @@ app.post('/api/demo/streambox-judge-scenario', async (_req, res) => {
       sourceType: 'DEMO_SEED',
       updatedAt: new Date().toISOString(),
     };
-    if (sbMandateIdx >= 0) mandatesStore[sbMandateIdx] = sbMandate;
-    else mandatesStore.push(sbMandate);
+    const sbMandateIdx = demoMandates.findIndex((m) => m.commitmentId === 'CMT-STREAMBOX');
+    if (sbMandateIdx >= 0) demoMandates[sbMandateIdx] = sbMandate;
+    else demoMandates.push(sbMandate);
 
-    userCommitmentOverrides['CMT-STREAMBOX'] = {
-      ...(userCommitmentOverrides['CMT-STREAMBOX'] || {}),
+    demoCommitmentOverrides['CMT-STREAMBOX'] = {
+      ...(demoCommitmentOverrides['CMT-STREAMBOX'] || {}),
       entityClass: 'FINANCIAL_COMMITMENT',
       verificationStatus: 'USER_CONFIRMED',
       expectedAmountMinorOverride: 49900,
@@ -4192,6 +5055,7 @@ app.post('/api/demo/streambox-judge-scenario', async (_req, res) => {
         'Activated Section 22 Judge Demo Scenario: StreamBox expected invoice ₹499 vs actual debit ₹799 (+₹300 discrepancy) within ₹999 UPI AutoPay mandate ceiling.',
       previousState: 'MATCHED',
       newState: 'AMOUNT_DISCREPANCY',
+      actor: 'DEMO_SEED_SCENARIO',
     });
 
     const state = computeCurrentState();
@@ -4211,6 +5075,13 @@ app.post('/api/demo/streambox-judge-scenario', async (_req, res) => {
 });
 
 app.post('/api/demo/simulate-post-cancel-debit', async (req, res) => {
+  if (!demoModeEnabled) {
+    res.status(403).json({
+      error: 'Demo Mode is disabled. Enable Demo Mode before simulating post-cancellation debits.',
+      code: 'DEMO_MODE_DISABLED',
+    });
+    return;
+  }
   const { commitmentId = 'CMT-STREAMBOX' } = req.body as { commitmentId?: string };
   await executeSerializedMutation(res, () => {
     const state = computeCurrentState();
@@ -4223,9 +5094,11 @@ app.post('/api/demo/simulate-post-cancel-debit', async (req, res) => {
     }
 
     const pb = state.playbooks.find((p) => p.commitmentId === cmt.id)!;
-    userCommitmentOverrides[cmt.id] = {
-      ...(userCommitmentOverrides[cmt.id] || {}),
+    demoCommitmentOverrides[cmt.id] = {
+      ...(demoCommitmentOverrides[cmt.id] || {}),
       cancelledAtOverride: '2026-10-10',
+      serviceCancelledAtOverride: '2026-10-10',
+      mandateRevokedAtOverride: '2026-10-10',
       completedStepIds: pb.steps.map((s) => s.id),
       serviceLifecycleStatus: 'CANCELLATION_EVIDENCE_ATTACHED',
       mandateLifecycleStatus: 'REVOCATION_EVIDENCE_ATTACHED',
@@ -4234,9 +5107,10 @@ app.post('/api/demo/simulate-post-cancel-debit', async (req, res) => {
           id: `EVID-SIM-${Date.now()}`,
           cancellationSessionId: `SESS-${cmt.id}`,
           evidenceType: 'SERVICE_CONFIRMATION',
-          description: `User recorded full Layer A service + Layer B mandate cancellation for ${cmt.serviceName}.`,
+          description: `Simulated Layer A service + Layer B mandate cancellation for ${cmt.serviceName}.`,
           referenceNumber: `CANC-REF-${cmt.id}-20261010`,
           evidenceDate: '2026-10-10',
+          effectiveDate: '2026-10-10',
           evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
           sourceType: 'DEMO_SEED',
           verificationStatus: 'EVIDENCE_ATTACHED',
@@ -4246,17 +5120,18 @@ app.post('/api/demo/simulate-post-cancel-debit', async (req, res) => {
     };
 
     const simTxnId = `TXN-POST-${cmt.id.slice(4)}-99`;
-    if (!rawCsvRows.some((r) => r.transaction_id === simTxnId)) {
-      rawCsvRows.push({
+    if (!demoSimulatedRows.some((r) => r.transaction_id === simTxnId)) {
+      demoSimulatedRows.push({
         transaction_id: simTxnId,
         transaction_date: '2026-10-29',
         raw_description: cmt.connectedDescriptors[0] || `RZP*${cmt.merchantName.toUpperCase()}`,
         amount: cmt.latestAmount,
-        currency: cmt.currency || 'INR',
+        currency: cmt.currency || UNKNOWN_CURRENCY,
         direction: 'DEBIT',
         payment_rail: cmt.paymentRail,
         account_alias: 'HDFC-XX4821',
         external_reference: `POST-CANCEL-${Date.now()}`,
+        source_type: 'DEMO_SEED',
       });
     }
 
@@ -4265,11 +5140,11 @@ app.post('/api/demo/simulate-post-cancel-debit', async (req, res) => {
       eventType: 'POST_CANCELLATION_DEBIT_DETECTED',
       summary: `Simulated post-cancellation debit ${simTxnId} (${formatCurrency(
         cmt.latestAmount,
-        cmt.currency || 'INR'
+        cmt.currency || UNKNOWN_CURRENCY
       )} on 2026-10-29) after cancellation on 2026-10-10.`,
       previousState: 'CANCELLED_USER_CONFIRMED',
       newState: 'POST_CANCEL_ALERT',
-      actor: 'SYSTEM_ENGINE',
+      actor: 'DEMO_SEED_SCENARIO',
     });
 
     const updatedState = computeCurrentState();
@@ -4277,7 +5152,7 @@ app.post('/api/demo/simulate-post-cancel-debit', async (req, res) => {
       body: {
         message: `Simulated post-cancellation debit ${simTxnId} (${formatCurrency(
           cmt.latestAmount,
-          cmt.currency || 'INR'
+          cmt.currency || UNKNOWN_CURRENCY
         )} on 2026-10-29) after cancellation on 2026-10-10.`,
         commitment: updatedState.commitments.find((c) => c.id === cmt.id),
         alerts: updatedState.alerts,
@@ -4287,6 +5162,13 @@ app.post('/api/demo/simulate-post-cancel-debit', async (req, res) => {
 });
 
 app.post('/api/demo/reset', async (_req, res) => {
+  if (!demoModeEnabled) {
+    res.status(403).json({
+      error: 'Demo Mode is disabled. Enable Demo Mode before resetting demonstration data.',
+      code: 'DEMO_MODE_DISABLED',
+    });
+    return;
+  }
   await executeSerializedMutation(res, () => {
     loadSeedData(true);
     const state = computeCurrentState();

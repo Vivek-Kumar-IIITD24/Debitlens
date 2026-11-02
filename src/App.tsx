@@ -245,6 +245,9 @@ export default function App() {
 
     setIntegrations(intStatus);
     setSummary(dashSummary);
+    if (typeof dashSummary.demoModeEnabled === 'boolean') {
+      setIsDemoMode(dashSummary.demoModeEnabled);
+    }
     setMonthlyTrend(trend);
     setCommitments(cmts);
     setTransactions(txns);
@@ -513,7 +516,12 @@ export default function App() {
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <button
             type="button"
-            onClick={() => setIsDemoMode((prev) => !prev)}
+            onClick={async () => {
+              const nextMode = !isDemoMode;
+              setIsDemoMode(nextMode);
+              await apiClient.setDemoMode(nextMode);
+              await loadAllData();
+            }}
             title="Toggle Demonstration Controls & Focus Scenarios"
             className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors cursor-pointer min-h-[38px] flex items-center gap-1.5 ${
               isDemoMode
@@ -909,7 +917,7 @@ export default function App() {
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3">
                     <div>
                       <h3 className="text-base font-semibold text-slate-900">
-                        Monthly Recurring Cashflow Breakdown (Jun – Oct 2026)
+                        Monthly Recurring Cashflow Breakdown ({monthlyTrend[0]?.month || '2026-06'} – {monthlyTrend[monthlyTrend.length - 1]?.month || '2026-10'})
                       </h3>
                       <p className="text-xs text-slate-500">
                         Separates optional subscriptions from essential obligations (Loan EMI, Insurance, Utility) and isolated processor-only rows
@@ -924,7 +932,10 @@ export default function App() {
                         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
                         <YAxis tick={{ fontSize: 12 }} />
                         <Tooltip
-                          formatter={(value: unknown) => [formatINR(Number(value || 0)), 'Spend']}
+                          formatter={(value: unknown) => [
+                            formatINR(Number(value || 0), summary.primaryCurrency || 'INR'),
+                            'Spend',
+                          ]}
                         />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
                         <Bar
@@ -1132,6 +1143,7 @@ export default function App() {
               findings={reconciliationFindings}
               selectedCommitmentId={selectedCommitmentId}
               onSelectCommitment={setSelectedCommitmentId}
+              isDemoMode={isDemoMode}
               onUpsertServiceDocument={async (payload) => {
                 await apiClient.upsertServiceDocument(payload);
                 sarvamService.clearCache();
@@ -1632,6 +1644,7 @@ export default function App() {
               selectedCommitmentId={selectedCommitmentId}
               onSelectCommitmentId={setSelectedCommitmentId}
               language={language}
+              isDemoMode={isDemoMode}
               onToggleStep={async (sessionId, stepId, completed) => {
                 await apiClient.toggleCancellationStep(sessionId, stepId, completed);
                 await loadAllData();
@@ -1654,6 +1667,7 @@ export default function App() {
                     ? { referenceNumber: options.referenceNumber }
                     : {}),
                   ...(options?.notes ? { notes: options.notes } : {}),
+                  ...(options?.evidenceId ? { evidenceId: options.evidenceId } : {}),
                 });
                 await loadAllData();
               }}
@@ -1667,6 +1681,7 @@ export default function App() {
                     ? { referenceNumber: options.referenceNumber }
                     : {}),
                   ...(options?.notes ? { notes: options.notes } : {}),
+                  ...(options?.evidenceId ? { evidenceId: options.evidenceId } : {}),
                 });
                 await loadAllData();
               }}
@@ -1709,6 +1724,7 @@ export default function App() {
             <div className="space-y-8">
               <ImportStudioView
                 importHistory={importHistory}
+                isDemoMode={isDemoMode}
                 onImportCsv={async (csvContent, filename) => {
                   await apiClient.importTransactionsCsv(csvContent, filename);
                   await loadAllData();
@@ -1722,6 +1738,7 @@ export default function App() {
                   sarvamService.clearCache();
                   await loadAllData();
                 }}
+                onRefreshAll={loadAllData}
               />
               <MethodologyMetricsView metrics={metrics} />
             </div>

@@ -34,7 +34,11 @@ import {
   formatCurrency,
   normalizeCurrencyCode,
   toMinorUnits,
+  toMinorUnitsStrict,
   fromMinorUnits,
+  resolveTransactionCurrency,
+  isUnknownCurrency,
+  UNKNOWN_CURRENCY,
 } from '../utils/currency';
 import { normaliseDescriptor, detectProcessor, parseStrictAmount, parseStrictSignedAmount, RawCsvRow } from './debitlensEngine';
 import { getEffectiveMandateStatus, getMissingMandateFields } from './reconciliationEngine';
@@ -228,7 +232,7 @@ export function buildUnrecognizedDebitCase(params: {
     transactionId: transaction.id,
     originalDescriptor: transaction.rawDescription,
     amount: transaction.amount,
-    amountMinor: transaction.amountMinor ?? toMinorUnits(transaction.amount),
+    amountMinor: transaction.amountMinor ?? toMinorUnitsStrict(transaction.amount, transaction.currency),
     transactionDate: transaction.transactionDate,
     currency: transaction.currency,
     paymentRail: transaction.paymentRail,
@@ -250,7 +254,7 @@ export function buildUnrecognizedDebitCase(params: {
     evidenceIds: existingCase.evidenceIds || [transaction.id],
     recommendedNextAction,
     guidanceChecklist: [
-      `Search Gmail/SMS for payments of ${formatCurrency(transaction.amount, transaction.currency || 'INR')} around ${transaction.transactionDate}.`,
+      `Search Gmail/SMS for payments of ${formatCurrency(transaction.amount, transaction.currency || UNKNOWN_CURRENCY)} around ${transaction.transactionDate}.`,
       'Check banking/UPI app for active e-mandate or UPI AutoPay with matching ceiling amounts.',
       'Report any suspected unauthorised transaction to your bank immediately through its official channels. Customer liability and reporting timelines depend on the cause of the transaction and the applicable RBI directions and bank policy. Keep your complaint acknowledgement or reference number.',
     ],
@@ -659,13 +663,18 @@ export function generateCommitmentPassport(params: {
     confirmedAt,
   };
 
-  const cmtCurrency =
-    normalizeCurrencyCode(commitment.currency || cmtTxns[0]?.currency || 'INR') || 'INR';
+  const cmtCurrency = isUnknownCurrency(commitment.currency || cmtTxns[0]?.currency)
+    ? UNKNOWN_CURRENCY
+    : (commitment.currency || cmtTxns[0]?.currency).trim().toUpperCase();
   const mandateCurrency = mandate
-    ? normalizeCurrencyCode(mandate.currency || 'INR') || mandate.currency || 'INR'
+    ? isUnknownCurrency(mandate.currency)
+      ? UNKNOWN_CURRENCY
+      : mandate.currency.trim().toUpperCase()
     : cmtCurrency;
   const termsCurrency = terms
-    ? normalizeCurrencyCode(terms.currency || 'INR') || terms.currency || 'INR'
+    ? isUnknownCurrency(terms.currency)
+      ? UNKNOWN_CURRENCY
+      : terms.currency.trim().toUpperCase()
     : cmtCurrency;
 
   const sectionB_Mandate = {
@@ -786,6 +795,9 @@ export function generateCommitmentPassport(params: {
       e.evidenceRecordLifecycle === 'EVIDENCE_REFERENCE_RECORDED' ||
       e.evidenceRecordLifecycle === 'USER_NOTE_RECORDED'
   );
+  const hasDocumentUploaded =
+    sessionEv.some((e) => e.evidenceRecordLifecycle === 'DOCUMENT_UPLOADED' || Boolean(e.documentUploaded)) ||
+    customEv.some((e) => e.evidenceRecordLifecycle === 'DOCUMENT_UPLOADED');
   const hasReferenceRecorded =
     sessionEv.some(
       (e) =>
@@ -806,7 +818,9 @@ export function generateCommitmentPassport(params: {
         )
     );
   const hasNoteRecorded = sessionEv.length > 0 || customEv.length > 0;
-  const derivedEvidenceRecordLifecycle: EvidenceRecordLifecycleStatus = hasReferenceRecorded
+  const derivedEvidenceRecordLifecycle: EvidenceRecordLifecycleStatus = hasDocumentUploaded
+    ? 'DOCUMENT_UPLOADED'
+    : hasReferenceRecorded
     ? 'EVIDENCE_REFERENCE_RECORDED'
     : hasNoteRecorded
     ? 'USER_NOTE_RECORDED'
@@ -935,7 +949,7 @@ export function generateCommitmentPassport(params: {
     sectionD_ServiceTerms: {
       documentedPrice: terms?.expectedAmount ?? null,
       billingFrequency: terms?.billingFrequency || 'UNKNOWN',
-      currency: terms?.currency || 'INR',
+      currency: terms?.currency || cmtCurrency,
       sourceDocumentId: terms?.id || null,
       extractionMethod: terms?.documentSource || null,
       userVerified: Boolean(terms?.userVerified),
@@ -1103,6 +1117,9 @@ export function generateEvidencePackData(params: {
       e.evidenceRecordLifecycle === 'EVIDENCE_REFERENCE_RECORDED' ||
       e.evidenceRecordLifecycle === 'USER_NOTE_RECORDED'
   );
+  const hasPackDocUploaded =
+    evItems.some((e) => e.evidenceRecordLifecycle === 'DOCUMENT_UPLOADED' || Boolean(e.documentUploaded)) ||
+    customPackEv.some((e) => e.evidenceRecordLifecycle === 'DOCUMENT_UPLOADED');
   const hasPackRefRecorded =
     evItems.some(
       (e) =>
@@ -1123,7 +1140,9 @@ export function generateEvidencePackData(params: {
         )
     );
   const hasPackNoteRecorded = evItems.length > 0 || customPackEv.length > 0;
-  const evidenceRecordLifecycle: EvidenceRecordLifecycleStatus = hasPackRefRecorded
+  const evidenceRecordLifecycle: EvidenceRecordLifecycleStatus = hasPackDocUploaded
+    ? 'DOCUMENT_UPLOADED'
+    : hasPackRefRecorded
     ? 'EVIDENCE_REFERENCE_RECORDED'
     : hasPackNoteRecorded
     ? 'USER_NOTE_RECORDED'
@@ -1189,7 +1208,7 @@ export function generateEvidencePackData(params: {
     serviceTerms: {
       documentedPrice: terms?.expectedAmount ?? null,
       billingFrequency: terms?.billingFrequency || 'UNKNOWN',
-      currency: terms?.currency || commitment.currency || 'INR',
+      currency: terms?.currency || commitment.currency || UNKNOWN_CURRENCY,
       documentSource: terms ? `${terms.documentSource} (${termsOrigin || 'UNKNOWN'})` : null,
       documentId: terms?.id || null,
       verificationStatus: terms?.userVerified ? 'USER_CONFIRMED' : 'UNVERIFIED',
@@ -1211,7 +1230,7 @@ export function generateEvidencePackData(params: {
       explanation:
         reconciliationFinding?.explanation ||
         'Reconciliation pending attachment of complete statement and mandate records.',
-      currency: reconciliationFinding?.currency || commitment.currency || 'INR',
+      currency: reconciliationFinding?.currency || commitment.currency || UNKNOWN_CURRENCY,
       expectedServicePrice: reconciliationFinding?.expectedServiceAmount ?? null,
       actualDebitAmount:
         reconciliationFinding?.latestTransactionId && reconciliationFinding.actualTransactionAmount !== null
@@ -1249,7 +1268,9 @@ export function generateEvidencePackData(params: {
       ),
       // Section 7.1 & 7.2: Never derive verified acknowledgement or completion from evidenceType alone, and never claim file upload without an uploaded file
       verificationStatus:
-        evidenceRecordLifecycle === 'EVIDENCE_REFERENCE_RECORDED'
+        evidenceRecordLifecycle === 'DOCUMENT_UPLOADED'
+          ? 'DOCUMENT_UPLOADED'
+          : evidenceRecordLifecycle === 'EVIDENCE_REFERENCE_RECORDED'
           ? 'EVIDENCE_REFERENCE_RECORDED'
           : evidenceRecordLifecycle === 'USER_NOTE_RECORDED'
           ? 'USER_NOTE_RECORDED'
@@ -1296,7 +1317,7 @@ export function escapeHtml(val: string | number | null | undefined): string {
 }
 
 export function generatePrintableEvidencePackHtml(pack: EvidencePackData): string {
-  const packCcy = pack.reconciliation.currency || pack.serviceTerms.currency || 'INR';
+  const packCcy = pack.reconciliation.currency || pack.serviceTerms.currency || UNKNOWN_CURRENCY;
   const formatAmount = (amt: number | null, ccy: string = packCcy) =>
     amt !== null ? escapeHtml(formatCurrency(amt, ccy)) : 'Unavailable';
   const debitsCount = pack.transactions.filter((t) => t.direction === 'DEBIT').length;
@@ -1644,7 +1665,9 @@ export function previewCsvMapping(
     dateFormat: userConfig?.dateFormat || 'YYYY-MM-DD',
     referenceColumn: userConfig?.referenceColumn || suggestedRef || '',
     accountColumn: userConfig?.accountColumn || suggestedAccount || '',
-    currencyColumn: userConfig?.currencyColumn || suggestedCurrency || '',
+    currencyColumn: userConfig?.currencyColumn !== undefined ? userConfig.currencyColumn : (suggestedCurrency || ''),
+    defaultCurrency: userConfig?.defaultCurrency ?? null,
+    confirmedAccountCurrencies: userConfig?.confirmedAccountCurrencies,
     defaultRail: userConfig?.defaultRail || 'UNKNOWN',
     defaultAccountAlias: userConfig?.defaultAccountAlias || 'PRIMARY-ACCOUNT',
   };
@@ -1673,9 +1696,14 @@ export function previewCsvMapping(
     const rawDesc = descIdx >= 0 ? cells[descIdx] || '' : '';
     const rawRef = refIdx >= 0 ? cells[refIdx] || '' : '';
     const acctAlias = (acctIdx >= 0 && cells[acctIdx]) ? cells[acctIdx] : config.defaultAccountAlias || 'PRIMARY-ACCOUNT';
-    const rawCurrency = currIdx >= 0 ? (cells[currIdx] || '').trim() : 'INR';
-    const validatedCurrency = normalizeCurrencyCode(rawCurrency);
-    const currency = validatedCurrency || 'INR';
+    const rawCurrencyCell = currIdx >= 0 ? (cells[currIdx] || '').trim() : '';
+    const resolvedCurr = resolveTransactionCurrency({
+      rawTransactionCurrency: rawCurrencyCell,
+      accountAlias: acctAlias,
+      confirmedAccountCurrencies: config.confirmedAccountCurrencies,
+      userSelectedMappingCurrency: config.defaultCurrency,
+    });
+    const currency = resolvedCurr.currency;
 
     let interpretedAmount: number | null = null;
     let direction: 'DEBIT' | 'CREDIT' = 'DEBIT';
@@ -1725,9 +1753,9 @@ export function previewCsvMapping(
     } else if (!rawDesc) {
       isValid = false;
       rejectReason = 'Missing description';
-    } else if (!validatedCurrency) {
+    } else if (resolvedCurr.isMalformedCode) {
       isValid = false;
-      rejectReason = `Invalid or unsupported ISO 4217 currency code "${rawCurrency}"`;
+      rejectReason = `Invalid or malformed ISO 4217 currency code "${rawCurrencyCell}"`;
     } else if (interpretedAmount === null || interpretedAmount <= 0) {
       isValid = false;
       rejectReason = `Invalid amount "${rawAmountStr}"`;
@@ -1736,7 +1764,7 @@ export function previewCsvMapping(
       rejectReason = `Invalid date "${rawDate}" under format ${config.dateFormat}`;
     }
 
-    const dedupKey = parsedDate && interpretedAmount !== null && validatedCurrency
+    const dedupKey = parsedDate && interpretedAmount !== null && !resolvedCurr.isMalformedCode
       ? computeCanonicalCsvRowFingerprint({
           accountAlias: acctAlias,
           currency,
@@ -1767,6 +1795,8 @@ export function previewCsvMapping(
           raw_description: rawDesc,
           amount: String(interpretedAmount),
           currency,
+          currency_provenance: resolvedCurr.currencyProvenance,
+          currency_status: resolvedCurr.currencyStatus,
           direction,
           account_alias: acctAlias,
           payment_rail: config.defaultRail || 'UNKNOWN',
@@ -1782,6 +1812,9 @@ export function previewCsvMapping(
         rawDescription: rawDesc,
         rawAmount: rawAmountStr,
         interpretedAmount,
+        currency,
+        currencyProvenance: resolvedCurr.currencyProvenance,
+        currencyStatus: resolvedCurr.currencyStatus,
         direction,
         isValid,
         rejectReason,
@@ -1868,9 +1901,14 @@ export function parseAllMappedCsvRows(
     const rawDesc = descIdx >= 0 ? cells[descIdx] || '' : '';
     const rawRef = refIdx >= 0 ? cells[refIdx] || '' : '';
     const acctAlias = (acctIdx >= 0 && cells[acctIdx]) ? cells[acctIdx] : config.defaultAccountAlias || 'PRIMARY-ACCOUNT';
-    const rawCurrency = currIdx >= 0 ? (cells[currIdx] || '').trim() : 'INR';
-    const validatedCurrency = normalizeCurrencyCode(rawCurrency);
-    const currency = validatedCurrency || 'INR';
+    const rawCurrencyCell = currIdx >= 0 ? (cells[currIdx] || '').trim() : '';
+    const resolvedCurr = resolveTransactionCurrency({
+      rawTransactionCurrency: rawCurrencyCell,
+      accountAlias: acctAlias,
+      confirmedAccountCurrencies: config.confirmedAccountCurrencies,
+      userSelectedMappingCurrency: config.defaultCurrency,
+    });
+    const currency = resolvedCurr.currency;
 
     let amount: number | null = null;
     let direction: 'DEBIT' | 'CREDIT' = 'DEBIT';
@@ -1907,9 +1945,9 @@ export function parseAllMappedCsvRows(
       return;
     }
 
-    if (!validatedCurrency) {
+    if (resolvedCurr.isMalformedCode) {
       rejectedCount++;
-      validationErrors.push({ row: rowNum, reason: `Invalid or unsupported ISO 4217 currency code "${rawCurrency}"` });
+      validationErrors.push({ row: rowNum, reason: `Invalid or malformed ISO 4217 currency code "${rawCurrencyCell}"` });
       return;
     }
 
@@ -1961,6 +1999,8 @@ export function parseAllMappedCsvRows(
       raw_description: rawDesc,
       amount: String(amount),
       currency,
+      currency_provenance: resolvedCurr.currencyProvenance,
+      currency_status: resolvedCurr.currencyStatus,
       direction,
       payment_rail: (config.defaultRail as any) || 'UNKNOWN',
       account_alias: acctAlias,
@@ -1988,11 +2028,14 @@ export function computeCanonicalCsvRowFingerprint(params: {
   externalReference?: string | null;
 }): string {
   const acct = (params.accountAlias || 'PRIMARY-ACCOUNT').trim().toUpperCase();
-  const curr = (params.currency || 'INR').trim().toUpperCase();
+  const curr = isUnknownCurrency(params.currency)
+    ? UNKNOWN_CURRENCY
+    : params.currency.trim().toUpperCase();
   const dt = (params.parsedDate || '').trim();
   const dir = (params.direction || 'DEBIT').trim().toUpperCase();
-  const amtMinor = toMinorUnits(Number(params.amount) || 0, curr);
+  const amtMinor = toMinorUnitsStrict(Number(params.amount), curr);
+  const amtToken = amtMinor !== null ? String(amtMinor) : `MAJOR:${Number(params.amount)}`;
   const desc = (params.rawDescription || '').trim().toUpperCase().replace(/\s+/g, ' ');
   const ref = (params.externalReference || '').trim().toUpperCase();
-  return `${acct}|${curr}|${dt}|${dir}|${amtMinor}|${desc}|${ref}`;
+  return `${acct}|${curr}|${dt}|${dir}|${amtToken}|${desc}|${ref}`;
 }
