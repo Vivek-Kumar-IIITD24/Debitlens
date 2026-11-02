@@ -38,8 +38,10 @@ import {
   escapeHtml,
   parseCsvDate,
   parseAllMappedCsvRows,
+  computeCanonicalCsvRowFingerprint,
 } from './debitlensEngine';
 import { toMinorUnits, fromMinorUnits, formatMinorINR } from '../utils/currency';
+import { normalizeDateString, isValidCalendarDate } from '../utils/dateUtils';
 import { isPlaceholderEnvValue } from '../services/neo4jPersistenceService';
 import { MERCHANT_CATALOGUE } from './referenceData';
 
@@ -1972,9 +1974,9 @@ test('Regression: Inverted provenance fix ensures system inference is NEVER labe
     auditEvents: [], // No IDENTITY_MATCH_CONFIRMED audit event
   });
 
-  // Must be CONFIRMED or SYSTEM_INFERRED, strictly NEVER USER_CONFIRMED without user action
+  // Must be SYSTEM_INFERRED (or CATALOGUE_MATCHED if in catalogue), strictly NEVER USER_CONFIRMED or generic CONFIRMED
   assert.notEqual(passport.sectionA_Identity.provenance, 'USER_CONFIRMED');
-  assert.equal(passport.sectionA_Identity.provenance, 'CONFIRMED');
+  assert.equal(passport.sectionA_Identity.provenance, 'SYSTEM_INFERRED');
 });
 
 test('Regression: Legal entity does NOT fall back to merchant display name when not in catalogue', () => {
@@ -2090,16 +2092,39 @@ test('Regression: Idempotent CSV repeat import skips exact duplicates based on c
   const parsed1 = parseCsvTextRFC4180(csvContent);
   assert.equal(parsed1.length, 2);
 
-  // Compute canonical fingerprints
-  const fp1 = `${parsed1[0].account_alias || 'PRIMARY-ACCOUNT'}_INR_${parsed1[0].transaction_date}_649_DEBIT__${normaliseDescriptor(parsed1[0].raw_description)}`;
-  const fp2 = `${parsed1[1].account_alias || 'PRIMARY-ACCOUNT'}_INR_${parsed1[1].transaction_date}_119_DEBIT__${normaliseDescriptor(parsed1[1].raw_description)}`;
+  const fp1 = computeCanonicalCsvRowFingerprint({
+    accountAlias: parsed1[0].account_alias || 'PRIMARY-ACCOUNT',
+    currency: 'INR',
+    parsedDate: parsed1[0].transaction_date,
+    direction: 'DEBIT',
+    amount: 649,
+    rawDescription: parsed1[0].raw_description,
+    externalReference: parsed1[0].external_reference,
+  });
+  const fp2 = computeCanonicalCsvRowFingerprint({
+    accountAlias: parsed1[1].account_alias || 'PRIMARY-ACCOUNT',
+    currency: 'INR',
+    parsedDate: parsed1[1].transaction_date,
+    direction: 'DEBIT',
+    amount: 119,
+    rawDescription: parsed1[1].raw_description,
+    externalReference: parsed1[1].external_reference,
+  });
 
   const canonicalStore = new Set([fp1, fp2]);
   let duplicatesSkipped = 0;
   const newInserts: any[] = [];
 
   for (const row of parsed1) {
-    const fp = `${row.account_alias || 'PRIMARY-ACCOUNT'}_INR_${row.transaction_date}_${row.amount}_${row.direction}__${normaliseDescriptor(row.raw_description)}`;
+    const fp = computeCanonicalCsvRowFingerprint({
+      accountAlias: row.account_alias || 'PRIMARY-ACCOUNT',
+      currency: row.currency || 'INR',
+      parsedDate: row.transaction_date,
+      direction: row.direction || 'DEBIT',
+      amount: Number(row.amount),
+      rawDescription: row.raw_description,
+      externalReference: row.external_reference,
+    });
     if (canonicalStore.has(fp)) {
       duplicatesSkipped++;
     } else {
@@ -2107,8 +2132,385 @@ test('Regression: Idempotent CSV repeat import skips exact duplicates based on c
     }
   }
 
-  // On re-import of same data, 0 new rows should be inserted!
   assert.equal(duplicatesSkipped, 2);
   assert.equal(newInserts.length, 0);
 });
+
+test('Financial Integrity: Commitment with typicalAmount but zero actual transactions never substitutes typicalAmount for actual debit amount', () => {
+  const cmtNoTxns: any = {
+    id: 'CMT-DORMANT-TEST',
+    serviceName: 'NewsPlus Annual Digital',
+    merchantName: 'NewsPlus Media Ltd',
+    merchantId: 'M-NEWSPLUS',
+    confidenceScore: 88,
+    confidenceLabel: 'HIGH',
+    connectedDescriptors: ['UPI/AUTOPAY/NEWSPLUS'],
+    processorName: null,
+    recurrenceType: 'YEARLY',
+    typicalAmount: 1499,
+    latestAmount: 1499,
+    annualisedAmount: 1499,
+    monthlyEquivalent: 125,
+    totalHistoricalSpend: 0,
+    lastPaymentDate: '2025-10-01',
+    nextExpectedDate: '2026-10-01',
+    status: 'ACTIVE',
+    relationshipStatus: 'CONFIRMED',
+    verificationStatus: 'CONFIRMED',
+    category: 'OTT_STREAMING',
+    paymentRail: 'UPI_AUTOPAY',
+    mandateRef: 'UMN-NEWSPLUS-7712@okicici',
+    supportingTransactionIds: [],
+    priceChangeDetected: false,
+    serviceLifecycleStatus: 'ACTIVE',
+    mandateLifecycleStatus: 'ACTIVE',
+  };
+
+  const activeMandate: any = {
+    id: 'MND-DORMANT-NEWSPLUS',
+    mandateReference: 'UMN-NEWSPLUS-7712@okicici',
+    commitmentId: 'CMT-DORMANT-TEST',
+    merchantId: 'M-NEWSPLUS',
+    merchantName: 'NewsPlus Media Ltd',
+    paymentRail: 'UPI_AUTOPAY',
+    maxAmountMinor: 149900,
+    maxAmount: 1499,
+    currency: 'INR',
+    frequency: 'YEARLY',
+    startDate: '2025-10-01',
+    endDate: '2027-10-01',
+    mandateStatus: 'ACTIVE',
+    sourceType: 'DEMO_SEED',
+    updatedAt: '2026-10-01T00:00:00Z',
+  };
+
+  const recFinding = reconcileCommitment({
+    commitment: cmtNoTxns,
+    transactions: [],
+    mandate: activeMandate,
+    serviceTerms: null,
+    cancellationSession: null,
+  });
+
+  assert.equal(recFinding.status, 'MANDATE_WITHOUT_RECENT_TRANSACTION');
+  assert.equal(recFinding.actualTransactionAmount, null, 'actualTransactionAmount must be null when no debit exists');
+  assert.equal(recFinding.actualTransactionAmountMinor, null, 'actualTransactionAmountMinor must be null when no debit exists');
+
+  const passport = generateCommitmentPassport({
+    commitment: cmtNoTxns,
+    transactions: [],
+    mandate: activeMandate,
+    serviceTerms: null,
+    reconciliation: recFinding,
+    alerts: [],
+    casebookEntries: [],
+    auditEvents: [],
+  });
+
+  assert.equal(
+    passport.sectionE_Reconciliation.actualAmount,
+    null,
+    'Passport actualAmount must be null and NEVER fall back to typicalAmount (1499)'
+  );
+  assert.equal(
+    (passport.sectionE_Reconciliation as any).actualDebitTransactionAmount,
+    null,
+    'Passport actualDebitTransactionAmount must be null when no transactions exist'
+  );
+  assert.equal((passport.sectionE_Reconciliation as any).typicalObservedAmount, 1499);
+  assert.equal(passport.sectionB_FinancialPattern.amountRange.min, null);
+  assert.equal(passport.sectionB_FinancialPattern.amountRange.max, null);
+  assert.equal(passport.sectionD_History.latestDebitDate, null);
+
+  const pack = generateEvidencePackData({
+    commitment: cmtNoTxns,
+    transactions: [],
+    mandate: activeMandate,
+    serviceTerms: null,
+    reconciliation: recFinding,
+    alerts: [],
+    casebookEntries: [],
+    auditEvents: [],
+  });
+
+  assert.equal(
+    pack.reconciliation.actualDebitAmount,
+    null,
+    'EvidencePack actualDebitAmount must be null and NEVER fall back to typicalAmount (1499)'
+  );
+});
+
+test('Provenance & Audit Matching: Unrelated free-text audit summary and unrelated imported transactions do not contaminate commitment provenance or Evidence Pack source notice', () => {
+  const cmtStreambox: any = {
+    id: 'CMT-STREAMBOX',
+    serviceName: 'StreamBox Standard Monthly Plan',
+    merchantName: 'StreamBox Media Pvt Ltd',
+    merchantId: 'MERCH-STREAMBOX',
+    confidenceScore: 95,
+    confidenceLabel: 'HIGH',
+    connectedDescriptors: ['RZP*STREAMBOX'],
+    processorName: 'Razorpay',
+    recurrenceType: 'MONTHLY',
+    typicalAmount: 499,
+    latestAmount: 499,
+    annualisedAmount: 5988,
+    monthlyEquivalent: 499,
+    totalHistoricalSpend: 1497,
+    lastPaymentDate: '2026-10-05',
+    nextExpectedDate: '2026-11-05',
+    status: 'ACTIVE',
+    relationshipStatus: 'CONFIRMED',
+    verificationStatus: 'CONFIRMED',
+    category: 'OTT_STREAMING',
+    paymentRail: 'UPI_AUTOPAY',
+    mandateRef: 'UMN-STREAMBOX-01',
+    supportingTransactionIds: ['TXN-SB-1'],
+    priceChangeDetected: false,
+    serviceLifecycleStatus: 'ACTIVE',
+    mandateLifecycleStatus: 'ACTIVE',
+  };
+
+  const allTransactions: any[] = [
+    {
+      id: 'TXN-SB-1',
+      transactionId: 'TXN-SB-1',
+      transactionDate: '2026-10-05',
+      rawDescription: 'RZP*STREAMBOX',
+      normalisedDescription: 'RZP STREAMBOX',
+      amount: 499,
+      amountMinor: 49900,
+      currency: 'INR',
+      direction: 'DEBIT',
+      paymentRail: 'UPI_AUTOPAY',
+      accountAlias: 'HDFC-XX4821',
+      commitmentId: 'CMT-STREAMBOX',
+      sourceType: 'DEMO_SEED',
+    },
+    {
+      id: 'TXN-OTHER-IMPORTED',
+      transactionId: 'TXN-OTHER-IMPORTED',
+      transactionDate: '2026-10-10',
+      rawDescription: 'UPI/DR/MUSICFLOW',
+      normalisedDescription: 'UPI DR MUSICFLOW',
+      amount: 199,
+      amountMinor: 19900,
+      currency: 'INR',
+      direction: 'DEBIT',
+      paymentRail: 'UPI_AUTOPAY',
+      accountAlias: 'ICICI-XX1904',
+      commitmentId: 'CMT-MUSICFLOW',
+      sourceType: 'CSV_MAPPED',
+    },
+  ];
+
+  // Unrelated audit event whose summary happens to mention "StreamBox Media Pvt Ltd"
+  const unrelatedAuditEvents: any[] = [
+    {
+      id: 'AUD-UNRELATED-1',
+      commitmentId: 'CMT-MUSICFLOW',
+      transactionId: 'TXN-OTHER-IMPORTED',
+      timestamp: '2026-10-12T10:00:00Z',
+      eventType: 'IDENTITY_MATCH_CONFIRMED',
+      actionType: 'IDENTITY_MATCH_CONFIRMED',
+      summary: 'User compared MusicFlow with StreamBox Media Pvt Ltd and confirmed MusicFlow.',
+      actor: 'USER_ACTION',
+    },
+  ];
+
+  const passport = generateCommitmentPassport({
+    commitment: cmtStreambox,
+    transactions: allTransactions,
+    mandate: null,
+    serviceTerms: null,
+    reconciliation: null,
+    alerts: [],
+    casebookEntries: [],
+    auditEvents: unrelatedAuditEvents,
+  });
+
+  assert.equal(
+    passport.sectionA_Identity.provenance,
+    'CATALOGUE_MATCHED',
+    'Catalogue-matched commitment without a structured user confirmation for its own ID must be CATALOGUE_MATCHED, never USER_CONFIRMED'
+  );
+  assert.equal(passport.verificationQuality?.isUserConfirmed, false);
+
+  const pack = generateEvidencePackData({
+    commitment: cmtStreambox,
+    transactions: allTransactions,
+    mandate: null,
+    serviceTerms: null,
+    reconciliation: null,
+    alerts: [],
+    casebookEntries: [],
+    auditEvents: unrelatedAuditEvents,
+  });
+
+  assert.ok(
+    pack.header.syntheticNotice.startsWith('Synthetic Demonstration Dataset'),
+    'Synthetic commitment must NOT be labeled Mixed Evidence Source due to an unrelated imported transaction'
+  );
+  assert.notEqual(pack.commitmentIdentity.resolutionStatus, 'USER_CONFIRMED');
+});
+
+test('Strict Calendar Date Validation & Null Event Timestamps: Impossible dates are rejected and missing event dates are never fabricated', () => {
+  assert.equal(isValidCalendarDate(2026, 2, 31), false);
+  assert.equal(isValidCalendarDate(2026, 2, 30), false);
+  assert.equal(isValidCalendarDate(2026, 2, 29), false);
+  assert.equal(isValidCalendarDate(2024, 2, 29), true);
+  assert.equal(isValidCalendarDate(2026, 4, 31), false);
+
+  assert.equal(normalizeDateString('31/02/2026'), null);
+  assert.equal(normalizeDateString('30/02/2026'), null);
+  assert.equal(normalizeDateString('29/02/2026'), null);
+  assert.equal(normalizeDateString('2026-02-31'), null);
+  assert.equal(normalizeDateString('31-04-2026'), null);
+  assert.equal(normalizeDateString('29/02/2024'), '2024-02-29');
+
+  assert.equal(parseCsvDate('31/02/2026', 'DD/MM/YYYY'), null);
+  assert.equal(parseCsvDate('29/02/2026', 'DD/MM/YYYY'), null);
+  assert.equal(parseCsvDate('29/02/2024', 'DD/MM/YYYY'), '2024-02-29');
+
+  // Review Queue with missing evaluatedAt/createdAt must set eventDate=null and createdAt=null, never today's date
+  const queue = buildReviewQueue({
+    investigations: [
+      {
+        id: 'INV-TEST-1',
+        transactionId: 'TXN-99',
+        originalDescriptor: 'PAYU*UNKNOWN*99',
+        amount: 299,
+        amountMinor: 29900,
+        transactionDate: '2026-10-01',
+        currency: 'INR',
+        paymentRail: 'UPI_ONE_TIME',
+        accountAlias: 'HDFC-XX4821',
+        possibleProcessor: 'PayU',
+        currentAssessment: {
+          merchantIdentity: null,
+          serviceName: null,
+          resolutionStatus: 'UNRESOLVED',
+          matchingMethod: 'PROCESSOR_ONLY_UNRESOLVED',
+          explanation: 'Processor only',
+        },
+        candidateMerchants: [
+          { candidateMerchantId: 'M1', candidateMerchantName: 'A', candidateServiceName: 'A', candidateType: 'PROCESSOR_RELATIONSHIP', matchReason: '', evidenceSource: '', confidenceScore: 30, confidenceExplanation: '' },
+          { candidateMerchantId: 'M2', candidateMerchantName: 'B', candidateServiceName: 'B', candidateType: 'PROCESSOR_RELATIONSHIP', matchReason: '', evidenceSource: '', confidenceScore: 30, confidenceExplanation: '' },
+          { candidateMerchantId: 'M3', candidateMerchantName: 'C', candidateServiceName: 'C', candidateType: 'PROCESSOR_RELATIONSHIP', matchReason: '', evidenceSource: '', confidenceScore: 30, confidenceExplanation: '' },
+        ],
+        status: 'OPEN',
+        userAssessment: null,
+        userNotes: '',
+        evidenceIds: ['TXN-99'],
+        recommendedNextAction: 'Check receipt',
+        createdAt: '',
+        updatedAt: '2026-10-01T00:00:00Z',
+        resolutionSource: null,
+        resolvedMerchantId: null,
+      },
+    ],
+    reconciliationFindings: [
+      {
+        id: 'REC-NO-DATE',
+        commitmentId: 'CMT-1',
+        merchantName: 'Test Merch',
+        serviceName: 'Test Service',
+        status: 'AMOUNT_DISCREPANCY',
+        expectedServiceAmountMinor: 49900,
+        expectedServiceAmount: 499,
+        actualTransactionAmountMinor: 79900,
+        actualTransactionAmount: 799,
+        mandateMaxAmountMinor: 99900,
+        mandateMaxAmount: 999,
+        discrepancyAmountMinor: 30000,
+        discrepancyAmount: 300,
+        discrepancyPercent: 60.12,
+        withinMandateLimit: true,
+        latestTransactionId: 'TXN-1',
+        mandateReference: 'UMN-1',
+        serviceDocumentId: 'DOC-1',
+        explanation: 'Discrepancy',
+        epistemicCaveat: 'Caveat',
+        evidenceRecordIds: ['TXN-1', 'DOC-1'],
+        evaluatedAt: '', // Missing timestamp
+      },
+    ],
+    alerts: [],
+    commitments: [],
+  });
+
+  const invItem = queue.find((i) => i.id === 'RQ-INV-INV-TEST-1')!;
+  assert.equal(
+    invItem.supportingEvidenceCount,
+    1,
+    'supportingEvidenceCount must equal evidenceIds.length (1), never candidateMerchants.length (3)'
+  );
+  assert.equal(invItem.createdAt, null);
+
+  const recItem = queue.find((i) => i.id === 'RQ-REC-REC-NO-DATE')!;
+  assert.equal(recItem.eventDate, null, 'Missing evaluatedAt must yield eventDate=null, not today');
+  assert.equal(recItem.createdAt, null, 'Missing evaluatedAt must yield createdAt=null, not today');
+});
+
+test('CSV Import At Scale (55 Rows): Preserves distinct bank references, accounts, currencies, and matches preview vs apply counts', () => {
+  const lines: string[] = [
+    'Date,Narration,Debit,Credit,Account,Currency,Reference',
+  ];
+  // 1-45: 45 distinct daily/monthly transactions across two accounts
+  for (let i = 1; i <= 45; i++) {
+    const day = String(((i - 1) % 28) + 1).padStart(2, '0');
+    const month = i <= 28 ? '09' : '10';
+    const acct = i % 2 === 0 ? 'HDFC-XX4821' : 'ICICI-XX1904';
+    lines.push(`${day}/${month}/2026,"RZP*STREAMBOX SUB #${i}",499.00,,${acct},INR,UTR-2026-${String(i).padStart(3, '0')}`);
+  }
+  // 46 & 47: Same date, same narration, same amount, same account, but DIFFERENT bank references (UTR-A vs UTR-B) -> BOTH must be kept!
+  lines.push(`15/10/2026,"UPI/DR/CLOUDNOTES/PRO",299.00,,HDFC-XX4821,INR,UTR-SAME-DAY-A`);
+  lines.push(`15/10/2026,"UPI/DR/CLOUDNOTES/PRO",299.00,,HDFC-XX4821,INR,UTR-SAME-DAY-B`);
+  // 48 & 49: Same date, same narration, same amount, empty reference, but DIFFERENT accounts -> BOTH must be kept!
+  lines.push(`16/10/2026,"UPI/DR/MUSICFLOW",199.00,,HDFC-XX4821,INR,`);
+  lines.push(`16/10/2026,"UPI/DR/MUSICFLOW",199.00,,ICICI-XX1904,INR,`);
+  // 50 & 51: Same date, same narration, same amount, same account, but DIFFERENT currencies (INR vs USD) -> BOTH must be kept!
+  lines.push(`17/10/2026,"CLOUD*SAAS*GLOBAL",20.00,,HDFC-XX4821,INR,`);
+  lines.push(`17/10/2026,"CLOUD*SAAS*GLOBAL",20.00,,HDFC-XX4821,USD,`);
+  // 52: Valid Credit refund row -> kept as CREDIT
+  lines.push(`18/10/2026,"REFUND RZP*STREAMBOX",,499.00,HDFC-XX4821,INR,UTR-REFUND-01`);
+  // 53: Exact duplicate of row 46 (same account, currency, date, amount, narration, and reference UTR-SAME-DAY-A) -> flagged as duplicate!
+  lines.push(`15/10/2026,"UPI/DR/CLOUDNOTES/PRO",299.00,,HDFC-XX4821,INR,UTR-SAME-DAY-A`);
+  // 54: Impossible calendar date 31/02/2026 -> rejected!
+  lines.push(`31/02/2026,"UPI/DR/INVALIDDATE",499.00,,HDFC-XX4821,INR,UTR-BAD-DATE`);
+  // 55: Ambiguous row with both debit and credit -> rejected!
+  lines.push(`19/10/2026,"AMBIGUOUS BOTH DR CR",100.00,100.00,HDFC-XX4821,INR,UTR-AMBIG`);
+
+  const csv55 = lines.join('\n');
+  const config: any = {
+    dateColumn: 'Date',
+    descriptionColumn: 'Narration',
+    amountMode: 'SEPARATE_DEBIT_CREDIT',
+    debitColumn: 'Debit',
+     debitAmountColumn: 'Debit',
+    creditColumn: 'Credit',
+    creditAmountColumn: 'Credit',
+    accountColumn: 'Account',
+    currencyColumn: 'Currency',
+    referenceColumn: 'Reference',
+    dateFormat: 'DD/MM/YYYY',
+  };
+
+  const preview = previewCsvMapping(csv55, config);
+  const parsed = parseAllMappedCsvRows(csv55, config, true);
+
+  assert.equal(preview.totalRows, 55);
+  assert.equal(parsed.totalRows, 55);
+  assert.equal(preview.validRowsCount, 52, '52 valid rows (45 + 2 diff refs + 2 diff accts + 2 diff currencies + 1 credit)');
+  assert.equal(parsed.validCount, 52, 'parseAllMappedCsvRows validCount must match previewCsvMapping validRowsCount (52)');
+  assert.equal(preview.duplicateRowCount, 1, '1 exact duplicate row');
+  assert.equal(parsed.duplicateCount, 1, '1 exact duplicate row');
+  assert.equal(preview.rejectedRowCount, 2, '2 rejected rows (31/02/2026 and ambiguous dual debit/credit)');
+  assert.equal(parsed.rejectedCount, 2, '2 rejected rows');
+
+  // Verify empty reference rows do NOT get fabricated MAP-... external_reference
+  const emptyRefRow = parsed.validRows.find((r) => r.raw_description === 'UPI/DR/MUSICFLOW');
+  assert.ok(emptyRefRow);
+  assert.equal(emptyRefRow.external_reference, '', 'Missing external reference must remain empty string, never fabricated MAP-...');
+});
+
 

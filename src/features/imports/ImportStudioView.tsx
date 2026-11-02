@@ -185,7 +185,7 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
     try {
       await onImportCsv(csvText, filename);
       setSuccessMsg(
-        `Successfully processed CSV batch "${filename}" (RFC-4180 parser) into the Commitment Graph and re-evaluated temporal rules.`
+        `Successfully validated and saved CSV batch "${filename}" (RFC-4180 parser) to the canonical store, re-evaluated temporal rules, and triggered Neo4j graph projection.`
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -243,7 +243,7 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
             Statement & Notification Import Studio
           </h2>
           <p className="text-xs text-slate-600 mt-0.5">
-            Import native bank statements with Smart Column Mapping, RFC-4180 CSVs, or JSON mandate notifications. All imports sync directly to the financial graph.
+            Import native bank statements with Smart Column Mapping, RFC-4180 CSVs, or JSON mandate notifications. Records are saved to the canonical store first and projected to the Neo4j graph when configured.
           </p>
         </div>
 
@@ -366,7 +366,7 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
                   <span>Column Alignment & Parsing Rules</span>
                   {previewResult && (
                     <span className="text-indigo-600 font-semibold normal-case">
-                      Detected {previewResult.totalRowsFound} rows • {previewResult.validRowsCount} debit rows parsed
+                      Detected {previewResult.totalRowsFound} rows • {previewResult.validRowsCount} valid statement rows parsed
                     </span>
                   )}
                 </h4>
@@ -457,7 +457,7 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
                       </div>
 
                       <div>
-                        <label className="block text-slate-600 font-medium mb-1">Deposit / Credit Column (Filtered Out)</label>
+                        <label className="block text-slate-600 font-medium mb-1">Deposit / Credit Column (Refunds & Reversals)</label>
                         <select
                           value={mappingConfig.creditAmountColumn || ''}
                           onChange={(e) =>
@@ -526,8 +526,14 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
                             </td>
                             <td className="p-2.5">
                               {r.isValid ? (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                                  Valid Debit
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    r.direction === 'CREDIT'
+                                      ? 'bg-sky-100 text-sky-800'
+                                      : 'bg-emerald-100 text-emerald-800'
+                                  }`}
+                                >
+                                  {r.direction === 'CREDIT' ? 'Valid Credit' : 'Valid Debit'}
                                 </span>
                               ) : (
                                 <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-200 text-slate-600">
@@ -556,7 +562,7 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
                   <strong className="text-slate-800">
                     {previewResult?.validRowsCount || 0}
                   </strong>{' '}
-                  valid debit transactions.
+                  valid statement rows (debits & credits).
                 </span>
                 <button
                   type="button"
@@ -615,7 +621,7 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
                 type="submit"
                 className="px-4 py-2 text-xs font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors"
               >
-                Validate & Import CSV into Neo4j Graph
+                Validate & Import CSV Batch
               </button>
             </form>
           )}
@@ -680,7 +686,7 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
           <div className="border-b border-slate-100 pb-3">
             <h3 className="text-sm font-semibold text-slate-900">Import Batch Audit Log</h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Idempotent import batches (`:ImportBatch` nodes)
+              Idempotent canonical import batches (projected as `:ImportBatch` nodes in Neo4j)
             </p>
           </div>
 

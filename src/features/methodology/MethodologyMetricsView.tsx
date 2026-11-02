@@ -139,8 +139,11 @@ export const MethodologyMetricsView: React.FC<MethodologyMetricsViewProps> = ({ 
               <div className="p-3 rounded-lg bg-teal-50/50 border border-teal-200/80 text-xs text-slate-700 flex items-start gap-2">
                 <ShieldCheck className="w-4 h-4 text-teal-700 shrink-0 mt-0.5" />
                 <span>
-                  <strong>Separation of Responsibilities:</strong> Neo4j connects multi-descriptor relationships; Java evaluates temporal intervals and confidence scores deterministically; Sarvam AI communicates verified findings in the user's preferred Indian language.
+                  <strong>Separation of Responsibilities:</strong> Neo4j connects multi-descriptor relationships; TypeScript engines evaluate temporal intervals and confidence scores deterministically; Sarvam AI communicates verified findings in the user's preferred Indian language.
                 </span>
+              </div>
+              <div className="p-3 rounded-lg bg-amber-50/70 border border-amber-200/80 text-xs text-amber-900">
+                <strong>Benchmark Scope & Epistemic Caveat:</strong> These precision, recall, and F1 metrics are evaluated against the controlled 45-row labelled Indian banking benchmark dataset ({metrics.datasetVersion}). Real-world bank statements with unseen merchant descriptors, non-standard narrations, or truncated references may require user confirmation via the Unrecognized Debit Investigation Drawer.
               </div>
             </div>
           </div>

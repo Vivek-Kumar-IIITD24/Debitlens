@@ -391,8 +391,8 @@ export interface ReconciliationFindingRecord {
   status: ReconciliationOutcomeStatus;
   expectedServiceAmountMinor: number | null;
   expectedServiceAmount: number | null;
-  actualTransactionAmountMinor: number;
-  actualTransactionAmount: number;
+  actualTransactionAmountMinor: number | null;
+  actualTransactionAmount: number | null;
   mandateMaxAmountMinor: number | null;
   mandateMaxAmount: number | null;
   discrepancyAmountMinor: number | null;
@@ -441,6 +441,10 @@ export interface EvidenceCasebookEntry {
 export interface AuditEventRecord {
   id: string;
   commitmentId: string | null;
+  transactionId?: string | null;
+  investigationId?: string | null;
+  merchantId?: string | null;
+  reviewItemId?: string | null;
   timestamp: string;
   eventType?: AuditEventRecord['actionType'];
   actionType?:
@@ -465,6 +469,8 @@ export interface AuditEventRecord {
     | 'POST_CANCELLATION_DEBIT_DETECTED'
     | 'GUARDRAIL_UPDATE'
     | 'GUARDRAIL_UPDATED'
+    | 'REVIEW_QUEUE_UPDATED'
+    | 'INVESTIGATION_ACTION_RECORDED'
     | 'JUDGE_DEMO_SCENARIO_TRIGGERED';
   actor: string;
   summary: string;
@@ -962,10 +968,11 @@ export interface ReviewQueueItem {
   merchantName: string;
   amount: number | null;
   amountMinor: number | null;
-  eventDate: string;
+  eventDate: string | null;
   whyItAppeared: string;
   supportingEvidenceCount: number;
   recommendedAction: string;
+  resolutionReason?: string | null;
   actionType:
     | 'INVESTIGATE_DEBIT'
     | 'REVIEW_DISCREPANCY'
@@ -974,7 +981,7 @@ export interface ReviewQueueItem {
     | 'OPEN_CANCELLATION'
     | 'VIEW_PASSPORT'
     | 'INSPECT_EVIDENCE';
-  createdAt: string;
+  createdAt: string | null;
   updatedAt: string;
 }
 
@@ -1036,7 +1043,7 @@ export interface CommitmentPassport {
     explanation?: string;
     outcome?: ReconciliationOutcomeStatus;
     expectedPrice?: number | null;
-    actualAmount?: number;
+    actualAmount?: number | null;
     mandateCap?: number | null;
     discrepancyAmount?: number | null;
     discrepancyPercent?: number | null;
@@ -1155,7 +1162,7 @@ export interface EvidencePackData {
     outcome: ReconciliationOutcomeStatus;
     explanation: string;
     expectedServicePrice: number | null;
-    actualDebitAmount: number;
+    actualDebitAmount: number | null;
     mandateCap: number | null;
     discrepancyAmount: number | null;
     discrepancyPercent: number | null;

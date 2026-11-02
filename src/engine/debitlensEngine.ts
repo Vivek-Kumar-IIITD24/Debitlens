@@ -532,8 +532,8 @@ export function parseAndNormaliseTransactions(
       matchingMethod: resolved.matchingMethod,
       confidenceScore: resolved.confidenceScore,
       resolutionExplanation: resolved.resolutionExplanation,
-      sourceType,
-      importBatchId,
+      sourceType: ((row as any).source_type as TransactionRecord['sourceType']) || sourceType,
+      importBatchId: ((row as any).import_batch_id as string) || importBatchId,
       externalReference: (row.external_reference || '').trim(),
       commitmentId: null,
     });

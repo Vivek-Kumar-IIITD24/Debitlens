@@ -407,10 +407,10 @@ export const apiClient = {
     }),
   getReviewQueue: () =>
     fetchJson<ReviewQueueItem[]>('/api/review-queue'),
-  updateReviewQueueStatus: (itemId: string, status: ReviewQueueStatus) =>
+  updateReviewQueueStatus: (itemId: string, status: ReviewQueueStatus, resolutionReason?: string) =>
     fetchJson<ReviewQueueItem[]>(`/api/review-queue/${itemId}/status`, {
       method: 'POST',
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, resolutionReason }),
     }),
   previewCsvMapping: (csvContent: string, config?: Partial<CsvMappingConfig>) =>
     fetchJson<CsvMappingPreviewResult>('/api/import/transactions/preview-mapping', {

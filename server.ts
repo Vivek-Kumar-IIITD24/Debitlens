@@ -34,7 +34,9 @@ import {
   generatePrintableEvidencePackHtml,
   previewCsvMapping,
   parseAllMappedCsvRows,
+  computeCanonicalCsvRowFingerprint,
 } from './src/engine/debitlensEngine';
+import { normalizeDateString } from './src/utils/dateUtils';
 import {
   MERCHANT_CATALOGUE,
   PAYMENT_PROCESSORS,
@@ -118,6 +120,10 @@ let reviewQueueStatusOverrides: Record<string, ReviewQueueStatus> = {};
 
 function recordAuditEvent(params: {
   commitmentId: string | null;
+  transactionId?: string | null;
+  investigationId?: string | null;
+  merchantId?: string | null;
+  reviewItemId?: string | null;
   eventType: AuditEventRecord['eventType'];
   summary: string;
   previousState?: string | null;
@@ -127,8 +133,13 @@ function recordAuditEvent(params: {
   const evt: AuditEventRecord = {
     id: `AUD-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     commitmentId: params.commitmentId,
+    transactionId: params.transactionId ?? null,
+    investigationId: params.investigationId ?? null,
+    merchantId: params.merchantId ?? null,
+    reviewItemId: params.reviewItemId ?? null,
     timestamp: new Date().toISOString(),
     eventType: params.eventType,
+    actionType: params.eventType,
     summary: params.summary,
     previousState: params.previousState ?? null,
     newState: params.newState ?? null,
@@ -139,8 +150,53 @@ function recordAuditEvent(params: {
 }
 
 let lastPersistenceError: string | null = null;
+let simulatePersistenceFailureForTesting = false;
+let lastCommittedSnapshot: PersistentAppStore | null = null;
+
+export function setSimulatePersistenceFailureForTesting(shouldFail: boolean) {
+  simulatePersistenceFailureForTesting = shouldFail;
+}
+
+export function snapshotState(): PersistentAppStore {
+  return structuredClone({
+    rawCsvRows,
+    notificationEvents,
+    userMerchantOverrides,
+    userCommitmentOverrides,
+    alertStatusOverrides,
+    importHistory,
+    mandates: mandatesStore,
+    serviceTerms: serviceTermsStore,
+    customCasebookEntries,
+    auditEvents: auditEventsStore,
+    guardrails: guardrailsStore,
+    investigationCases: investigationCasesStore,
+    reviewQueueStatusOverrides,
+  });
+}
+
+export function restoreStateSnapshot(snapshot: PersistentAppStore) {
+  const cloned = structuredClone(snapshot);
+  rawCsvRows = cloned.rawCsvRows;
+  notificationEvents = cloned.notificationEvents;
+  userMerchantOverrides = cloned.userMerchantOverrides;
+  userCommitmentOverrides = cloned.userCommitmentOverrides;
+  alertStatusOverrides = cloned.alertStatusOverrides;
+  importHistory = cloned.importHistory;
+  mandatesStore = cloned.mandates;
+  serviceTermsStore = cloned.serviceTerms;
+  customCasebookEntries = cloned.customCasebookEntries;
+  auditEventsStore = cloned.auditEvents;
+  guardrailsStore = cloned.guardrails;
+  investigationCasesStore = cloned.investigationCases || [];
+  reviewQueueStatusOverrides = cloned.reviewQueueStatusOverrides || {};
+}
 
 function savePersistentStore(): { saved: boolean; error?: string } {
+  if (simulatePersistenceFailureForTesting) {
+    lastPersistenceError = 'Simulated disk write failure for rollback verification';
+    return { saved: false, error: lastPersistenceError };
+  }
   const tmpPath = `${PERSISTENT_STORE_PATH}.tmp.${process.pid}.${Date.now()}`;
   try {
     const dir = path.dirname(PERSISTENT_STORE_PATH);
@@ -165,6 +221,7 @@ function savePersistentStore(): { saved: boolean; error?: string } {
     fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf-8');
     fs.renameSync(tmpPath, PERSISTENT_STORE_PATH);
     lastPersistenceError = null;
+    lastCommittedSnapshot = snapshotState();
     return { saved: true };
   } catch (err) {
     try {
@@ -182,12 +239,15 @@ function savePersistentStore(): { saved: boolean; error?: string } {
 }
 
 /**
- * Enforces Part 3.3 persistence failure checking:
- * Returns false and sends a 500 error if persistence write failed.
+ * Enforces atomic persistence + rollback:
+ * If disk write fails, rolls back in-memory state to lastCommittedSnapshot and sends HTTP 500.
  */
 function persistOrError(res: express.Response): boolean {
   const result = savePersistentStore();
   if (!result.saved) {
+    if (lastCommittedSnapshot) {
+      restoreStateSnapshot(lastCommittedSnapshot);
+    }
     res.status(500).json({
       error: `Failed to persist application state: ${result.error || 'Disk write error'}`,
     });
@@ -197,51 +257,18 @@ function persistOrError(res: express.Response): boolean {
 }
 
 export function computeCanonicalTxnFingerprint(row: RawCsvRow): string {
-  const normDesc = normaliseDescriptor(row.raw_description || '');
-  const ref = (row.external_reference || '').trim();
-  const acct = (row.account_alias || 'PRIMARY-ACCOUNT').trim();
-  const curr = (row.currency || 'INR').trim().toUpperCase();
-  const date = (row.transaction_date || '').trim();
-  const amt = String(Number(row.amount) || row.amount).trim();
-  const dir = (row.direction || 'DEBIT').trim().toUpperCase();
-  return `${acct}_${curr}_${date}_${amt}_${dir}_${ref}_${normDesc}`;
+  return computeCanonicalCsvRowFingerprint({
+    accountAlias: row.account_alias || 'PRIMARY-ACCOUNT',
+    currency: row.currency || 'INR',
+    parsedDate: row.transaction_date || '',
+    direction: row.direction || 'DEBIT',
+    amount: Number(row.amount) || 0,
+    rawDescription: row.raw_description || '',
+    externalReference: row.external_reference || '',
+  });
 }
 
 let mutationQueue = Promise.resolve();
-
-export function snapshotState(): PersistentAppStore {
-  return {
-    rawCsvRows: [...rawCsvRows],
-    notificationEvents: [...notificationEvents],
-    userMerchantOverrides: { ...userMerchantOverrides },
-    userCommitmentOverrides: { ...userCommitmentOverrides },
-    alertStatusOverrides: { ...alertStatusOverrides },
-    importHistory: [...importHistory],
-    mandates: [...mandatesStore],
-    serviceTerms: [...serviceTermsStore],
-    customCasebookEntries: [...customCasebookEntries],
-    auditEvents: [...auditEventsStore],
-    guardrails: [...guardrailsStore],
-    investigationCases: [...investigationCasesStore],
-    reviewQueueStatusOverrides: { ...reviewQueueStatusOverrides },
-  };
-}
-
-export function restoreStateSnapshot(snapshot: PersistentAppStore) {
-  rawCsvRows = snapshot.rawCsvRows;
-  notificationEvents = snapshot.notificationEvents;
-  userMerchantOverrides = snapshot.userMerchantOverrides;
-  userCommitmentOverrides = snapshot.userCommitmentOverrides;
-  alertStatusOverrides = snapshot.alertStatusOverrides;
-  importHistory = snapshot.importHistory;
-  mandatesStore = snapshot.mandates;
-  serviceTermsStore = snapshot.serviceTerms;
-  customCasebookEntries = snapshot.customCasebookEntries;
-  auditEventsStore = snapshot.auditEvents;
-  guardrailsStore = snapshot.guardrails;
-  investigationCasesStore = snapshot.investigationCases || [];
-  reviewQueueStatusOverrides = snapshot.reviewQueueStatusOverrides || {};
-}
 
 export async function safeMutateState<T>(
   mutator: () => Promise<T> | T
@@ -292,6 +319,7 @@ function loadSeedData(forceReset = false) {
         guardrailsStore = saved.guardrails || [];
         investigationCasesStore = saved.investigationCases || [];
         reviewQueueStatusOverrides = saved.reviewQueueStatusOverrides || {};
+        lastCommittedSnapshot = snapshotState();
         return;
       }
     } catch {
@@ -384,7 +412,7 @@ function computeCurrentState() {
   const { transactions, invalidRows, duplicateRows } = parseAndNormaliseTransactions(
     rawCsvRows,
     'BATCH-SEED-01',
-    'CSV_STATEMENT',
+    'DEMO_SEED',
     userMerchantOverrides
   );
   const { commitments, alerts, playbooks, sessions } = detectCommitmentsAndAlerts(
@@ -423,21 +451,54 @@ function computeCurrentState() {
   };
 }
 
-// Sync initial seed to Neo4j if configured
-async function syncStateToGraphAsync() {
-  if (!neo4jPersistenceService.isConfigured()) return;
-  const state = computeCurrentState();
-  await neo4jPersistenceService.syncFullGraphToNeo4j({
-    transactions: state.transactions,
-    commitments: state.commitments,
-    alerts: state.alerts,
-    playbooks: state.playbooks,
-    sessions: state.sessions,
-    notifications: notificationEvents,
-    mandates: mandatesStore,
-    serviceTerms: serviceTermsStore,
-    reconciliationFindings: state.reconciliationFindings,
-  });
+// Separate Graph Projection / Sync Status (Never invalidates canonical JSON store)
+export type GraphSyncStatus = 'SYNCED' | 'PENDING' | 'FAILED' | 'LOCAL_ONLY';
+let lastGraphSyncStatus: GraphSyncStatus = neo4jPersistenceService.isConfigured() ? 'PENDING' : 'LOCAL_ONLY';
+let lastGraphSyncAt: string | null = null;
+let lastGraphSyncError: string | null = null;
+
+export function getGraphSyncMetadata() {
+  return {
+    status: lastGraphSyncStatus,
+    lastSyncAt: lastGraphSyncAt,
+    lastError: lastGraphSyncError,
+  };
+}
+
+async function syncStateToGraphAsync(): Promise<{ status: GraphSyncStatus; error?: string }> {
+  if (!neo4jPersistenceService.isConfigured()) {
+    lastGraphSyncStatus = 'LOCAL_ONLY';
+    return { status: 'LOCAL_ONLY' };
+  }
+  lastGraphSyncStatus = 'PENDING';
+  try {
+    const state = computeCurrentState();
+    const res = await neo4jPersistenceService.syncFullGraphToNeo4j({
+      transactions: state.transactions,
+      commitments: state.commitments,
+      alerts: state.alerts,
+      playbooks: state.playbooks,
+      sessions: state.sessions,
+      notifications: notificationEvents,
+      mandates: mandatesStore,
+      serviceTerms: serviceTermsStore,
+      reconciliationFindings: state.reconciliationFindings,
+    });
+    if (res.persisted) {
+      lastGraphSyncStatus = 'SYNCED';
+      lastGraphSyncAt = new Date().toISOString();
+      lastGraphSyncError = null;
+      return { status: 'SYNCED' };
+    } else {
+      lastGraphSyncStatus = 'FAILED';
+      lastGraphSyncError = res.error || 'Graph projection failed';
+      return { status: 'FAILED', error: lastGraphSyncError };
+    }
+  } catch (err) {
+    lastGraphSyncStatus = 'FAILED';
+    lastGraphSyncError = err instanceof Error ? err.message : String(err);
+    return { status: 'FAILED', error: lastGraphSyncError };
+  }
 }
 
 syncStateToGraphAsync();
@@ -2519,6 +2580,7 @@ app.post('/api/import/transactions', async (req, res) => {
     return;
   }
   const existingIds = new Set(rawCsvRows.map((r) => r.transaction_id));
+  const existingFingerprints = new Set(rawCsvRows.map(computeCanonicalTxnFingerprint));
   const combinedRows = [...rawCsvRows];
   let added = 0;
   let duplicates = 0;
@@ -2526,9 +2588,10 @@ app.post('/api/import/transactions', async (req, res) => {
 
   for (const r of parsedRows) {
     const amt = parseStrictAmount(r.amount);
+    const validDate = normalizeDateString(r.transaction_date);
     if (
       !r.transaction_id ||
-      !r.transaction_date ||
+      !validDate ||
       !r.raw_description ||
       amt === null ||
       amt <= 0
@@ -2536,12 +2599,19 @@ app.post('/api/import/transactions', async (req, res) => {
       rejected++;
       continue;
     }
-    if (existingIds.has(r.transaction_id)) {
+    const normalizedRow: RawCsvRow = {
+      ...r,
+      transaction_date: validDate,
+    };
+    (normalizedRow as any).source_type = 'CSV_STATEMENT';
+    const fp = computeCanonicalTxnFingerprint(normalizedRow);
+    if (existingIds.has(r.transaction_id) || existingFingerprints.has(fp)) {
       duplicates++;
       continue;
     }
     existingIds.add(r.transaction_id);
-    combinedRows.push(r);
+    existingFingerprints.add(fp);
+    combinedRows.push(normalizedRow);
     added++;
   }
 
@@ -2837,34 +2907,83 @@ app.post('/api/investigations/:id/action', async (req, res) => {
     res.status(400).json({ error: `Invalid targetStatus "${targetStatus}".` });
     return;
   }
+  const ALLOWED_ACTION_TYPES = [
+    'CHECKED_RECEIPTS',
+    'CONTACTED_MERCHANT',
+    'CHECKED_UPI_MANDATES',
+    'CHECKED_BANK_STATEMENT',
+    'ADDED_NOTE',
+    'MARKED_RECOGNIZED',
+    'MARKED_UNRESOLVED',
+    'ESCALATED_TO_BANK',
+    'REJECT_CANDIDATE',
+    'REQUEST_MORE_INFO',
+    'CLOSE_CASE',
+    'REOPEN_CASE',
+    'CONFIRM_MERCHANT',
+  ];
+  const cleanActionType = actionType.trim();
+  if (!ALLOWED_ACTION_TYPES.includes(cleanActionType)) {
+    res.status(400).json({
+      error: `Invalid actionType "${cleanActionType}". Allowed values: ${ALLOWED_ACTION_TYPES.join(', ')}`,
+    });
+    return;
+  }
   const caseItem = investigationCasesStore.find((c) => c.id === id);
   if (!caseItem) {
     res.status(404).json({ error: 'Investigation case not found' });
     return;
   }
   const prevState = caseItem.status;
+  if (
+    prevState === 'CLOSED' &&
+    targetStatus &&
+    targetStatus !== 'OPEN' &&
+    targetStatus !== 'UNDER_REVIEW' &&
+    cleanActionType !== 'REOPEN_CASE'
+  ) {
+    res.status(400).json({
+      error: 'A CLOSED investigation case must be reopened before transitioning to another status.',
+    });
+    return;
+  }
+  if (!caseItem.actionsTaken) {
+    caseItem.actionsTaken = [];
+  }
+  // Prevent duplicate identical non-note actions
+  if (
+    cleanActionType !== 'ADDED_NOTE' &&
+    caseItem.actionsTaken.some(
+      (a: any) => a.actionType === cleanActionType && (a.notes || '') === (notes || '')
+    ) &&
+    (!targetStatus || targetStatus === caseItem.status)
+  ) {
+    res.status(400).json({
+      error: `Duplicate action "${cleanActionType}" has already been recorded on this investigation case.`,
+    });
+    return;
+  }
   if (targetStatus) {
     caseItem.status = targetStatus;
   }
   if (notes) {
     caseItem.notes = (caseItem.notes ? caseItem.notes + '\n' : '') + notes;
   }
-  if (!caseItem.actionsTaken) {
-    caseItem.actionsTaken = [];
-  }
   caseItem.actionsTaken.push({
     actionId: `ACT-${Date.now()}`,
-    actionType: actionType.trim(),
+    actionType: cleanActionType,
     takenAt: new Date().toISOString(),
-    notes: notes || `Action ${actionType.trim()} recorded by user.`,
+    notes: notes || `Action ${cleanActionType} recorded by user.`,
     actor: 'USER',
   });
   caseItem.updatedAt = new Date().toISOString();
 
   recordAuditEvent({
     commitmentId: null,
-    eventType: 'MERCHANT_CORRECTION',
-    summary: `Investigation ${caseItem.id} updated with action ${actionType.trim()} (Status: ${caseItem.status}).`,
+    transactionId: caseItem.transactionId,
+    investigationId: caseItem.id,
+    eventType: 'INVESTIGATION_ACTION_RECORDED',
+    summary: `Investigation ${caseItem.id} updated with action ${cleanActionType} (Status: ${caseItem.status}).`,
     previousState: prevState,
     newState: caseItem.status,
     actor: 'USER_ACTION',
@@ -2896,11 +3015,20 @@ app.post('/api/investigations/:id/confirm-merchant', async (req, res) => {
     res.status(400).json({ error: `Invalid merchantId "${merchantId}": not found in catalogue.` });
     return;
   }
-  // Block processor-only candidates from being directly confirmed without independent evidence
+  // Enforce candidate eligibility: merchantId MUST be an eligible candidate for this case and NEVER processor-only
   const matchingCandidate = caseItem.candidateMerchants?.find(
     (c) => (c.merchantId || c.candidateMerchantId) === merchantId
   );
-  if (matchingCandidate && matchingCandidate.candidateType === 'PROCESSOR_RELATIONSHIP') {
+  if (!matchingCandidate) {
+    res.status(400).json({
+      error: `Merchant "${merchantId}" is not an eligible candidate for investigation case ${caseItem.id}. Only evidence-backed candidate merchants for this descriptor can be confirmed.`,
+    });
+    return;
+  }
+  if (
+    matchingCandidate.candidateType === 'PROCESSOR_RELATIONSHIP' ||
+    matchingCandidate.isProcessorOnly
+  ) {
     res.status(400).json({
       error:
         'Processor-only contextual relationships cannot be directly confirmed as merchant matches without independent receipt or descriptor evidence.',
@@ -2911,6 +3039,7 @@ app.post('/api/investigations/:id/confirm-merchant', async (req, res) => {
   const canonicalDescriptor = txn.rawDescription;
   userMerchantOverrides[canonicalDescriptor] = merchantId;
   caseItem.resolvedMerchantId = merchantId;
+  caseItem.resolutionSource = 'USER_CONFIRMED';
   (caseItem as any).confirmedMerchantId = merchantId;
   caseItem.status = 'IDENTIFIED';
   caseItem.updatedAt = new Date().toISOString();
@@ -2925,8 +3054,16 @@ app.post('/api/investigations/:id/confirm-merchant', async (req, res) => {
     actor: 'USER',
   });
 
+  const updatedStatePrePersist = computeCurrentState();
+  const linkedCommitment = updatedStatePrePersist.commitments.find((c) =>
+    c.supportingTransactionIds.includes(txn.id)
+  );
+
   recordAuditEvent({
-    commitmentId: null,
+    commitmentId: linkedCommitment?.id || null,
+    transactionId: txn.id,
+    investigationId: caseItem.id,
+    merchantId,
     eventType: 'IDENTITY_MATCH_CONFIRMED',
     summary: `Investigation ${caseItem.id}: Confirmed descriptor "${canonicalDescriptor}" maps to ${merch.canonicalName} (${merchantId}).`,
     previousState: 'UNRESOLVED',
@@ -2962,7 +3099,10 @@ app.get('/api/review-queue', (_req, res) => {
 
 app.post('/api/review-queue/:id/status', async (req, res) => {
   const id = req.params.id;
-  const { status } = req.body as { status: ReviewQueueStatus };
+  const { status, resolutionReason } = req.body as {
+    status: ReviewQueueStatus;
+    resolutionReason?: string;
+  };
   const ALLOWED_QUEUE_STATUSES: ReviewQueueStatus[] = [
     'OPEN',
     'IN_REVIEW',
@@ -2974,7 +3114,42 @@ app.post('/api/review-queue/:id/status', async (req, res) => {
     res.status(400).json({ error: 'Valid ReviewQueueStatus is required.' });
     return;
   }
+  if (status === 'RESOLVED' && (!resolutionReason || !String(resolutionReason).trim())) {
+    res.status(400).json({
+      error: 'A resolutionReason is required when marking a review queue item as RESOLVED.',
+    });
+    return;
+  }
+  const preState = computeCurrentState();
+  const currentQueue = buildReviewQueue({
+    investigations: investigationCasesStore,
+    reconciliationFindings: preState.reconciliationFindings,
+    alerts: preState.alerts,
+    commitments: preState.commitments,
+    statusOverrides: reviewQueueStatusOverrides,
+  });
+  const targetItem = currentQueue.find((i) => i.id === id || i.dedupKey === id);
+  const previousStatus = targetItem?.status || reviewQueueStatusOverrides[id] || 'OPEN';
+
   reviewQueueStatusOverrides[id] = status;
+  if (targetItem) {
+    reviewQueueStatusOverrides[targetItem.id] = status;
+    reviewQueueStatusOverrides[targetItem.dedupKey] = status;
+  }
+
+  recordAuditEvent({
+    commitmentId: targetItem?.commitmentId || null,
+    transactionId: targetItem?.transactionId || null,
+    reviewItemId: targetItem?.id || id,
+    eventType: 'REVIEW_QUEUE_UPDATED',
+    summary: `Review Queue item ${targetItem?.id || id} transitioned from ${previousStatus} to ${status}${
+      resolutionReason ? ` (Reason: ${resolutionReason.trim()})` : ''
+    }.`,
+    previousState: previousStatus,
+    newState: status,
+    actor: 'USER_ACTION',
+  });
+
   if (!persistOrError(res)) return;
   const state = computeCurrentState();
   const queue = buildReviewQueue({
@@ -3026,6 +3201,7 @@ app.post('/api/import/transactions/apply-mapped', async (req, res) => {
   let existingDuplicatesSkipped = 0;
 
   for (const vr of parseResult.validRows) {
+    (vr as any).source_type = 'CSV_STATEMENT';
     const fp = computeCanonicalTxnFingerprint(vr);
     if (existingFingerprints.has(fp)) {
       existingDuplicatesSkipped++;

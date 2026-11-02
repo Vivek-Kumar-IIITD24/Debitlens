@@ -2,11 +2,6 @@
 
 **Tagline:** *Find it. Understand it. Reconcile it. Verify it.*
 
-**HackFront India Submission:**
-- **Primary Track:** Fintech Problem Statement T4.1 (Recurring Payment & Subscription Intelligence)
-- **Partner Track 1:** **Neo4j** — *Best Use of Neo4j* (Persistent Commitment & Reconciliation Graph on Neo4j AuraDB)
-- **Partner Track 2:** **Sarvam AI** — *Best Use of Sarvam* (*DebitLens Bhasha* Grounded Indian-Language Financial Intelligence)
-
 ---
 
 ## 1. Product Positioning & Five Intelligence Pillars
@@ -78,7 +73,7 @@ Ordinary consumers face opaque bank statement descriptors (`RZP*STREAMBOX`, `SI-
    npm run dev
    # or: npm start
    ```
-3. Run automated unit, financial integrity & adversarial tests (52 tests across `src/engine/debitlensEngine.test.ts` and `src/utils/searchHistory.test.ts`):
+3. Run automated unit, financial integrity & adversarial tests (56 tests across `src/engine/debitlensEngine.test.ts` and `src/utils/searchHistory.test.ts`):
    ```bash
    npm test
    ```

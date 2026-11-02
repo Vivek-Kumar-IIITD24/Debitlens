@@ -43,6 +43,10 @@ export const ReviewAndResolveView: React.FC<ReviewAndResolveViewProps> = ({
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ACTIVE_ONLY');
   const [priorityFilter, setPriorityFilter] = useState<string>('ALL');
+  const [resolvingItemId, setResolvingItemId] = useState<string | null>(null);
+  const [resolutionReasonInput, setResolutionReasonInput] = useState<string>(
+    'Verified against statement and mandate records'
+  );
 
   const loadQueue = async () => {
     try {
@@ -61,10 +65,20 @@ export const ReviewAndResolveView: React.FC<ReviewAndResolveViewProps> = ({
     loadQueue();
   }, []);
 
-  const handleUpdateStatus = async (itemId: string, status: ReviewQueueStatus) => {
+  const handleUpdateStatus = async (
+    itemId: string,
+    status: ReviewQueueStatus,
+    resolutionReason?: string
+  ) => {
     try {
-      const updated = await apiClient.updateReviewQueueStatus(itemId, status);
+      setError(null);
+      const reasonToSend =
+        status === 'RESOLVED'
+          ? (resolutionReason || resolutionReasonInput || 'Verified against statement records').trim()
+          : resolutionReason;
+      const updated = await apiClient.updateReviewQueueStatus(itemId, status, reasonToSend);
       setItems(updated);
+      setResolvingItemId(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update item status');
     }
@@ -334,15 +348,17 @@ export const ReviewAndResolveView: React.FC<ReviewAndResolveViewProps> = ({
                     {getStatusBadge(item.status)}
                     {(() => {
                       const raw = (item as any).detectedAt || item.eventDate || item.createdAt;
-                      if (!raw) return null;
                       return (
                         <span className="text-xs text-slate-400 font-mono">
-                          {formatDateIN(raw)}
+                          {raw ? formatDateIN(raw) : 'Date Unavailable'}
                         </span>
                       );
                     })()}
                     <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-600 rounded">
                       {item.category.replace(/_/g, ' ')}
+                    </span>
+                    <span className="text-xs px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded font-medium">
+                      {item.supportingEvidenceCount} supporting record{item.supportingEvidenceCount === 1 ? '' : 's'}
                     </span>
                   </div>
 
@@ -399,11 +415,17 @@ export const ReviewAndResolveView: React.FC<ReviewAndResolveViewProps> = ({
 
                     {item.status !== 'RESOLVED' ? (
                       <button
-                        onClick={() => handleUpdateStatus(item.id, 'RESOLVED')}
+                        onClick={() => {
+                          if (resolvingItemId === item.id) {
+                            handleUpdateStatus(item.id, 'RESOLVED', resolutionReasonInput);
+                          } else {
+                            setResolvingItemId(item.id);
+                          }
+                        }}
                         className="px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center gap-1 transition-colors shadow-xs"
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        Mark Resolved
+                        {resolvingItemId === item.id ? 'Confirm Resolved' : 'Mark Resolved'}
                       </button>
                     ) : (
                       <button
@@ -424,6 +446,24 @@ export const ReviewAndResolveView: React.FC<ReviewAndResolveViewProps> = ({
                       </button>
                     )}
                   </div>
+                  {resolvingItemId === item.id && item.status !== 'RESOLVED' && (
+                    <div className="flex items-center gap-1.5 mt-1 w-full sm:w-auto">
+                      <input
+                        type="text"
+                        value={resolutionReasonInput}
+                        onChange={(e) => setResolutionReasonInput(e.target.value)}
+                        placeholder="Resolution reason..."
+                        aria-label="Resolution reason"
+                        className="text-xs border border-emerald-300 rounded-lg px-2.5 py-1 bg-emerald-50/40 text-slate-800 w-60 focus:outline-emerald-600"
+                      />
+                      <button
+                        onClick={() => setResolvingItemId(null)}
+                        className="text-xs text-slate-400 hover:text-slate-600 px-1.5 py-1"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

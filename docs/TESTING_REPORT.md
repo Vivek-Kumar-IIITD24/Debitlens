@@ -8,7 +8,7 @@ npm test
 # Executes: tsx --test src/utils/searchHistory.test.ts src/engine/debitlensEngine.test.ts
 ```
 
-### Summary of Results: **52 / 52 Passing (0 Failures)**
+### Summary of Results: **56 / 56 Passing (0 Failures)**
 
 | Test # | Suite | Test Name | Status |
 |---|---|---|---|
@@ -42,28 +42,32 @@ npm test
 | 28 | `debitlensEngine.test.ts` | Mandate expiry and non-active status prevent three-way reconciliation from marking `MATCHED`, and post-cancellation explanations respect independent lifecycles | PASS |
 | 29 | `debitlensEngine.test.ts` | Evidence Casebook & Independent Cancellation Lifecycles track Layer A and Layer B separately and use accurate `verificationStatus` labels | PASS |
 | 30 | `debitlensEngine.test.ts` | Data Coverage summary and Contextual Bhasha Q&A provide grounded, honest responses | PASS |
-| 31 | `debitlensEngine.test.ts` | Phase 1 Financial Integrity: Strict Amount Parsing rejects non-numeric and trailing garbage | PASS |
-| 32 | `debitlensEngine.test.ts` | Phase 1 Financial Integrity: Mandate validity & missing fields prevent `MATCHED` status | PASS |
-| 33 | `debitlensEngine.test.ts` | Phase 2 Product Differentiation: Candidate merchant generation without hallucination | PASS |
-| 34 | `debitlensEngine.test.ts` | Phase 2 Product Differentiation: Unrecognized Debit Case lifecycle & Review Queue priority | PASS |
-| 35 | `debitlensEngine.test.ts` | Phase 3 Evidence Value: Commitment Passport, Evidence Pack & HTML Print View | PASS |
-| 36 | `debitlensEngine.test.ts` | Phase 4 Usability: Smart Bank Statement CSV Mapping Wizard (preview/apply parity with credit rows) | PASS |
-| 37 | `debitlensEngine.test.ts` | Phase 4 Hardening: `escapeHtml` neutralizes XSS vectors in printable evidence pack | PASS |
-| 38 | `debitlensEngine.test.ts` | Phase 4 Hardening: `parseCsvDate` correctly parses diverse date formats and rejects invalid/ambiguous dates | PASS |
-| 39 | `debitlensEngine.test.ts` | Phase 4 Hardening: `parseAllMappedCsvRows` parses all rows, preserves credits and generates deterministic IDs | PASS |
-| 40 | `debitlensEngine.test.ts` | Phase 4 Hardening: `generateCommitmentPassport` strictly upholds zero-fabrication rule for contacts and dates | PASS |
+| 31 | `debitlensEngine.test.ts` | Financial Integrity: Strict Amount Parsing rejects non-numeric and trailing garbage | PASS |
+| 32 | `debitlensEngine.test.ts` | Financial Integrity: Mandate validity & missing fields prevent `MATCHED` status | PASS |
+| 33 | `debitlensEngine.test.ts` | Candidate merchant generation without hallucination | PASS |
+| 34 | `debitlensEngine.test.ts` | Unrecognized Debit Case lifecycle & Review Queue priority | PASS |
+| 35 | `debitlensEngine.test.ts` | Commitment Passport, Evidence Pack & HTML Print View | PASS |
+| 36 | `debitlensEngine.test.ts` | Smart Bank Statement CSV Mapping Wizard (preview/apply parity with credit rows) | PASS |
+| 37 | `debitlensEngine.test.ts` | Hardening: `escapeHtml` neutralizes XSS vectors in printable evidence pack | PASS |
+| 38 | `debitlensEngine.test.ts` | Hardening: `parseCsvDate` correctly parses diverse date formats and rejects invalid/ambiguous dates | PASS |
+| 39 | `debitlensEngine.test.ts` | Hardening: `parseAllMappedCsvRows` parses all rows, preserves credits and generates deterministic IDs | PASS |
+| 40 | `debitlensEngine.test.ts` | Hardening: `generateCommitmentPassport` strictly upholds zero-fabrication rule for contacts and dates | PASS |
 | 41 | `debitlensEngine.test.ts` | Regression: Inverted provenance fix ensures system inference is NEVER labeled `USER_CONFIRMED` | PASS |
 | 42 | `debitlensEngine.test.ts` | Regression: Legal entity does NOT fall back to merchant display name when not in catalogue | PASS |
 | 43 | `debitlensEngine.test.ts` | Regression: `parseStrictSignedAmount` correctly parses negative amounts and accounting parentheses | PASS |
 | 44 | `debitlensEngine.test.ts` | Regression: Ambiguous row detection flags rows where both debit and credit contain positive values | PASS |
 | 45 | `debitlensEngine.test.ts` | Regression: Mandate completeness synchronization marks status as `INCOMPLETE` if required `startDate` is missing | PASS |
 | 46 | `debitlensEngine.test.ts` | Regression: Idempotent CSV repeat import skips exact duplicates based on canonical fingerprint | PASS |
-| 47 | `searchHistory.test.ts` | `normalizeSearchQuery` trims leading/trailing whitespace and collapses internal spaces | PASS |
-| 48 | `searchHistory.test.ts` | `addSearchHistoryEntry` prepends new query and ignores blank queries | PASS |
-| 49 | `searchHistory.test.ts` | `addSearchHistoryEntry` deduplicates case-insensitively and moves item to top | PASS |
-| 50 | `searchHistory.test.ts` | `addSearchHistoryEntry` enforces `maxEntries` limit | PASS |
-| 51 | `searchHistory.test.ts` | `removeSearchHistoryEntry` and `clearSearchHistory` remove items properly | PASS |
-| 52 | `searchHistory.test.ts` | `filterTransactionsByQuery` and `countDescriptorMatches` match raw descriptors and respect status filter | PASS |
+| 47 | `debitlensEngine.test.ts` | Financial Integrity: Commitment with `typicalAmount` but zero actual transactions never substitutes `typicalAmount` for actual debit amount | PASS |
+| 48 | `debitlensEngine.test.ts` | Provenance Isolation: Unrelated free-text audit summary and unrelated imported transactions do not contaminate commitment provenance or source notice | PASS |
+| 49 | `debitlensEngine.test.ts` | Calendar Date Validation: Rejects impossible dates (`31/02/2026`, `30/02/2026`, `29/02/2026`, `2026-02-31`, `31-04-2026`) and accepts valid leap-year date (`29/02/2024`) | PASS |
+| 50 | `debitlensEngine.test.ts` | Multi-Account & Multi-Currency CSV Mapping: Preserves distinct same-day bank references (`UTR-SAME-DAY-A` vs `UTR-SAME-DAY-B`), skips exact duplicates, and maintains preview/apply parity across 55 rows | PASS |
+| 51 | `searchHistory.test.ts` | `normalizeSearchQuery` trims leading/trailing whitespace and collapses internal spaces | PASS |
+| 52 | `searchHistory.test.ts` | `addSearchHistoryEntry` prepends new query and ignores blank queries | PASS |
+| 53 | `searchHistory.test.ts` | `addSearchHistoryEntry` deduplicates case-insensitively and moves item to top | PASS |
+| 54 | `searchHistory.test.ts` | `addSearchHistoryEntry` enforces `maxEntries` limit | PASS |
+| 55 | `searchHistory.test.ts` | `removeSearchHistoryEntry` and `clearSearchHistory` remove items properly | PASS |
+| 56 | `searchHistory.test.ts` | `filterTransactionsByQuery` and `countDescriptorMatches` match raw descriptors and respect status filter | PASS |
 
 ---
 

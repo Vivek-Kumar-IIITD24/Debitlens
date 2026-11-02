@@ -668,9 +668,22 @@ export default function App() {
           </div>
 
           <div className="pt-6 border-t border-slate-100 space-y-2 px-2 text-[11px] text-slate-500">
-            <div className="font-semibold text-slate-800">Synthetic Safety Boundary</div>
+            <div className="font-semibold text-slate-800">Data Source & Safety Boundary</div>
             <p className="leading-relaxed">
-              100% synthetic dataset. DebitLens never asks for UPI PINs, OTPs, or banking passwords and never executes unauthorised mandate revocations.
+              Active source:{' '}
+              <strong className="text-slate-700">
+                {importHistory.some(
+                  (b) =>
+                    b.id !== 'BATCH-SEED-01' &&
+                    b.id !== 'BATCH-NOTIF-01' &&
+                    b.id !== 'BATCH-MANDATE-01' &&
+                    b.id !== 'BATCH-DOCS-01' &&
+                    b.acceptedRecords > 0
+                )
+                  ? 'Mixed-Source Dataset (Imported + Demonstration Records)'
+                  : 'Synthetic Demonstration Data'}
+              </strong>
+              . DebitLens never asks for UPI PINs, OTPs, or banking passwords and never executes unauthorised mandate revocations.
             </p>
           </div>
         </aside>
@@ -1790,7 +1803,18 @@ export default function App() {
           </span>
         </div>
         <div className="flex items-center gap-3 text-[11px] font-mono">
-          <span>Synthetic Demonstration Data</span>
+          <span>
+            {importHistory.some(
+              (b) =>
+                b.id !== 'BATCH-SEED-01' &&
+                b.id !== 'BATCH-NOTIF-01' &&
+                b.id !== 'BATCH-MANDATE-01' &&
+                b.id !== 'BATCH-DOCS-01' &&
+                b.acceptedRecords > 0
+            )
+              ? 'Mixed-Source Dataset (Imported + Demonstration Records)'
+              : 'Synthetic Demonstration Data'}
+          </span>
           <span className="text-slate-300">|</span>
           <button
             type="button"

@@ -309,10 +309,14 @@ export function buildReviewQueue(params: {
       whyItAppeared: `Raw descriptor "${inv.originalDescriptor}" lacks a confirmed merchant identity. ${
         inv.possibleProcessor ? `Identifies payment processor ${inv.possibleProcessor}.` : ''
       }`,
-      supportingEvidenceCount: inv.candidateMerchants.length,
+      supportingEvidenceCount: Array.isArray(inv.evidenceIds)
+        ? inv.evidenceIds.length
+        : inv.transactionId
+        ? 1
+        : 0,
       recommendedAction: inv.recommendedNextAction,
       actionType: 'INVESTIGATE_DEBIT',
-      createdAt: inv.createdAt,
+      createdAt: inv.createdAt || null,
       updatedAt: inv.updatedAt,
     });
   }
@@ -376,15 +380,15 @@ export function buildReviewQueue(params: {
       merchantName: f.merchantName || cmt?.merchantName || 'Merchant',
       amount: f.actualTransactionAmount ?? (f as any).transactionEvidence?.latestTransactionAmount ?? null,
       amountMinor: f.actualTransactionAmountMinor ?? null,
-      eventDate: f.evaluatedAt ? f.evaluatedAt.slice(0, 10) : new Date().toISOString().slice(0, 10),
+      eventDate: f.evaluatedAt ? f.evaluatedAt.slice(0, 10) : null,
       whyItAppeared: f.explanation || (f as any).discrepancyReason || 'Three-way reconciliation discrepancy detected.',
       supportingEvidenceCount: Array.isArray(f.evidenceRecordIds) && f.evidenceRecordIds.length > 0
         ? f.evidenceRecordIds.length
         : (f.latestTransactionId ? 1 : 0) + (f.mandateReference ? 1 : 0) + (f.commitmentId ? 1 : 0),
       recommendedAction: f.recommendedAction || 'Review commitment documents and statement records.',
       actionType,
-      createdAt: f.evaluatedAt || new Date().toISOString(),
-      updatedAt: f.evaluatedAt || new Date().toISOString(),
+      createdAt: f.evaluatedAt || null,
+      updatedAt: f.evaluatedAt || '',
     });
   }
 
@@ -422,9 +426,17 @@ export function buildReviewQueue(params: {
     const cmt = commitments.find((c) => c.id === alt.commitmentId);
     const alertEvidenceCount = (alt.transactionId ? 1 : 0) + (alt.commitmentId ? 1 : 0);
 
-    const rawCreatedAt = alt.createdAt || new Date().toISOString();
-    const cleanDateOnly = rawCreatedAt.includes('T') ? rawCreatedAt.slice(0, 10) : rawCreatedAt;
-    const cleanIsoTimestamp = rawCreatedAt.includes('T') ? rawCreatedAt : `${rawCreatedAt}T00:00:00Z`;
+    const rawCreatedAt = alt.createdAt || null;
+    const cleanDateOnly = rawCreatedAt
+      ? rawCreatedAt.includes('T')
+        ? rawCreatedAt.slice(0, 10)
+        : rawCreatedAt
+      : null;
+    const cleanIsoTimestamp = rawCreatedAt
+      ? rawCreatedAt.includes('T')
+        ? rawCreatedAt
+        : `${rawCreatedAt}T00:00:00Z`
+      : null;
 
     items.push({
       id: `RQ-ALT-${alt.id}`,
@@ -446,7 +458,7 @@ export function buildReviewQueue(params: {
       recommendedAction: alt.suggestedAction,
       actionType,
       createdAt: cleanIsoTimestamp,
-      updatedAt: cleanIsoTimestamp,
+      updatedAt: cleanIsoTimestamp || '',
     });
   }
 
@@ -465,7 +477,9 @@ export function buildReviewQueue(params: {
   return items.sort((a, b) => {
     const diff = (priorityWeight[b.priority] || 0) - (priorityWeight[a.priority] || 0);
     if (diff !== 0) return diff;
-    return Date.parse(b.eventDate) - Date.parse(a.eventDate);
+    const dB = b.eventDate ? Date.parse(b.eventDate) || 0 : 0;
+    const dA = a.eventDate ? Date.parse(a.eventDate) || 0 : 0;
+    return dB - dA;
   });
 }
 
@@ -524,8 +538,8 @@ export function generateCommitmentPassport(params: {
     termsList.find((s) => s.commitmentId === commitment.id) || null;
 
   const amounts = cmtTxns.map((t) => t.amount);
-  const minAmount = amounts.length > 0 ? Math.min(...amounts) : commitment.typicalAmount;
-  const maxAmount = amounts.length > 0 ? Math.max(...amounts) : commitment.typicalAmount;
+  const minAmount = amounts.length > 0 ? Math.min(...amounts) : null;
+  const maxAmount = amounts.length > 0 ? Math.max(...amounts) : null;
 
   const effectiveMandateStatus = getEffectiveMandateStatus(mandate);
   const missingMandateFields = getMissingMandateFields(mandate);
@@ -573,16 +587,21 @@ export function generateCommitmentPassport(params: {
   const totalDebitsCount = cmtTxns.length;
   const totalSpent = amounts.reduce((acc, a) => acc + a, 0);
   const firstDebitDate = cmtTxns[0]?.transactionDate || commitment.firstObservedDate || (commitment as any).firstSeenDate || null;
-  const latestDebitDate = cmtTxns[cmtTxns.length - 1]?.transactionDate || commitment.lastPaymentDate || null;
+  const latestDebitDate = cmtTxns[cmtTxns.length - 1]?.transactionDate || null;
 
   const verifiedElementsCount = coverageItems.filter((c) => c.present).length;
 
   const merchInfo = MERCHANT_CATALOGUE.find((m) => m.id === commitment.merchantId);
   const auditEventsList = params.auditEvents || [];
+  const cmtTxnIdSet = new Set(cmtTxns.map((t) => t.id));
   const confirmEvent = auditEventsList.find(
     (e: any) =>
-      (e.commitmentId === commitment.id || (e.summary && e.summary.includes(commitment.merchantName))) &&
-      (e.eventType === 'IDENTITY_MATCH_CONFIRMED' || e.eventType === 'CANDIDATE_CONFIRMED')
+      (e.commitmentId === commitment.id ||
+        (e.transactionId && cmtTxnIdSet.has(e.transactionId))) &&
+      (e.eventType === 'IDENTITY_MATCH_CONFIRMED' ||
+        e.eventType === 'CANDIDATE_CONFIRMED' ||
+        e.actionType === 'IDENTITY_MATCH_CONFIRMED' ||
+        e.actionType === 'CANDIDATE_CONFIRMED')
   );
   const confirmedAt = confirmEvent?.timestamp || null;
 
@@ -592,11 +611,11 @@ export function generateCommitmentPassport(params: {
     commitment.relationshipStatus === 'USER_CONFIRMED'
   );
 
-  let resolvedProvenance: 'USER_CONFIRMED' | 'CONFIRMED' | 'SYSTEM_INFERRED' | 'SUGGESTED' | 'UNKNOWN' = 'UNKNOWN';
+  let resolvedProvenance: 'USER_CONFIRMED' | 'CATALOGUE_MATCHED' | 'SYSTEM_INFERRED' | 'SUGGESTED' | 'UNKNOWN' = 'UNKNOWN';
   if (isUserConfirmed) {
     resolvedProvenance = 'USER_CONFIRMED';
-  } else if (commitment.verificationStatus === 'CONFIRMED' || commitment.relationshipStatus === 'CONFIRMED') {
-    resolvedProvenance = 'CONFIRMED';
+  } else if (merchInfo && (commitment.verificationStatus === 'CONFIRMED' || commitment.relationshipStatus === 'CONFIRMED')) {
+    resolvedProvenance = 'CATALOGUE_MATCHED';
   } else if (
     commitment.relationshipStatus === 'INFERRED' ||
     (commitment.relationshipStatus as string) === 'SYSTEM_INFERRED' ||
@@ -657,21 +676,27 @@ export function generateCommitmentPassport(params: {
     cadence: commitment.recurrenceType,
   };
 
+  const latestActualTxnAmount = cmtTxns.length > 0 ? cmtTxns[cmtTxns.length - 1].amount : null;
+  const reconciledActualTxnAmount =
+    reconciliationFinding?.latestTransactionId && reconciliationFinding.actualTransactionAmount !== null
+      ? reconciliationFinding.actualTransactionAmount
+      : latestActualTxnAmount;
+
   const sectionE_Reconciliation = {
     reconciliationStatus: reconciliationFinding?.status || 'UNRESOLVED',
     outcome: reconciliationFinding?.status || 'UNRESOLVED',
     amountComparison: reconciliationFinding
-      ? `Debit ₹${reconciliationFinding.actualTransactionAmount} vs Documented ₹${reconciliationFinding.expectedServiceAmount ?? 'Unavailable'}`
+      ? `Debit ${reconciledActualTxnAmount !== null ? `₹${reconciledActualTxnAmount}` : 'Unavailable'} vs Documented ${reconciliationFinding.expectedServiceAmount !== null ? `₹${reconciliationFinding.expectedServiceAmount}` : 'Unavailable'}`
       : 'Awaiting comparison data',
     cadenceComparison: `Observed ${commitment.recurrenceType} cadence vs Mandate ${mandate?.frequency || 'Unregistered'}`,
     lifecycleComparison: areBothStopped ? 'Both Stopped' : 'Active or Inconsistent',
-    actualReconciledDebit: reconciliationFinding?.actualTransactionAmount ?? null,
-    actualDebitTransactionAmount: cmtTxns[cmtTxns.length - 1]?.amount ?? commitment.latestAmount ?? null,
+    actualReconciledDebit: reconciledActualTxnAmount,
+    actualDebitTransactionAmount: latestActualTxnAmount,
     typicalObservedAmount: commitment.typicalAmount,
     expectedBillingAmount: reconciliationFinding?.expectedServiceAmount ?? terms?.expectedAmount ?? null,
     mandateMaxAmount: reconciliationFinding?.mandateMaxAmount ?? mandate?.maxAmount ?? null,
     expectedPrice: reconciliationFinding?.expectedServiceAmount ?? null,
-    actualAmount: reconciliationFinding?.actualTransactionAmount ?? commitment.typicalAmount,
+    actualAmount: reconciledActualTxnAmount,
     mandateCap: reconciliationFinding?.mandateMaxAmount ?? null,
     discrepancyAmount: reconciliationFinding?.discrepancyAmount ?? null,
     discrepancyPercent: reconciliationFinding?.discrepancyPercent ?? null,
@@ -760,8 +785,8 @@ export function generateCommitmentPassport(params: {
     sectionB_FinancialPattern: {
       observedCadence: commitment.recurrenceType,
       transactionCount: cmtTxns.length,
-      firstObservedDate: cmtTxns[0]?.transactionDate || commitment.lastPaymentDate,
-      latestTransactionDate: cmtTxns[cmtTxns.length - 1]?.transactionDate || commitment.lastPaymentDate,
+      firstObservedDate: cmtTxns[0]?.transactionDate || commitment.firstObservedDate || null,
+      latestTransactionDate: cmtTxns[cmtTxns.length - 1]?.transactionDate || null,
       typicalAmount: commitment.typicalAmount,
       amountRange: { min: minAmount, max: maxAmount },
       priceChangesDetected: commitment.priceChangeDetected,
@@ -853,25 +878,47 @@ export function generateEvidencePackData(params: {
   if (commitment.confidenceScore < 80) missingGaps.push('Merchant identity unconfirmed by user');
 
   const postCancelTxns = cmtTxns.filter((t) => t.isPostCancellationDebit);
-  const hasImported = transactions.some(
-    (t) => (t.sourceType as string) === 'CSV_STATEMENT' || (t.sourceType as string) === 'IMPORTED_CSV' || (t.sourceType as string) === 'USER_UPLOAD' || (t.sourceType as string) === 'CSV_MAPPED'
+  const cmtDebitTxns = cmtTxns.filter((t) => t.direction === 'DEBIT');
+  const isSeedTerms = Boolean(
+    terms && (terms.id.endsWith('-01') || terms.id.startsWith('DOC-SEED-'))
   );
-  const hasSynthetic = transactions.some(
-    (t) => (t.sourceType as string) === 'DEMO_SEED' || (t.sourceType as string) === 'SYNTHETIC'
-  );
+  const hasImported =
+    cmtTxns.some(
+      (t) =>
+        (t.sourceType as string) === 'CSV_STATEMENT' ||
+        (t.sourceType as string) === 'IMPORTED_CSV' ||
+        (t.sourceType as string) === 'USER_UPLOAD' ||
+        (t.sourceType as string) === 'CSV_MAPPED' ||
+        (t.sourceType as string) === 'NOTIFICATION_JSON'
+    ) ||
+    mandate?.sourceType === 'USER_IMPORTED' ||
+    Boolean(terms && !isSeedTerms);
+  const hasSynthetic =
+    cmtTxns.some(
+      (t) => (t.sourceType as string) === 'DEMO_SEED' || (t.sourceType as string) === 'SYNTHETIC'
+    ) ||
+    mandate?.sourceType === 'DEMO_SEED' ||
+    isSeedTerms ||
+    (cmtTxns.length === 0 && !hasImported);
   const syntheticNotice = (hasImported && hasSynthetic)
-    ? 'Mixed Evidence Source · Comprises both user-imported statement records and demonstration seed fixtures. Processed locally and deterministically. Zero customer credentials collected.'
+    ? 'Mixed Evidence Source · Comprises both user-imported statement records and demonstration seed fixtures for this commitment. Processed locally and deterministically. Zero customer credentials collected.'
     : hasImported
     ? 'User-Imported Statement Records · Processed locally and deterministically. Zero customer credentials collected.'
     : 'Synthetic Demonstration Dataset · Generated for verified evaluation. Zero customer credentials collected.';
 
+  const cmtTxnIdSet = new Set(cmtTxns.map((t) => t.id));
   const isUserConfirmedIdentity = Boolean(
     commitment.verificationStatus === 'USER_CONFIRMED' ||
+    commitment.relationshipStatus === 'USER_CONFIRMED' ||
     (commitment as any).isUserConfirmed ||
     (params.auditEvents || []).some(
       (e: any) =>
-        (e.commitmentId === commitment.id || (e.summary && e.summary.includes(commitment.merchantName))) &&
-        (e.eventType === 'IDENTITY_MATCH_CONFIRMED' || e.eventType === 'CANDIDATE_CONFIRMED')
+        (e.commitmentId === commitment.id ||
+          (e.transactionId && cmtTxnIdSet.has(e.transactionId))) &&
+        (e.eventType === 'IDENTITY_MATCH_CONFIRMED' ||
+          e.eventType === 'CANDIDATE_CONFIRMED' ||
+          e.actionType === 'IDENTITY_MATCH_CONFIRMED' ||
+          e.actionType === 'CANDIDATE_CONFIRMED')
     )
   );
 
@@ -935,7 +982,12 @@ export function generateEvidencePackData(params: {
         reconciliationFinding?.explanation ||
         'Reconciliation pending attachment of complete statement and mandate records.',
       expectedServicePrice: reconciliationFinding?.expectedServiceAmount ?? null,
-      actualDebitAmount: reconciliationFinding?.actualTransactionAmount ?? commitment.typicalAmount,
+      actualDebitAmount:
+        reconciliationFinding?.latestTransactionId && reconciliationFinding.actualTransactionAmount !== null
+          ? reconciliationFinding.actualTransactionAmount
+          : cmtDebitTxns.length > 0
+          ? cmtDebitTxns[cmtDebitTxns.length - 1].amount
+          : null,
       mandateCap: reconciliationFinding?.mandateMaxAmount ?? null,
       discrepancyAmount: reconciliationFinding?.discrepancyAmount ?? null,
       discrepancyPercent: reconciliationFinding?.discrepancyPercent ?? null,
@@ -951,8 +1003,25 @@ export function generateEvidencePackData(params: {
       },
       confirmationReferences: cancellationSession?.evidence.map((e) => e.referenceNumber) || [],
       evidenceSources: cancellationSession?.evidence.map((e) => e.evidenceType) || [],
-      verificationStatus:
-        cancellationSession?.evidence.length ? 'EVIDENCE_ATTACHED' : 'NO_EVIDENCE_ATTACHED',
+      verificationStatus: (() => {
+        const ev = cancellationSession?.evidence || [];
+        if (ev.length > 0) {
+          const hasSvc = ev.some((e) => e.evidenceType === 'SERVICE_CONFIRMATION');
+          const hasMnd = ev.some((e) => e.evidenceType === 'MANDATE_REVOCATION');
+          if (hasSvc && hasMnd) return 'COMPLETION_REPORTED';
+          if (hasSvc || hasMnd) return 'CANCELLATION_ACKNOWLEDGED';
+          return 'EVIDENCE_UPLOADED';
+        }
+        const sLife = commitment.serviceLifecycleStatus || 'UNKNOWN';
+        const mLife = commitment.mandateLifecycleStatus || 'UNKNOWN';
+        if (
+          (sLife !== 'ACTIVE' && sLife !== 'UNKNOWN') ||
+          (mLife !== 'ACTIVE' && mLife !== 'UNKNOWN')
+        ) {
+          return 'USER_REPORTED';
+        }
+        return 'NO_EVIDENCE_AVAILABLE';
+      })(),
     },
     postCancellationActivity: {
       subsequentDebitsDetected: postCancelTxns.length > 0,
@@ -1422,7 +1491,17 @@ export function previewCsvMapping(
       rejectReason = `Invalid date "${rawDate}" under format ${config.dateFormat}`;
     }
 
-    const dedupKey = `${acctAlias}_${currency}_${parsedDate}_${rawDesc}_${interpretedAmount}_${direction}`;
+    const dedupKey = parsedDate && interpretedAmount !== null
+      ? computeCanonicalCsvRowFingerprint({
+          accountAlias: acctAlias,
+          currency,
+          parsedDate,
+          direction,
+          amount: interpretedAmount,
+          rawDescription: rawDesc,
+          externalReference: rawRef,
+        })
+      : '';
     if (isValid) {
       if (seenKeys.has(dedupKey)) {
         duplicateRowCount++;
@@ -1446,7 +1525,7 @@ export function previewCsvMapping(
           direction,
           account_alias: acctAlias,
           payment_rail: config.defaultRail || 'UNKNOWN',
-          external_reference: rawRef || `MAP-${rowNum}`,
+          external_reference: rawRef || '',
         }
       : null;
 
@@ -1599,14 +1678,22 @@ export function parseAllMappedCsvRows(
       return;
     }
 
-    const dedupKey = `${parsedDate}_${rawDesc}_${amount}_${direction}`;
+    const dedupKey = computeCanonicalCsvRowFingerprint({
+      accountAlias: acctAlias,
+      currency,
+      parsedDate,
+      direction,
+      amount,
+      rawDescription: rawDesc,
+      externalReference: rawRef,
+    });
     if (seenDedupKeys.has(dedupKey)) {
       duplicateCount++;
       return;
     }
     seenDedupKeys.add(dedupKey);
 
-    // Deterministic ID generation based on row content
+    // Deterministic ID generation based on canonical row fingerprint
     let hash = 0;
     for (let c = 0; c < dedupKey.length; c++) {
       hash = (hash << 5) - hash + dedupKey.charCodeAt(c);
@@ -1624,7 +1711,7 @@ export function parseAllMappedCsvRows(
       direction,
       payment_rail: (config.defaultRail as any) || 'UNKNOWN',
       account_alias: acctAlias,
-      external_reference: rawRef || `MAP-${cleanHash}`,
+      external_reference: rawRef || '',
     });
   });
 
@@ -1636,4 +1723,23 @@ export function parseAllMappedCsvRows(
     duplicateCount,
     validationErrors,
   };
+}
+
+export function computeCanonicalCsvRowFingerprint(params: {
+  accountAlias: string;
+  currency: string;
+  parsedDate: string;
+  direction: string;
+  amount: number;
+  rawDescription: string;
+  externalReference?: string | null;
+}): string {
+  const acct = (params.accountAlias || 'PRIMARY-ACCOUNT').trim().toUpperCase();
+  const curr = (params.currency || 'INR').trim().toUpperCase();
+  const dt = (params.parsedDate || '').trim();
+  const dir = (params.direction || 'DEBIT').trim().toUpperCase();
+  const amtMinor = Math.round((Number(params.amount) || 0) * 100);
+  const desc = (params.rawDescription || '').trim().toUpperCase().replace(/\s+/g, ' ');
+  const ref = (params.externalReference || '').trim().toUpperCase();
+  return `${acct}|${curr}|${dt}|${dir}|${amtMinor}|${desc}|${ref}`;
 }

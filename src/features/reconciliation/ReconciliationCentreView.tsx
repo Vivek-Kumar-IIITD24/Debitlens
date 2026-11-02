@@ -375,9 +375,9 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                     <div>
                       <span className="text-slate-500 block text-[10px]">Actual Debit</span>
                       <span className="text-white font-semibold">
-                        {f.actualTransactionAmountMinor > 0
+                        {f.actualTransactionAmountMinor !== null && f.actualTransactionAmountMinor > 0
                           ? formatMinorINR(f.actualTransactionAmountMinor)
-                          : '₹0.00'}
+                          : 'No Recent Debit'}
                       </span>
                     </div>
                     <div>
@@ -461,12 +461,15 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                     data-testid="rec-actual-amount"
                     className="text-lg font-bold font-mono text-white mt-2"
                   >
-                    {activeFinding.actualTransactionAmountMinor > 0
+                    {activeFinding.actualTransactionAmountMinor !== null &&
+                    activeFinding.actualTransactionAmountMinor > 0
                       ? formatMinorINR(activeFinding.actualTransactionAmountMinor)
                       : 'No Recent Debit'}
                   </div>
                   <div className="text-[11px] font-mono text-slate-400 mt-0.5">
-                    {activeFinding.actualTransactionAmountMinor} paise
+                    {activeFinding.actualTransactionAmountMinor !== null
+                      ? `${activeFinding.actualTransactionAmountMinor} paise`
+                      : 'No debit in statement period'}
                     {activeFinding.discrepancyAmountMinor !== null &&
                       activeFinding.discrepancyAmountMinor !== 0 && (
                         <span className="text-amber-400 ml-1">
