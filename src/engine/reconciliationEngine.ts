@@ -528,24 +528,32 @@ export function buildInitialSeedServiceTerms(): ServiceTermsRecord[] {
 // billingFrequency, trialEndDate, renewalDate, and cancellationNoticeDays from
 // pasted invoice/receipt/confirmation text or structured JSON.
 // ============================================================================
-export function extractServiceTermsFromText(params: {
-  commitmentId: string;
-  merchantName?: string;
-  serviceName?: string;
-  rawText: string;
-  currency?: string;
-  documentSource?: ServiceTermsRecord['documentSource'];
-  sourceType?: RecordSourceProvenance;
-  userVerified?: boolean;
-}): ServiceTermsRecord {
+export function extractServiceTermsFromText(
+  paramsOrText:
+    | string
+    | {
+        commitmentId?: string;
+        merchantName?: string;
+        serviceName?: string;
+        rawText: string;
+        currency?: string;
+        documentSource?: ServiceTermsRecord['documentSource'];
+        sourceType?: RecordSourceProvenance;
+        userVerified?: boolean;
+      }
+): ServiceTermsRecord {
+  const params =
+    typeof paramsOrText === 'string'
+      ? { rawText: paramsOrText, commitmentId: 'EXTRACTED' }
+      : paramsOrText;
   const {
-    commitmentId,
+    commitmentId = 'EXTRACTED',
     rawText,
     documentSource = 'PASTED_INVOICE_TEXT',
     sourceType = 'USER_ENTERED',
     userVerified = false,
   } = params;
-  const text = rawText.trim();
+  const text = (rawText || '').trim();
   const isVerified = Boolean(userVerified);
 
   // Extract currency token and amount — never invent a fallback price or currency when missing
@@ -555,14 +563,43 @@ export function extractServiceTermsFromText(params: {
   let detectedCurrency = normalizeCurrencyCode(params.currency) || UNKNOWN_CURRENCY;
   if (amountMatch) {
     const token = amountMatch[1].toUpperCase();
-    if (token === 'USD' || token === 'US$' || token === '$') detectedCurrency = 'USD';
-    else if (token === 'EUR' || token === '€') detectedCurrency = 'EUR';
-    else if (token === 'GBP' || token === '£') detectedCurrency = 'GBP';
-    else if (token === 'JPY' || token === '¥') detectedCurrency = 'JPY';
-    else if (token === 'KWD' || token === 'BHD' || token === 'OMR' || token === 'AUD' || token === 'CAD' || token === 'SGD' || token === 'AED') {
+    if (token === 'USD' || token === 'US$') {
+      detectedCurrency = 'USD';
+    } else if (token === '$') {
+      // Bare dollar sign: only resolve if params.currency specifies a dollar currency; otherwise UNKNOWN
+      const contextCurr = normalizeCurrencyCode(params.currency);
+      if (contextCurr && ['USD', 'CAD', 'AUD', 'SGD', 'NZD'].includes(contextCurr)) {
+        detectedCurrency = contextCurr;
+      } else {
+        detectedCurrency = UNKNOWN_CURRENCY;
+      }
+    } else if (token === 'AUD' || token === 'A$') {
+      detectedCurrency = 'AUD';
+    } else if (token === 'CAD' || token === 'C$') {
+      detectedCurrency = 'CAD';
+    } else if (token === 'SGD' || token === 'S$') {
+      detectedCurrency = 'SGD';
+    } else if (token === 'NZD' || token === 'NZ$') {
+      detectedCurrency = 'NZD';
+    } else if (token === 'EUR' || token === '€') {
+      detectedCurrency = 'EUR';
+    } else if (token === 'GBP' || token === '£') {
+      detectedCurrency = 'GBP';
+    } else if (token === 'JPY') {
+      detectedCurrency = 'JPY';
+    } else if (token === '¥') {
+      const contextCurr = normalizeCurrencyCode(params.currency);
+      if (contextCurr === 'JPY' || contextCurr === 'CNY') {
+        detectedCurrency = contextCurr;
+      } else {
+        detectedCurrency = UNKNOWN_CURRENCY;
+      }
+    } else if (token === 'KWD' || token === 'BHD' || token === 'OMR' || token === 'AED') {
       detectedCurrency = token;
-    } else {
+    } else if (token === 'INR' || token === '₹' || token.startsWith('RS')) {
       detectedCurrency = 'INR';
+    } else {
+      detectedCurrency = normalizeCurrencyCode(params.currency) || UNKNOWN_CURRENCY;
     }
   }
 

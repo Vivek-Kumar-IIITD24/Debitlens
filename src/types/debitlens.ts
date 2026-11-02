@@ -572,7 +572,8 @@ export interface AuditEventRecord {
     | 'GUARDRAIL_UPDATED'
     | 'REVIEW_QUEUE_UPDATED'
     | 'INVESTIGATION_ACTION_RECORDED'
-    | 'JUDGE_DEMO_SCENARIO_TRIGGERED';
+    | 'JUDGE_DEMO_SCENARIO_TRIGGERED'
+    | 'DEMO_DATA_RESET';
   actor: string;
   summary: string;
   previousState?: string | null;
@@ -641,6 +642,11 @@ export interface CancellationEvidenceRecord {
   requestDate?: string | null;
   acknowledgementDate?: string | null;
   documentUploaded?: boolean;
+  documentName?: string | null;
+  documentMimeType?: string | null;
+  sha256Hash?: string | null;
+  fileSizeBytes?: number | null;
+  storagePath?: string | null;
   documentContent?: string | null;
   verificationStatus?:
     | 'USER_REPORTED'

@@ -3159,7 +3159,10 @@ export function buildGroundedAlertExplanation(
 
   if (language === 'hi-IN') {
     if (alert.alertType === 'PRICE_INCREASE') {
-      const formattedAnnualImpact = formatCurrency(alert.annualImpact || 0, alert.currency || UNKNOWN_CURRENCY);
+      const formattedAnnualImpact =
+        alert.annualImpact !== null && alert.annualImpact !== undefined
+          ? formatCurrency(alert.annualImpact, alert.currency || UNKNOWN_CURRENCY)
+          : 'गणना अनुपलब्ध';
       localizedTitle = `शुल्क वृद्धि की पहचान: ${alert.title}`;
       localizedExplanation = `इस प्रतिबद्धता की नवीनतम डेबिट राशि ${alert.detectedValue} है, जो पिछले मानक शुल्क ${alert.previousValue} से अधिक है (+${alert.percentageChange}% वृद्धि, वार्षिक प्रभाव ${formattedAnnualImpact})। विवरण: ${alert.evidenceReference}।`;
       localizedAction = `सत्यापित करें कि क्या आपने प्लान अपग्रेड किया है या मूल्य वृद्धि अनचाही है; आवश्यकता होने पर दो-स्तरीय रद्दीकरण (Two-Layer Cancellation) का उपयोग करें।`;

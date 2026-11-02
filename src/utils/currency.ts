@@ -132,25 +132,61 @@ export function resolveTransactionCurrency(params: {
       ? String(effectiveRawCurr).trim().toUpperCase()
       : '';
 
+  // Inspect raw currency string for explicit tokens, symbols, or ambiguous characters
+  let explicitCode: string | null = null;
+  let isAmbiguousSymbol = false;
+
   if (raw && raw !== UNKNOWN_CURRENCY) {
+    // Check explicit 3-letter code first
+    const cleanRaw = raw.trim().toUpperCase();
+    if (/^[A-Z]{3}$/.test(cleanRaw)) {
+      explicitCode = cleanRaw;
+    } else if (/\b(AUD|A\$)\b|\bAUD\b/i.test(cleanRaw)) {
+      explicitCode = 'AUD';
+    } else if (/\b(CAD|C\$)\b|\bCAD\b/i.test(cleanRaw)) {
+      explicitCode = 'CAD';
+    } else if (/\b(SGD|S\$)\b|\bSGD\b/i.test(cleanRaw)) {
+      explicitCode = 'SGD';
+    } else if (/\b(NZD|NZ\$)\b|\bNZD\b/i.test(cleanRaw)) {
+      explicitCode = 'NZD';
+    } else if (/\b(US\$|USD)\b/i.test(cleanRaw)) {
+      explicitCode = 'USD';
+    } else if (/\b(INR|₹|RS\.?)\b/i.test(cleanRaw)) {
+      explicitCode = 'INR';
+    } else if (/\b(EUR|€)\b/i.test(cleanRaw)) {
+      explicitCode = 'EUR';
+    } else if (/\b(GBP|£)\b/i.test(cleanRaw)) {
+      explicitCode = 'GBP';
+    } else if (/\bJPY\b/i.test(cleanRaw)) {
+      explicitCode = 'JPY';
+    } else if (cleanRaw.includes('$')) {
+      // Bare dollar sign without explicit country indicator is ambiguous (USD vs CAD vs AUD vs SGD)
+      isAmbiguousSymbol = true;
+    } else if (cleanRaw.includes('¥')) {
+      // Bare yen/yuan symbol is ambiguous between JPY and CNY
+      isAmbiguousSymbol = true;
+    }
+  }
+
+  // If explicit unambiguous currency code was found directly in the row
+  if (explicitCode) {
     const provenance: CurrencyProvenance = params.existingProvenance || 'EXPLICIT_TRANSACTION';
-    const decimals = getCurrencyDecimalsOrNull(raw);
+    const decimals = getCurrencyDecimalsOrNull(explicitCode);
     if (decimals !== null) {
       return {
-        currency: raw,
+        currency: explicitCode,
         currencyProvenance: provenance,
         currencyStatus: 'SUPPORTED',
         decimals,
         isMalformedCode: false,
       };
     }
-    const isPlausibleIso = /^[A-Z]{3}$/.test(raw);
     return {
-      currency: raw,
+      currency: explicitCode,
       currencyProvenance: provenance,
       currencyStatus: 'UNSUPPORTED',
       decimals: null,
-      isMalformedCode: !isPlausibleIso,
+      isMalformedCode: !/^[A-Z]{3}$/.test(explicitCode),
     };
   }
 
@@ -211,7 +247,7 @@ export function resolveTransactionCurrency(params: {
     }
   }
 
-  // Source 4: Unknown currency
+  // Source 4: Unknown currency (bare ambiguous symbol '$' or '¥' without context, or missing currency)
   return {
     currency: UNKNOWN_CURRENCY,
     currencyProvenance: 'UNKNOWN_SOURCE',
@@ -301,32 +337,104 @@ export function toMinorUnitsStrictResult(
       currency: cleanCurrency,
     };
   }
-  const factor = Math.pow(10, decimals);
-  const exactScaled = Number((amountMajor * factor).toPrecision(12));
-  const scaled = Math.round(exactScaled);
-  if (Math.abs(exactScaled - scaled) > 1e-6) {
-    return {
-      ok: false,
-      value: null,
-      error: 'EXCESS_DECIMAL_PLACES',
-      currency: cleanCurrency,
-      decimals,
-    };
-  }
-  if (!Number.isSafeInteger(scaled)) {
+  const isNegative = amountMajor < 0;
+  const absMajor = Math.abs(amountMajor);
+
+  // Maximum safe major value for the given decimal scale
+  const MAX_SAFE_MAJOR = Math.floor(Number.MAX_SAFE_INTEGER / Math.pow(10, decimals));
+  if (absMajor > MAX_SAFE_MAJOR) {
     return {
       ok: false,
       value: null,
       error: 'UNSAFE_INTEGER',
       currency: cleanCurrency,
+      decimals,
     };
   }
+
+  // Exact decimal string inspection (avoids toPrecision(12) or toFixed float drift)
+  const str = String(absMajor);
+  const dotIdx = str.indexOf('.');
+  const intPart = dotIdx >= 0 ? str.slice(0, dotIdx) : str;
+  const fracPart = dotIdx >= 0 ? str.slice(dotIdx + 1) : '';
+
+  if (fracPart.length > decimals) {
+    const genuineExcess = fracPart.slice(decimals);
+    if (genuineExcess.length > 0 && !/^0+$/.test(genuineExcess)) {
+      return {
+        ok: false,
+        value: null,
+        error: 'EXCESS_DECIMAL_PLACES',
+        currency: cleanCurrency,
+        decimals,
+      };
+    }
+  }
+
+  const allowedFrac = fracPart.slice(0, decimals).padEnd(decimals, '0');
+  const minorBig = BigInt(intPart + allowedFrac);
+  const signedMinor = Number(minorBig) * (isNegative ? -1 : 1);
+  if (!Number.isSafeInteger(signedMinor)) {
+    return {
+      ok: false,
+      value: null,
+      error: 'UNSAFE_INTEGER',
+      currency: cleanCurrency,
+      decimals,
+    };
+  }
+
   return {
     ok: true,
-    value: scaled === 0 ? 0 : scaled,
+    value: signedMinor === 0 ? 0 : signedMinor,
     currency: cleanCurrency,
     decimals,
   };
+}
+
+/**
+ * Exact BigInt and string decimal scaling money converter.
+ * Prevents IEEE 754 precision loss on large values and strictly rejects excess decimal places.
+ */
+export function convertMajorToMinorExact(
+  amountMajorStrOrNum: string | number,
+  currency: string
+): { success: true; minorUnits: bigint } | { success: false; error: StrictMoneyConversionError } {
+  if (currency === null || currency === undefined || typeof currency !== 'string' || currency.trim() === '') {
+    return { success: false, error: 'MISSING_CURRENCY' };
+  }
+  const cleanCurrency = currency.trim().toUpperCase();
+  if (cleanCurrency === UNKNOWN_CURRENCY) {
+    return { success: false, error: 'UNKNOWN_CURRENCY' };
+  }
+  const decimals = getCurrencyDecimalsOrNull(cleanCurrency);
+  if (decimals === null) {
+    return { success: false, error: 'UNSUPPORTED_CURRENCY' };
+  }
+
+  const rawStr = String(amountMajorStrOrNum).trim();
+  if (!rawStr) {
+    return { success: false, error: 'MISSING_AMOUNT' };
+  }
+  const isNegative = rawStr.startsWith('-');
+  const cleanStr = isNegative ? rawStr.slice(1) : rawStr;
+  if (!/^\d+(\.\d+)?$/.test(cleanStr)) {
+    return { success: false, error: 'INVALID_AMOUNT' };
+  }
+
+  const parts = cleanStr.split('.');
+  const intPart = parts[0];
+  const fracPart = parts[1] || '';
+
+  if (fracPart.length > decimals) {
+    return { success: false, error: 'EXCESS_DECIMAL_PLACES' };
+  }
+
+  const paddedFrac = fracPart.padEnd(decimals, '0');
+  const combinedStr = intPart + paddedFrac;
+  const minorUnits = BigInt(combinedStr) * (isNegative ? -1n : 1n);
+
+  return { success: true, minorUnits };
 }
 
 /**

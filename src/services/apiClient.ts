@@ -246,6 +246,8 @@ export const apiClient = {
       effectiveDate?: string | null;
       documentUploaded?: boolean;
       documentName?: string | null;
+      documentMimeType?: string | null;
+      fileBase64?: string | null;
     }
   ) =>
     fetchJson<{ session: CancellationSessionRecord; commitment: CommitmentRecord }>(

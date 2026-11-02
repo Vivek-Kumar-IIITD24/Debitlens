@@ -73,7 +73,7 @@ Ordinary consumers face opaque bank statement descriptors (`RZP*STREAMBOX`, `SI-
    npm run dev
    # or: npm start
    ```
-3. Run automated unit, financial integrity & adversarial tests (65 tests across `src/engine/debitlensEngine.test.ts` and `src/utils/searchHistory.test.ts`):
+3. Run automated unit, financial integrity & adversarial tests (71 tests across `src/engine/debitlensEngine.test.ts` and `src/utils/searchHistory.test.ts`):
    ```bash
    npm test
    ```
@@ -82,6 +82,18 @@ Ordinary consumers face opaque bank statement descriptors (`RZP*STREAMBOX`, `SI-
    npm run typecheck
    npm run build
    ```
+
+---
+
+## 5. Architectural Invariants & Quality Guarantees
+
+- **Authoritative Canonical JSON Store:** `data/persistent-store.json` is the single source of financial truth. All mutations serialize through atomic write-to-temp-plus-rename (`fs.renameSync`) with rollback-safe snapshots. Neo4j is an asynchronous graph projection only. Sarvam AI is a read-only language assistant (never establishes financial facts).
+- **Demo Reset Sentinel Preservation:** The `/api/demo/reset` endpoint wipes only ephemeral demo simulations (`demoSimulatedRows`, `demoCommitmentOverrides`, `demoServiceTerms`, `demoMandates`), restoring baseline seed data while strictly preserving 100% of user data: user-imported transactions (`import_batch_id !== 'BATCH-SEED-01'`), user mandates (`sourceType !== 'DEMO_SEED'`), user service terms, user-configured guardrails, custom casebook entries, investigation cases, merchant confirmations, user commitment overrides, confirmed account currencies, and user audit trails. An `AUD-DEMO-RESET` sentinel audit record is appended.
+- **Cryptographic File Upload Verification (Zero False Claims):** Document uploads in `/api/cancellation/sessions/:id/evidence` require genuine Base64 payloads with magic byte signature verification (PDF, PNG, JPEG, WebP), 10MB size limits, and SHA-256 hashing stored to disk. Upload claims without payload are strictly rejected with HTTP 400 `DOCUMENT_PAYLOAD_REQUIRED`. Non-file reference evidence truthfully records `documentUploaded: false` and `sourceType: 'USER_ENTERED'`.
+- **Elimination of Client-Declared Independent Verification:** Client PATCH endpoints reject premature terminal statuses (`CANCELLATION_VERIFIED`, `REVOCATION_VERIFIED`) with HTTP 400 `UNVERIFIED_STATUS_REJECTED`. Forged privileged provenance (`INDEPENDENTLY_VERIFIED`, `SYSTEM_GENERATED`) submitted from client requests is rejected with HTTP 400 `FORGED_PROVENANCE_REJECTED`. Independent verification can only be established through subsequent bank statements or explicit system reconciliation.
+- **Empty Initial Guardrails & Zero Hardcoded Amounts:** Guardrails start completely unconfigured (empty state). Users must explicitly configure a positive `maxExpectedAmount` or `maxExpectedAmountMinor`; missing amounts are rejected with HTTP 400 `AMOUNT_REQUIRED` without arbitrary fallback caps. Commitments with `UNKNOWN` currency are prevented from guardrail creation until currency is confirmed.
+- **Exact Money Precision & Currency Disambiguation:** All monetary arithmetic uses exact string decimal parsing and BigInt minor-unit scaling (`paise`, `cents`), completely eliminating IEEE-754 floating-point drift even on 11-digit sums. Ambiguous currency symbols (`$` or `¥`) without confirmed account context resolve to `UNKNOWN_CURRENCY` with `UNKNOWN_SOURCE` provenance rather than guessing USD or JPY.
+- **Demo Mode Default:** Demo Mode defaults strictly OFF on both client and server; baseline production behaviour requires real user imports and actions.
 
 ---
 

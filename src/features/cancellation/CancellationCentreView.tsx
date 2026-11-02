@@ -41,6 +41,9 @@ interface CancellationCentreViewProps {
       evidenceDate?: string | null;
       effectiveDate?: string | null;
       documentUploaded?: boolean;
+      documentName?: string | null;
+      documentMimeType?: string | null;
+      fileBase64?: string | null;
     }
   ) => Promise<void>;
   onSimulatePostCancelDebit: (commitmentId: string) => Promise<void>;
@@ -91,7 +94,14 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
   const [description, setDescription] = useState('');
   const [evidenceDate, setEvidenceDate] = useState('');
   const [evidenceEffectiveDate, setEvidenceEffectiveDate] = useState('');
-  const [documentUploaded, setDocumentUploaded] = useState(false);
+  const [evidenceMode, setEvidenceMode] = useState<'REFERENCE_ONLY' | 'FILE_UPLOAD'>('REFERENCE_ONLY');
+  const [selectedFile, setSelectedFile] = useState<{
+    base64: string;
+    name: string;
+    mimeType: string;
+    sizeBytes: number;
+  } | null>(null);
+  const [fileInputKey, setFileInputKey] = useState<number>(0);
   const [formError, setFormError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -138,10 +148,41 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
   const layerASteps = activeSession.steps.filter((s) => s.layer === 'LAYER_A_SERVICE');
   const layerBSteps = activeSession.steps.filter((s) => s.layer === 'LAYER_B_MANDATE');
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      setSelectedFile(null);
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setFormError('File size exceeds maximum upload limit of 10MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = reader.result as string;
+      setSelectedFile({
+        base64: res,
+        name: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        sizeBytes: file.size,
+      });
+      setFormError(null);
+    };
+    reader.onerror = () => {
+      setFormError('Failed to read file from filesystem.');
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSaveEvidence = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!referenceNumber.trim() || !description.trim()) {
       setFormError('Please enter both a confirmation reference number and evidence description.');
+      return;
+    }
+    if (evidenceMode === 'FILE_UPLOAD' && !selectedFile) {
+      setFormError('Please select a file to upload or switch to Reference-Only mode.');
       return;
     }
     setFormError(null);
@@ -152,16 +193,20 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
         description: description.trim(),
         evidenceDate: evidenceDate.trim() || null,
         effectiveDate: evidenceEffectiveDate.trim() || null,
-        documentUploaded,
+        documentUploaded: evidenceMode === 'FILE_UPLOAD',
+        documentName: selectedFile?.name || null,
+        documentMimeType: selectedFile?.mimeType || null,
+        fileBase64: selectedFile?.base64 || null,
       });
       setReferenceNumber('');
       setDescription('');
       setEvidenceDate('');
       setEvidenceEffectiveDate('');
-      setDocumentUploaded(false);
+      setSelectedFile(null);
+      setFileInputKey((k) => k + 1);
       setStatusMessage(
-        documentUploaded
-          ? 'Cancellation evidence document saved to canonical store (DOCUMENT_UPLOADED · USER_UPLOADED).'
+        evidenceMode === 'FILE_UPLOAD'
+          ? `Verified document "${selectedFile?.name}" uploaded and saved (DOCUMENT_UPLOADED · USER_UPLOADED).`
           : 'Cancellation evidence reference saved to canonical store (EVIDENCE_REFERENCE_RECORDED · USER_ENTERED).'
       );
     } catch (err: any) {
@@ -687,18 +732,65 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
             />
           </div>
 
-          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={documentUploaded}
-              onChange={(e) => setDocumentUploaded(e.target.checked)}
-              className="rounded border-slate-300 text-teal-700 focus:ring-teal-600"
-            />
-            <span>
-              Original confirmation document / screenshot uploaded (sets{' '}
-              <span className="font-mono font-semibold">DOCUMENT_UPLOADED · USER_UPLOADED</span>)
-            </span>
-          </label>
+          <div className="space-y-2 border border-slate-200 rounded-lg p-3 bg-slate-50">
+            <label className="block text-xs font-semibold text-slate-800">
+              Evidence Ingestion Type
+            </label>
+            <div className="flex flex-wrap items-center gap-4 text-xs text-slate-700">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="evidenceMode"
+                  value="REFERENCE_ONLY"
+                  checked={evidenceMode === 'REFERENCE_ONLY'}
+                  onChange={() => {
+                    setEvidenceMode('REFERENCE_ONLY');
+                    setSelectedFile(null);
+                  }}
+                  className="text-teal-700 focus:ring-teal-600"
+                />
+                <span>Reference Only (Text / Ref Code)</span>
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="evidenceMode"
+                  value="FILE_UPLOAD"
+                  checked={evidenceMode === 'FILE_UPLOAD'}
+                  onChange={() => setEvidenceMode('FILE_UPLOAD')}
+                  className="text-teal-700 focus:ring-teal-600"
+                />
+                <span>Document File Upload (PDF / PNG / JPEG / WebP)</span>
+              </label>
+            </div>
+
+            {evidenceMode === 'FILE_UPLOAD' ? (
+              <div className="mt-2 space-y-2">
+                <label className="block text-[11px] text-slate-600">
+                  Select Document / Receipt File (Max 10MB; validated against magic byte signatures):
+                </label>
+                <input
+                  key={fileInputKey}
+                  type="file"
+                  accept=".pdf,image/png,image/jpeg,image/webp"
+                  onChange={handleFileChange}
+                  className="block w-full text-xs text-slate-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-slate-900 file:text-white hover:file:bg-slate-800 cursor-pointer"
+                />
+                {selectedFile && (
+                  <p className="text-[11px] font-mono text-emerald-700">
+                    Attached: {selectedFile.name} ({(selectedFile.sizeBytes / 1024).toFixed(1)} KB · {selectedFile.mimeType})
+                  </p>
+                )}
+                <p className="text-[10px] text-slate-500">
+                  Document content will be validated with cryptographic SHA-256 and stored in canonical uploads.
+                </p>
+              </div>
+            ) : (
+              <p className="text-[10px] text-slate-500">
+                Reference numbers without uploaded documents are truthfully recorded as <span className="font-mono">EVIDENCE_REFERENCE_RECORDED · USER_ENTERED</span>.
+              </p>
+            )}
+          </div>
 
           <button
             type="submit"

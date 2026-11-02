@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import dotenv from 'dotenv';
 import {
   RawCsvRow,
@@ -92,7 +93,7 @@ import {
 dotenv.config();
 
 export const app = express();
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '25mb' }));
 
 // ============================================================================
 // DURABLE STATE & SYNTHETIC SEED LOADER (Survives Server Restarts)
@@ -501,28 +502,7 @@ export function loadSeedData(forceReset = false) {
   demoCommitmentOverrides = {};
   demoServiceTerms = [];
   demoMandates = [];
-  auditEventsStore = [
-    {
-      id: 'AUD-SEED-01',
-      commitmentId: 'CMT-DESIGNVAULT',
-      timestamp: '2026-09-10T14:20:00Z',
-      eventType: 'SERVICE_STATUS_UPDATED',
-      summary: 'Demonstration seed: DesignVault service cancellation confirmation DV-CANC-20260910-881.',
-      previousState: 'ACTIVE',
-      newState: 'CANCELLATION_EVIDENCE_ATTACHED',
-      actor: 'DEMO_SEED_SCENARIO',
-    },
-    {
-      id: 'AUD-SEED-02',
-      commitmentId: 'CMT-DESIGNVAULT',
-      timestamp: '2026-09-10T14:35:00Z',
-      eventType: 'MANDATE_STATUS_UPDATED',
-      summary: 'Demonstration seed: ICICI SIHub mandate revocation SIHUB-REV-994012.',
-      previousState: 'ACTIVE',
-      newState: 'REVOCATION_EVIDENCE_ATTACHED',
-      actor: 'DEMO_SEED_SCENARIO',
-    },
-  ];
+  auditEventsStore = buildInitialSeedAuditEvents();
   importHistory = [
     {
       id: 'BATCH-SEED-01',
@@ -567,6 +547,159 @@ export function loadSeedData(forceReset = false) {
   ];
   guardrailsStore = [];
   savePersistentStore();
+}
+
+function buildInitialSeedAuditEvents(): AuditEventRecord[] {
+  return [
+    {
+      id: 'AUD-SEED-01',
+      commitmentId: 'CMT-DESIGNVAULT',
+      timestamp: '2026-09-10T14:20:00Z',
+      eventType: 'SERVICE_STATUS_UPDATED',
+      summary: 'Demonstration seed: DesignVault service cancellation confirmation DV-CANC-20260910-881.',
+      previousState: 'ACTIVE',
+      newState: 'CANCELLATION_EVIDENCE_ATTACHED',
+      actor: 'DEMO_SEED_SCENARIO',
+    },
+    {
+      id: 'AUD-SEED-02',
+      commitmentId: 'CMT-DESIGNVAULT',
+      timestamp: '2026-09-10T14:35:00Z',
+      eventType: 'MANDATE_STATUS_UPDATED',
+      summary: 'Demonstration seed: ICICI SIHub mandate revocation SIHUB-REV-994012.',
+      previousState: 'ACTIVE',
+      newState: 'REVOCATION_EVIDENCE_ATTACHED',
+      actor: 'DEMO_SEED_SCENARIO',
+    },
+  ];
+}
+
+export function resetDemoDataOnly(): {
+  commitmentsCount: number;
+  transactionsCount: number;
+  preservedUserRecords: {
+    transactions: number;
+    mandates: number;
+    serviceTerms: number;
+    guardrails: number;
+    auditEvents: number;
+  };
+} {
+  // 1. Reset ephemeral demo simulations and demo-specific overrides
+  demoSimulatedRows = [];
+  demoCommitmentOverrides = {};
+  demoServiceTerms = [];
+  demoMandates = [];
+
+  // 2. Preserve user-imported transactions (rows belonging to user import batches or not DEMO_SEED/DEMO_SIMULATION)
+  const userRows = (rawCsvRows || []).filter(
+    (r) =>
+      (Boolean(r.import_batch_id) && r.import_batch_id !== 'BATCH-SEED-01') ||
+      (Boolean(r.source_type) && (r.source_type as string) !== 'DEMO_SEED' && (r.source_type as string) !== 'DEMO_SIMULATION')
+  );
+
+  const csvPath = path.resolve(process.cwd(), 'data/synthetic-transactions.csv');
+  const baseSeedRows = parseCsvTextRFC4180(fs.readFileSync(csvPath, 'utf-8'));
+  rawCsvRows = [...baseSeedRows, ...userRows];
+
+  // 3. Preserve user mandates (sourceType !== 'DEMO_SEED')
+  const userMandates = (mandatesStore || []).filter((m) => m.sourceType !== 'DEMO_SEED');
+  mandatesStore = [...buildInitialSeedMandates(), ...userMandates];
+
+  // 4. Preserve user service terms (sourceType !== 'DEMO_SEED')
+  const userTerms = (serviceTermsStore || []).filter((t) => t.sourceType !== 'DEMO_SEED');
+  serviceTermsStore = [...buildInitialSeedServiceTerms(), ...userTerms];
+
+  // 5. Preserve user guardrails (sourceType !== 'DEMO_SEED')
+  const userGuardrails = (guardrailsStore || []).filter((g) => g.sourceType !== 'DEMO_SEED');
+  guardrailsStore = [...userGuardrails];
+
+  // 6. User overrides (userMerchantOverrides, userCommitmentOverrides, merchantConfirmationsStore, customCasebookEntries, investigationCasesStore, confirmedAccountCurrencies) are preserved intact!
+
+  // 7. Preserve user import batches
+  const userBatches = (importHistory || []).filter(
+    (b) =>
+      b.id !== 'BATCH-SEED-01' &&
+      b.id !== 'BATCH-NOTIF-01' &&
+      b.id !== 'BATCH-MANDATE-01' &&
+      b.id !== 'BATCH-DOCS-01'
+  );
+  importHistory = [
+    {
+      id: 'BATCH-SEED-01',
+      filename: 'synthetic-transactions.csv',
+      sourceType: 'CSV_STATEMENT',
+      totalRecords: baseSeedRows.length,
+      acceptedRecords: baseSeedRows.length,
+      rejectedRecords: 0,
+      duplicateRecords: 0,
+      importedAt: '2026-10-30T09:00:00Z',
+    },
+    {
+      id: 'BATCH-NOTIF-01',
+      filename: 'synthetic-notifications.json',
+      sourceType: 'NOTIFICATION_JSON',
+      totalRecords: notificationEvents.length,
+      acceptedRecords: notificationEvents.length,
+      rejectedRecords: 0,
+      duplicateRecords: 0,
+      importedAt: '2026-10-30T09:01:00Z',
+    },
+    {
+      id: 'BATCH-MANDATE-01',
+      filename: 'seed-mandate-registry.json',
+      sourceType: 'MANDATE_JSON',
+      totalRecords: mandatesStore.length,
+      acceptedRecords: mandatesStore.length,
+      rejectedRecords: 0,
+      duplicateRecords: 0,
+      importedAt: '2026-10-30T09:02:00Z',
+    },
+    {
+      id: 'BATCH-DOCS-01',
+      filename: 'seed-service-invoices.json',
+      sourceType: 'SERVICE_DOCUMENTS',
+      totalRecords: serviceTermsStore.length,
+      acceptedRecords: serviceTermsStore.length,
+      rejectedRecords: 0,
+      duplicateRecords: 0,
+      importedAt: '2026-10-30T09:03:00Z',
+    },
+    ...userBatches,
+  ];
+
+  // 8. Preserve user audit events and record a sentinel reset audit event
+  const userEvents = (auditEventsStore || []).filter(
+    (e) => e.actor !== 'DEMO_SEED_SCENARIO' && !e.id.startsWith('AUD-SEED-')
+  );
+  auditEventsStore = [
+    ...buildInitialSeedAuditEvents(),
+    ...userEvents,
+    {
+      id: `AUD-DEMO-RESET-${Date.now()}`,
+      commitmentId: 'SYSTEM',
+      timestamp: new Date().toISOString(),
+      eventType: 'DEMO_DATA_RESET',
+      summary: `Demo baseline reset executed. Preserved ${userRows.length} canonical user transactions, ${userMandates.length} user mandates, ${userTerms.length} user service terms, ${userGuardrails.length} user guardrails, and user audit trails.`,
+      previousState: null,
+      newState: 'PRESERVED_USER_DATA_DEMO_BASELINE',
+      actor: 'DEMO_SEED_SCENARIO',
+    },
+  ];
+
+  savePersistentStore();
+  const state = computeCurrentState();
+  return {
+    commitmentsCount: state.commitments.length,
+    transactionsCount: state.transactions.length,
+    preservedUserRecords: {
+      transactions: userRows.length,
+      mandates: userMandates.length,
+      serviceTerms: userTerms.length,
+      guardrails: userGuardrails.length,
+      auditEvents: userEvents.length,
+    },
+  };
 }
 
 loadSeedData(false);
@@ -633,9 +766,7 @@ export function computeCurrentState() {
     sessions,
   });
 
-  if (guardrailsStore.length === 0) {
-    guardrailsStore = buildInitialSeedGuardrails(commitments);
-  }
+
 
   // Ensure every UNRESOLVED debit transaction has an investigation case in investigationCasesStore
   for (const txn of transactions) {
@@ -3253,16 +3384,14 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
     }
 
     if (serviceLifecycleStatus === 'CANCELLATION_VERIFIED') {
-      if (verifiedConfirmation !== true || (!cleanRef && !hasExistingServiceEvidence)) {
-        return {
-          errorStatus: 400,
-          errorBody: {
-            error:
-              'Cannot self-declare CANCELLATION_VERIFIED without verifiedConfirmation=true and attached SERVICE_CONFIRMATION evidence.',
-            code: 'UNVERIFIED_STATUS_REJECTED',
-          },
-        };
-      }
+      return {
+        errorStatus: 400,
+        errorBody: {
+          error:
+            'Cannot self-declare CANCELLATION_VERIFIED on user endpoints. Verification requires independent institutional confirmation or automated statement reconciliation.',
+          code: 'UNVERIFIED_STATUS_REJECTED',
+        },
+      };
     }
 
     const isUploadedDoc = Boolean(documentUploaded);
@@ -3297,9 +3426,7 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
             : 'EVIDENCE_REFERENCE_RECORDED',
           sourceType: assignedSourceType,
           verificationStatus:
-            serviceLifecycleStatus === 'CANCELLATION_VERIFIED'
-              ? 'USER_CONFIRMED'
-              : serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED'
+            serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED'
               ? 'EVIDENCE_ATTACHED'
               : 'USER_REPORTED',
           createdAt: new Date().toISOString(),
@@ -3587,16 +3714,14 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
     }
 
     if (mandateLifecycleStatus === 'REVOCATION_VERIFIED') {
-      if (verifiedConfirmation !== true || (!cleanRef && !hasExistingMandateEvidence)) {
-        return {
-          errorStatus: 400,
-          errorBody: {
-            error:
-              'Cannot self-declare REVOCATION_VERIFIED without verifiedConfirmation=true and attached MANDATE_REVOCATION evidence.',
-            code: 'UNVERIFIED_STATUS_REJECTED',
-          },
-        };
-      }
+      return {
+        errorStatus: 400,
+        errorBody: {
+          error:
+            'Cannot self-declare REVOCATION_VERIFIED on user endpoints. Revocation verification requires banking institution confirmation or NPCI/UPI mandate status synchronization.',
+          code: 'UNVERIFIED_STATUS_REJECTED',
+        },
+      };
     }
 
     const isUploadedDoc = Boolean(documentUploaded);
@@ -3629,9 +3754,7 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
             : 'EVIDENCE_REFERENCE_RECORDED',
           sourceType: assignedSourceType,
           verificationStatus:
-            mandateLifecycleStatus === 'REVOCATION_VERIFIED'
-              ? 'USER_CONFIRMED'
-              : mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED'
+            mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED'
               ? 'EVIDENCE_ATTACHED'
               : 'USER_REPORTED',
           createdAt: new Date().toISOString(),
@@ -3684,7 +3807,7 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
     if (mndIdx >= 0) {
       if (isMandateCompletion) {
         mandatesStore[mndIdx].mandateStatus =
-          mandateLifecycleStatus === 'REVOKED' || mandateLifecycleStatus === 'REVOCATION_VERIFIED'
+          mandateLifecycleStatus === 'REVOKED'
             ? 'REVOKED'
             : 'REVOCATION_REPORTED';
       } else if (mandateLifecycleStatus === 'PAUSED_REPORTED_BY_USER') {
@@ -3877,6 +4000,7 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
     documentUploaded,
     documentName,
     documentMimeType,
+    fileBase64,
     sourceType,
   } = req.body as {
     evidenceType: CancellationEvidenceRecord['evidenceType'];
@@ -3887,6 +4011,7 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
     documentUploaded?: boolean;
     documentName?: string | null;
     documentMimeType?: string | null;
+    fileBase64?: string | null;
     sourceType?: RecordSourceProvenance;
   };
 
@@ -3928,6 +4053,126 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
       };
     }
 
+    const cleanFileBase64 =
+      typeof fileBase64 === 'string' && fileBase64.trim() !== '' ? fileBase64.trim() : null;
+    const isUploadedDocRequested = Boolean(documentUploaded);
+
+    if (isUploadedDocRequested && !cleanFileBase64) {
+      return {
+        errorStatus: 400,
+        errorBody: {
+          error:
+            'Cannot mark documentUploaded=true without providing a valid file upload payload (fileBase64). To record reference-only confirmation numbers, record evidence without document upload.',
+          code: 'DOCUMENT_PAYLOAD_REQUIRED',
+        },
+      };
+    }
+
+    let fileBuffer: Buffer | null = null;
+    let detectedMimeType: string | null = null;
+    let detectedExtension: string | null = null;
+    let computedSha256: string | null = null;
+    let savedStoragePath: string | null = null;
+
+    if (cleanFileBase64) {
+      const base64Data = cleanFileBase64.replace(/^data:[^;]+;base64,/, '');
+      try {
+        fileBuffer = Buffer.from(base64Data, 'base64');
+      } catch {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: 'Corrupted or invalid base64 file data provided.',
+            code: 'INVALID_BASE64',
+          },
+        };
+      }
+
+      if (!fileBuffer || fileBuffer.length === 0) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: 'Uploaded file payload is empty.',
+            code: 'EMPTY_FILE',
+          },
+        };
+      }
+
+      const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10MB
+      if (fileBuffer.length > MAX_UPLOAD_BYTES) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: `File size (${fileBuffer.length} bytes) exceeds maximum allowable upload size of 10MB.`,
+            code: 'FILE_TOO_LARGE',
+          },
+        };
+      }
+
+      // Magic byte checks:
+      // PDF: %PDF- (0x25 0x50 0x44 0x46 0x2D)
+      // PNG: 0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A
+      // JPEG: 0xFF 0xD8 0xFF
+      // WebP: RIFF ... WEBP
+      if (
+        fileBuffer.length >= 5 &&
+        fileBuffer[0] === 0x25 &&
+        fileBuffer[1] === 0x50 &&
+        fileBuffer[2] === 0x44 &&
+        fileBuffer[3] === 0x46 &&
+        fileBuffer[4] === 0x2d
+      ) {
+        detectedMimeType = 'application/pdf';
+        detectedExtension = 'pdf';
+      } else if (
+        fileBuffer.length >= 8 &&
+        fileBuffer[0] === 0x89 &&
+        fileBuffer[1] === 0x50 &&
+        fileBuffer[2] === 0x4e &&
+        fileBuffer[3] === 0x47 &&
+        fileBuffer[4] === 0x0d &&
+        fileBuffer[5] === 0x0a &&
+        fileBuffer[6] === 0x1a &&
+        fileBuffer[7] === 0x0a
+      ) {
+        detectedMimeType = 'image/png';
+        detectedExtension = 'png';
+      } else if (
+        fileBuffer.length >= 3 &&
+        fileBuffer[0] === 0xff &&
+        fileBuffer[1] === 0xd8 &&
+        fileBuffer[2] === 0xff
+      ) {
+        detectedMimeType = 'image/jpeg';
+        detectedExtension = 'jpg';
+      } else if (
+        fileBuffer.length >= 12 &&
+        fileBuffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+        fileBuffer.subarray(8, 12).toString('ascii') === 'WEBP'
+      ) {
+        detectedMimeType = 'image/webp';
+        detectedExtension = 'webp';
+      } else {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error:
+              'Invalid file signature or unsupported file format. Allowed formats: PDF (%PDF-), PNG (89 50 4E 47), JPEG (FF D8 FF), and WebP (RIFF...WEBP).',
+            code: 'INVALID_FILE_SIGNATURE',
+          },
+        };
+      }
+
+      computedSha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+      const uploadsDir = path.resolve(process.cwd(), 'data/uploads');
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+      const safeFilename = `${computedSha256.slice(0, 16)}_${Date.now()}.${detectedExtension}`;
+      savedStoragePath = path.join('data/uploads', safeFilename);
+      fs.writeFileSync(path.resolve(process.cwd(), savedStoragePath), fileBuffer);
+    }
+
     // Gate D: Never default omitted historical evidenceDate to '2026-10-30' or today's date!
     let parsedEvidenceDate: string | null = null;
     if (evidenceDate !== undefined && evidenceDate !== null && String(evidenceDate).trim() !== '') {
@@ -3959,8 +4204,8 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
     const existingEvidence = userCommitmentOverrides[cmtId]?.evidenceRecords ?? sess.evidence;
     const cleanRef = referenceNumber.trim();
     const resolvedType = evidenceType || 'SERVICE_CONFIRMATION';
-    const isUploadedDoc = Boolean(documentUploaded);
-    const assignedSourceType: RecordSourceProvenance = isUploadedDoc
+    const isRealDocumentUploaded = Boolean(fileBuffer && computedSha256);
+    const assignedSourceType: RecordSourceProvenance = isRealDocumentUploaded
       ? 'USER_UPLOADED'
       : 'USER_ENTERED';
 
@@ -3969,7 +4214,8 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
         e.referenceNumber === cleanRef &&
         e.evidenceType === resolvedType &&
         (e.evidenceDate ?? null) === (parsedEvidenceDate ?? null) &&
-        (e.effectiveDate ?? null) === (parsedEffectiveDate ?? null)
+        (e.effectiveDate ?? null) === (parsedEffectiveDate ?? null) &&
+        (e.sha256Hash ?? null) === (computedSha256 ?? null)
     );
     const newEvid: CancellationEvidenceRecord =
       existingDuplicate || {
@@ -3980,14 +4226,21 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
         referenceNumber: cleanRef,
         evidenceDate: parsedEvidenceDate,
         ...(parsedEffectiveDate ? { effectiveDate: parsedEffectiveDate } : {}),
-        documentUploaded: isUploadedDoc,
-        ...(documentName ? { documentName } : {}),
-        ...(documentMimeType ? { documentMimeType } : {}),
-        evidenceRecordLifecycle: isUploadedDoc
+        documentUploaded: isRealDocumentUploaded,
+        ...(documentName || savedStoragePath
+          ? { documentName: documentName || (savedStoragePath ? path.basename(savedStoragePath) : null) }
+          : {}),
+        ...(detectedMimeType || documentMimeType
+          ? { documentMimeType: detectedMimeType || documentMimeType }
+          : {}),
+        ...(computedSha256 ? { sha256Hash: computedSha256 } : {}),
+        ...(fileBuffer ? { fileSizeBytes: fileBuffer.length } : {}),
+        ...(savedStoragePath ? { storagePath: savedStoragePath } : {}),
+        evidenceRecordLifecycle: isRealDocumentUploaded
           ? 'DOCUMENT_UPLOADED'
           : 'EVIDENCE_REFERENCE_RECORDED',
         sourceType: assignedSourceType,
-        verificationStatus: isUploadedDoc ? 'EVIDENCE_ATTACHED' : 'USER_REPORTED',
+        verificationStatus: isRealDocumentUploaded ? 'EVIDENCE_ATTACHED' : 'USER_REPORTED',
         createdAt: new Date().toISOString(),
       };
     if (!existingDuplicate) {
@@ -3999,7 +4252,7 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
         commitmentId: cmtId,
         eventType: 'EVIDENCE_ATTACHED',
         summary: `Attached ${resolvedType} ${
-          isUploadedDoc ? 'uploaded document' : 'evidence reference'
+          isRealDocumentUploaded ? 'uploaded document' : 'evidence reference'
         } (Ref: ${cleanRef}${
           parsedEvidenceDate ? `, Evidence Date: ${parsedEvidenceDate}` : ''
         }${parsedEffectiveDate ? `, Effective Date: ${parsedEffectiveDate}` : ''}).`,
@@ -4093,11 +4346,12 @@ app.patch('/api/guardrails/:commitmentId', async (req, res) => {
       existingGuardrail?.currency ||
       commitmentCurrency;
 
-    if (!resolvedCurrency || !isValidCurrencyCode(resolvedCurrency)) {
+    if (!resolvedCurrency || !isValidCurrencyCode(resolvedCurrency) || isUnknownCurrency(resolvedCurrency)) {
       return {
         errorStatus: 400,
         errorBody: {
-          error: `Explicit valid currency is required to configure a financial guardrail for commitment ${cmtId}.`,
+          error: `Explicit valid confirmed currency is required to configure a financial guardrail for commitment ${cmtId}. Reconcile or confirm currency first.`,
+          code: 'UNKNOWN_CURRENCY_GUARDRAIL_NOT_ALLOWED',
         },
       };
     }
@@ -4110,6 +4364,7 @@ app.patch('/api/guardrails/:commitmentId', async (req, res) => {
           errorStatus: 400,
           errorBody: {
             error: `maxExpectedAmountMinor must be a positive safe integer, received "${maxExpectedAmountMinor}".`,
+            code: 'INVALID_AMOUNT',
           },
         };
       }
@@ -4121,12 +4376,20 @@ app.patch('/api/guardrails/:commitmentId', async (req, res) => {
           errorStatus: 400,
           errorBody: {
             error: `maxExpectedAmount must be a positive finite amount, received "${maxExpectedAmount}".`,
+            code: 'INVALID_AMOUNT',
           },
         };
       }
       resolvedMinor = toMinorUnitsStrict(parsedMajor, resolvedCurrency);
     } else if (resolvedMinor === null) {
-      resolvedMinor = toMinorUnitsStrict(targetCommitment?.typicalAmount ?? 499, resolvedCurrency);
+      return {
+        errorStatus: 400,
+        errorBody: {
+          error:
+            'Explicit positive maxExpectedAmount or maxExpectedAmountMinor is required to configure a financial guardrail.',
+          code: 'AMOUNT_REQUIRED',
+        },
+      };
     }
 
     const nowIso = new Date().toISOString();
@@ -5179,14 +5442,14 @@ app.post('/api/demo/reset', async (_req, res) => {
     return;
   }
   await executeSerializedMutation(res, () => {
-    loadSeedData(true);
-    const state = computeCurrentState();
+    const resetResult = resetDemoDataOnly();
     return {
       body: {
         message:
-          'Synthetic dataset, mandates, service terms, and sessions reset to initial benchmark state.',
-        commitmentsCount: state.commitments.length,
-        transactionsCount: state.transactions.length,
+          'Synthetic demonstration dataset reset to benchmark baseline. Canonical user transactions, mandates, terms, and guardrails preserved.',
+        commitmentsCount: resetResult.commitmentsCount,
+        transactionsCount: resetResult.transactionsCount,
+        preservedUserRecords: resetResult.preservedUserRecords,
       },
     };
   });

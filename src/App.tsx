@@ -917,7 +917,7 @@ export default function App() {
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3">
                     <div>
                       <h3 className="text-base font-semibold text-slate-900">
-                        Monthly Recurring Cashflow Breakdown ({monthlyTrend[0]?.month || '2026-06'} – {monthlyTrend[monthlyTrend.length - 1]?.month || '2026-10'})
+                        Monthly Recurring Cashflow Breakdown {monthlyTrend.length > 0 ? `(${monthlyTrend[0].month} – ${monthlyTrend[monthlyTrend.length - 1].month})` : ''}
                       </h3>
                       <p className="text-xs text-slate-500">
                         Separates optional subscriptions from essential obligations (Loan EMI, Insurance, Utility) and isolated processor-only rows

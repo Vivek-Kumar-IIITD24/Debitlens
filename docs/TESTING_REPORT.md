@@ -8,7 +8,7 @@ npm test
 # Executes: tsx --test src/utils/searchHistory.test.ts src/engine/debitlensEngine.test.ts
 ```
 
-### Summary of Results: **65 / 65 Passing (0 Failures)**
+### Summary of Results: **71 / 71 Passing (0 Failures)**
 
 | Test # | Suite | Test Name | Status |
 |---|---|---|---|
@@ -71,12 +71,18 @@ npm test
 | 57 | `debitlensEngine.test.ts` | Section 2 Currency Integrity: Multi-currency USD/EUR preservation across Alerts, Casebook, Graph, Bhasha & Investigation | PASS |
 | 58 | `debitlensEngine.test.ts` | Section 3 & 4 Regression: Runtime date provider, honest playbook verification status, and engine-level strict calendar validation | PASS |
 | 59 | `debitlensEngine.test.ts` | Section 5.5 Lifecycle Matrix: Request vs completion dates, `evidenceDate` non-aliasing, refund exclusion, and idempotency | PASS |
-| 60 | `searchHistory.test.ts` | `normalizeSearchQuery` trims leading/trailing whitespace and collapses internal spaces | PASS |
-| 61 | `searchHistory.test.ts` | `addSearchHistoryEntry` prepends new query and ignores blank queries | PASS |
-| 62 | `searchHistory.test.ts` | `addSearchHistoryEntry` deduplicates case-insensitively and moves item to top | PASS |
-| 63 | `searchHistory.test.ts` | `addSearchHistoryEntry` enforces `maxEntries` limit | PASS |
-| 64 | `searchHistory.test.ts` | `removeSearchHistoryEntry` and `clearSearchHistory` remove items properly | PASS |
-| 65 | `searchHistory.test.ts` | `filterTransactionsByQuery` and `countDescriptorMatches` match raw descriptors and respect status filter | PASS |
+| 60 | `debitlensEngine.test.ts` | Quality-Closure Gate: strict nullable minor-unit helpers, negative credit parsing, non-INR reconciliation pool/mandates, multi-currency guardrails, and separate Layer A/B monitoring | PASS |
+| 61 | `debitlensEngine.test.ts` | Part 2 & 3 Closure: Currency Provenance, Missing Currency -> UNKNOWN (Never Silent INR), and Strict Minor-Unit Edge Cases | PASS |
+| 62 | `debitlensEngine.test.ts` | Part 7 Closure: Asia/Kolkata Midnight Boundary, IST Formatting, and Dynamic Monthly Trend Window | PASS |
+| 63 | `debitlensEngine.test.ts` | Part 4, 5 & 6 Server Closure: Demo Mode Server Enforcement, Simulated Data Isolation, Lifecycle Allowlist & Completion Semantics, Forged Provenance Rejection, and Evidence Ownership Validation | PASS |
+| 64 | `debitlensEngine.test.ts` | Exact Money Precision & Ambiguous Currency Disambiguation Suite | PASS |
+| 65 | `debitlensEngine.test.ts` | Final 10/10 Quality Assurance: Demo Reset Sentinel Preservation, Real File Upload, Verification Security & Guardrails | PASS |
+| 66 | `searchHistory.test.ts` | `normalizeSearchQuery` trims leading/trailing whitespace and collapses internal spaces | PASS |
+| 67 | `searchHistory.test.ts` | `addSearchHistoryEntry` prepends new query and ignores blank queries | PASS |
+| 68 | `searchHistory.test.ts` | `addSearchHistoryEntry` deduplicates case-insensitively and moves item to top | PASS |
+| 69 | `searchHistory.test.ts` | `addSearchHistoryEntry` enforces `maxEntries` limit | PASS |
+| 70 | `searchHistory.test.ts` | `removeSearchHistoryEntry` and `clearSearchHistory` remove items properly | PASS |
+| 71 | `searchHistory.test.ts` | `filterTransactionsByQuery` and `countDescriptorMatches` match raw descriptors and respect status filter | PASS |
 
 ---
 

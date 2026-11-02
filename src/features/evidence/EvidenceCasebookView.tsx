@@ -19,7 +19,7 @@ import {
   ConfidenceScoreBreakdown,
 } from '../../types/debitlens';
 import { apiClient } from '../../services/apiClient';
-import { formatMinorINR, toMinorUnits, fromMinorUnits } from '../../utils/currency';
+import { formatMinorINR, toMinorUnitsStrict, fromMinorUnits, isUnknownCurrency } from '../../utils/currency';
 
 interface EvidenceCasebookViewProps {
   commitments: CommitmentRecord[];
@@ -47,7 +47,7 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
   const [newDesc, setNewDesc] = useState('');
   const [newCategory, setNewCategory] =
     useState<EvidenceCasebookEntry['category']>('SERVICE_CANCELLATION_EVENT');
-  const [maxCapMajor, setMaxCapMajor] = useState<string>('499');
+  const [maxCapMajor, setMaxCapMajor] = useState<string>('');
   const [reminderDays, setReminderDays] = useState<string>('3');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -70,11 +70,12 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
     const activeGr = gr.find((g) => g.commitmentId === cmtId);
     const cmt = commitments.find((c) => c.id === cmtId);
     const grCurr = activeGr?.currency || cmt?.currency || 'INR';
-    if (activeGr) {
+    if (activeGr && activeGr.maxExpectedAmountMinor != null) {
       setMaxCapMajor(String(fromMinorUnits(activeGr.maxExpectedAmountMinor, grCurr)));
       setReminderDays(String(activeGr.preDebitReminderDays));
-    } else if (cmt) {
-      setMaxCapMajor(String(cmt.typicalAmount));
+    } else {
+      setMaxCapMajor('');
+      setReminderDays('3');
     }
   };
 
@@ -105,22 +106,38 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
     e.preventDefault();
     if (!activeCommitment) return;
     const guardrailCurrency = activeCommitment.currency || 'INR';
-    const minorCap = toMinorUnits(Number(maxCapMajor || activeCommitment.typicalAmount || 499), guardrailCurrency);
-    const updated = await apiClient.updateGuardrail(activeCommitment.id, {
-      currency: guardrailCurrency,
-      maxExpectedAmountMinor: minorCap,
-      preDebitReminderDays: Number(reminderDays || 3),
-      alertOnAnyIncrease: true,
-    });
-    setGuardrails((prev) =>
-      prev.map((g) => (g.commitmentId === updated.commitmentId ? updated : g))
-    );
-    setStatusMessage(
-      `Saved financial guardrail for ${activeCommitment.serviceName}: Max expected debit ${formatMinorINR(
-        minorCap,
-        guardrailCurrency
-      )} (${guardrailCurrency}), pre-debit alert ${reminderDays} days prior.`
-    );
+    if (isUnknownCurrency(guardrailCurrency)) {
+      setStatusMessage(
+        `Error: Cannot configure financial guardrails for ${activeCommitment.serviceName} with UNKNOWN currency. Reconcile or confirm currency first.`
+      );
+      return;
+    }
+    const trimmedCap = maxCapMajor.trim();
+    const enteredCap = parseFloat(trimmedCap);
+    if (!trimmedCap || isNaN(enteredCap) || enteredCap <= 0) {
+      setStatusMessage('Error: Please enter a valid positive maximum expected debit amount.');
+      return;
+    }
+    try {
+      const minorCap = toMinorUnitsStrict(enteredCap, guardrailCurrency);
+      const updated = await apiClient.updateGuardrail(activeCommitment.id, {
+        currency: guardrailCurrency,
+        maxExpectedAmountMinor: minorCap,
+        preDebitReminderDays: Number(reminderDays || 3),
+        alertOnAnyIncrease: true,
+      });
+      setGuardrails((prev) =>
+        prev.map((g) => (g.commitmentId === updated.commitmentId ? updated : g))
+      );
+      setStatusMessage(
+        `Saved financial guardrail for ${activeCommitment.serviceName}: Max expected debit ${formatMinorINR(
+          minorCap,
+          guardrailCurrency
+        )} (${guardrailCurrency}), pre-debit alert ${reminderDays || 3} days prior.`
+      );
+    } catch (err: any) {
+      setStatusMessage(`Error saving guardrail: ${err?.message || 'Failed'}`);
+    }
   };
 
   return (
@@ -386,6 +403,7 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
                 <input
                   type="number"
                   step="any"
+                  placeholder="e.g. 599.00"
                   value={maxCapMajor}
                   onChange={(e) => setMaxCapMajor(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"

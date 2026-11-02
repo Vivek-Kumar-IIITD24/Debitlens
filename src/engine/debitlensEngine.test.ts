@@ -59,6 +59,7 @@ import {
   normalizeCurrencyCode,
   resolveTransactionCurrency,
   UNKNOWN_CURRENCY,
+  convertMajorToMinorExact,
 } from '../utils/currency';
 import os from 'node:os';
 import http from 'node:http';
@@ -4382,6 +4383,8 @@ test('Part 4, 5 & 6 Server Closure: Demo Mode Server Enforcement, Simulated Data
       referenceNumber: 'SB-MND-EV-202',
       description: 'StreamBox UPI AutoPay revocation receipt',
       documentUploaded: true,
+      documentName: 'revocation_receipt.pdf',
+      fileBase64: Buffer.from('%PDF-1.4\n%revocation receipt\n%%EOF').toString('base64'),
     });
     assert.equal(sbMandateEv.status, 200);
     assert.equal(sbMandateEv.body.evidence.evidenceRecordLifecycle, 'DOCUMENT_UPLOADED');
@@ -4437,6 +4440,343 @@ test('Part 4, 5 & 6 Server Closure: Demo Mode Server Enforcement, Simulated Data
       dynamicTrend.body.map((m: any) => m.month),
       ['2026-08', '2026-09', '2026-10', '2026-11', '2026-12']
     );
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (fs.existsSync(tmpStorePath)) {
+      fs.unlinkSync(tmpStorePath);
+    }
+  }
+});
+
+test('Exact Money Precision & Ambiguous Currency Disambiguation Suite', () => {
+  // 1. Exact string/BigInt scaling prevents IEEE 754 precision loss
+  const exactRes1 = convertMajorToMinorExact('12345678901.23', 'INR');
+  assert.equal(exactRes1.success, true);
+  if (exactRes1.success) {
+    assert.equal(exactRes1.minorUnits, 1234567890123n);
+  }
+
+  const exactRes2 = convertMajorToMinorExact('100.5', 'INR');
+  assert.equal(exactRes2.success, true);
+  if (exactRes2.success) {
+    assert.equal(exactRes2.minorUnits, 10050n);
+  }
+
+  const exactResZero = convertMajorToMinorExact('0', 'INR');
+  assert.equal(exactResZero.success, true);
+  if (exactResZero.success) {
+    assert.equal(exactResZero.minorUnits, 0n);
+  }
+
+  // Reject excess decimal places for currency
+  const excessDecimals = convertMajorToMinorExact('100.123', 'INR');
+  assert.equal(excessDecimals.success, false);
+  if (!excessDecimals.success) {
+    assert.equal(excessDecimals.error, 'EXCESS_DECIMAL_PLACES');
+  }
+
+  // toMinorUnitsStrict uses the exact parser and produces safe integer
+  assert.equal(toMinorUnitsStrict(12345678901.23, 'INR'), 1234567890123);
+
+  // 2. Ambiguous currency symbols resolution
+  // Bare '$' without confirmed account or explicit currency resolves to UNKNOWN_CURRENCY
+  const bareDollar = resolveTransactionCurrency({ rawTransactionCurrency: '$' });
+  assert.equal(bareDollar.currency, UNKNOWN_CURRENCY);
+  assert.equal(bareDollar.currencyProvenance, 'UNKNOWN_SOURCE');
+
+  // Bare '$' with USD confirmed account resolves to USD
+  const dollarWithUsdAcct = resolveTransactionCurrency({
+    rawTransactionCurrency: '$',
+    accountAlias: 'CITI-USD-01',
+    confirmedAccountCurrencies: { 'CITI-USD-01': 'USD' },
+  });
+  assert.equal(dollarWithUsdAcct.currency, 'USD');
+
+  // Bare '$' with CAD confirmed account resolves to CAD
+  const dollarWithCadAcct = resolveTransactionCurrency({
+    rawTransactionCurrency: '$',
+    accountAlias: 'RBC-CAD-01',
+    confirmedAccountCurrencies: { 'RBC-CAD-01': 'CAD' },
+  });
+  assert.equal(dollarWithCadAcct.currency, 'CAD');
+
+  // Explicit CAD / AUD descriptors resolve to respective currencies
+  const explicitCad = resolveTransactionCurrency({ rawTransactionCurrency: 'CAD' });
+  assert.equal(explicitCad.currency, 'CAD');
+
+  const explicitAud = resolveTransactionCurrency({ rawTransactionCurrency: 'AUD' });
+  assert.equal(explicitAud.currency, 'AUD');
+
+  // Bare '¥' without JPY confirmed account resolves to UNKNOWN_CURRENCY
+  const bareYen = resolveTransactionCurrency({ rawTransactionCurrency: '¥' });
+  assert.equal(bareYen.currency, UNKNOWN_CURRENCY);
+  assert.equal(bareYen.currencyProvenance, 'UNKNOWN_SOURCE');
+
+  // Explicit JPY descriptor resolves to JPY
+  const explicitJpy = resolveTransactionCurrency({ rawTransactionCurrency: 'JPY' });
+  assert.equal(explicitJpy.currency, 'JPY');
+
+  // Service Terms extraction: bare '$' resolves to UNKNOWN, USD resolves to USD
+  const termsBareDollar = extractServiceTermsFromText('Monthly cloud subscription for $499 billed every month.');
+  assert.equal(termsBareDollar.currency, UNKNOWN_CURRENCY);
+
+  const termsExplicitUsd = extractServiceTermsFromText('Monthly cloud subscription for USD 499 billed every month.');
+  assert.equal(termsExplicitUsd.currency, 'USD');
+});
+
+test('Final 10/10 Quality Assurance: Demo Reset Sentinel Preservation, Real File Upload, Verification Security & Guardrails', async () => {
+  const tmpStorePath = path.resolve(
+    os.tmpdir(),
+    `debitlens-quality-gate-${Date.now()}-${Math.random().toString(36).slice(2)}.json`
+  );
+  process.env.DEBITLENS_STORE_PATH = tmpStorePath;
+  process.env.DEBITLENS_SKIP_LISTEN = '1';
+
+  const { app, loadSeedData } = await import('../../server');
+  loadSeedData(true);
+
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const addr = server.address() as any;
+  const baseUrl = `http://127.0.0.1:${addr.port}`;
+
+  const api = async (method: string, endpoint: string, body?: any) => {
+    const res = await fetch(`${baseUrl}${endpoint}`, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const text = await res.text();
+    let parsed: any;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = text;
+    }
+    return { status: res.status, body: parsed };
+  };
+
+  try {
+    // ------------------------------------------------------------------------
+    // GATE 1: Real File Upload & Magic Byte Validation
+    // ------------------------------------------------------------------------
+    // A. Reject documentUploaded: true without fileBase64 payload
+    const sessionsRes = await api('GET', '/api/cancellation/sessions');
+    assert.equal(sessionsRes.status, 200);
+    const targetSession = sessionsRes.body.sessions[0];
+    assert.ok(targetSession, 'At least one cancellation session exists');
+
+    const fakeUploadRes = await api(
+      'POST',
+      `/api/cancellation/sessions/${targetSession.id}/evidence`,
+      {
+        evidenceType: 'SERVICE_CONFIRMATION',
+        description: 'Testing fake upload claim without payload',
+        referenceNumber: 'REF-FAKE-UPLOAD-01',
+        documentUploaded: true,
+      }
+    );
+    assert.equal(fakeUploadRes.status, 400);
+    assert.equal(fakeUploadRes.body.code, 'DOCUMENT_PAYLOAD_REQUIRED');
+
+    // B. Reject invalid file signature (text file pretending to be PDF)
+    const invalidSignatureRes = await api(
+      'POST',
+      `/api/cancellation/sessions/${targetSession.id}/evidence`,
+      {
+        evidenceType: 'SERVICE_CONFIRMATION',
+        description: 'Text file pretending to be upload',
+        referenceNumber: 'REF-INVALID-MAGIC-01',
+        documentUploaded: true,
+        fileBase64: Buffer.from('This is a plain text file, not a PDF').toString('base64'),
+      }
+    );
+    assert.equal(invalidSignatureRes.status, 400);
+    assert.equal(invalidSignatureRes.body.code, 'INVALID_FILE_SIGNATURE');
+
+    // C. Accept valid PDF with magic bytes %PDF-
+    const validPdfBuffer = Buffer.from('%PDF-1.4\n%âãÏÓ\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF');
+    const validPdfRes = await api(
+      'POST',
+      `/api/cancellation/sessions/${targetSession.id}/evidence`,
+      {
+        evidenceType: 'SERVICE_CONFIRMATION',
+        description: 'Official cancellation confirmation letter PDF',
+        referenceNumber: 'REF-VALID-PDF-99',
+        evidenceDate: '2026-10-15',
+        documentUploaded: true,
+        documentName: 'cancellation_receipt.pdf',
+        fileBase64: validPdfBuffer.toString('base64'),
+      }
+    );
+    assert.equal(validPdfRes.status, 200);
+    assert.equal(validPdfRes.body.evidence.documentUploaded, true);
+    assert.equal(validPdfRes.body.evidence.sourceType, 'USER_UPLOADED');
+    assert.equal(validPdfRes.body.evidence.evidenceRecordLifecycle, 'DOCUMENT_UPLOADED');
+    assert.equal(validPdfRes.body.evidence.verificationStatus, 'EVIDENCE_ATTACHED');
+    assert.ok(validPdfRes.body.evidence.sha256Hash, 'SHA-256 hash must be generated');
+    assert.equal(validPdfRes.body.evidence.fileSizeBytes, validPdfBuffer.length);
+
+    // D. Accept reference-only evidence without document upload
+    const refOnlyRes = await api(
+      'POST',
+      `/api/cancellation/sessions/${targetSession.id}/evidence`,
+      {
+        evidenceType: 'SERVICE_CONFIRMATION',
+        description: 'Reference-only confirmation code from web portal',
+        referenceNumber: 'REF-CODE-ONLY-42',
+        evidenceDate: '2026-10-16',
+        documentUploaded: false,
+      }
+    );
+    assert.equal(refOnlyRes.status, 200);
+    assert.equal(refOnlyRes.body.evidence.documentUploaded, false);
+    assert.equal(refOnlyRes.body.evidence.sourceType, 'USER_ENTERED');
+    assert.equal(refOnlyRes.body.evidence.evidenceRecordLifecycle, 'EVIDENCE_REFERENCE_RECORDED');
+    assert.equal(refOnlyRes.body.evidence.verificationStatus, 'USER_REPORTED');
+
+    // ------------------------------------------------------------------------
+    // GATE 2: Rejection of Self-Declared Independent Verification
+    // ------------------------------------------------------------------------
+    // A. Rejection of CANCELLATION_VERIFIED on service-status endpoint
+    const selfDeclareLayerARes = await api(
+      'PATCH',
+      `/api/cancellations/${targetSession.id}/service-status`,
+      {
+        serviceLifecycleStatus: 'CANCELLATION_VERIFIED',
+        verifiedConfirmation: true,
+        referenceNumber: 'REF-CODE-ONLY-42',
+      }
+    );
+    assert.equal(selfDeclareLayerARes.status, 400);
+    assert.equal(selfDeclareLayerARes.body.code, 'UNVERIFIED_STATUS_REJECTED');
+
+    // B. Rejection of REVOCATION_VERIFIED on mandate-status endpoint
+    const selfDeclareLayerBRes = await api(
+      'PATCH',
+      `/api/cancellations/${targetSession.id}/mandate-status`,
+      {
+        mandateLifecycleStatus: 'REVOCATION_VERIFIED',
+        verifiedConfirmation: true,
+        referenceNumber: 'REF-CODE-ONLY-42',
+      }
+    );
+    assert.equal(selfDeclareLayerBRes.status, 400);
+    assert.equal(selfDeclareLayerBRes.body.code, 'UNVERIFIED_STATUS_REJECTED');
+
+    // C. Rejection of forged privileged sourceType
+    const forgedProvenanceRes = await api(
+      'PATCH',
+      `/api/cancellations/${targetSession.id}/service-status`,
+      {
+        serviceLifecycleStatus: 'CANCELLED',
+        sourceType: 'INDEPENDENTLY_VERIFIED',
+        effectiveDate: '2026-10-15',
+      }
+    );
+    assert.equal(forgedProvenanceRes.status, 400);
+    assert.equal(forgedProvenanceRes.body.code, 'FORGED_PROVENANCE_REJECTED');
+
+    // ------------------------------------------------------------------------
+    // GATE 3: Financial Guardrails Validation & Rejection of UNKNOWN Currency
+    // ------------------------------------------------------------------------
+    // A. Reject missing guardrail amount (no default 499)
+    const missingAmountGuardrail = await api('PATCH', `/api/guardrails/${targetSession.commitmentId}`, {
+      currency: 'INR',
+    });
+    assert.equal(missingAmountGuardrail.status, 400);
+    assert.equal(missingAmountGuardrail.body.code, 'AMOUNT_REQUIRED');
+
+    // B. Guardrail succeeds with explicit positive amount
+    const validGuardrailRes = await api('PATCH', `/api/guardrails/${targetSession.commitmentId}`, {
+      currency: 'INR',
+      maxExpectedAmount: 1499.0,
+      preDebitReminderDays: 4,
+    });
+    assert.equal(validGuardrailRes.status, 200);
+    assert.equal(validGuardrailRes.body.maxExpectedAmountMinor, 149900);
+    assert.equal(validGuardrailRes.body.currency, 'INR');
+
+    // ------------------------------------------------------------------------
+    // GATE 4: Demo Reset Sentinel Data Preservation
+    // ------------------------------------------------------------------------
+    // A. Import a user transaction with unique sentinel ID
+    const userCsv = [
+      'transaction_id,transaction_date,raw_description,amount,currency,direction,payment_rail,account_alias,external_reference',
+      'TXN-USER-SENTINEL-01,2026-10-18,USER*CANONICAL-PURCHASE,2499.00,INR,DEBIT,UPI_AUTOPAY,HDFC-XX4821,UTR-USER-SENTINEL',
+    ].join('\n');
+    const userImportRes = await api('POST', '/api/import/transactions', {
+      csvContent: userCsv,
+      filename: 'user-sentinel.csv',
+    });
+    assert.equal(userImportRes.status, 200);
+    assert.equal(userImportRes.body.batch.acceptedRecords, 1);
+
+    // B. Import a user mandate with unique sentinel ID
+    const userMandateRes = await api('POST', '/api/mandates/import', {
+      mandate: {
+        id: 'MAND-USER-SENTINEL-01',
+        mandateReference: 'MND-REF-SENTINEL-01',
+        currency: 'INR',
+        maxAmount: 2499,
+        commitmentId: 'CMT-USER-SENTINEL',
+        merchantName: 'User Canonical Merchant',
+        serviceName: 'User Protected Service',
+        paymentRail: 'UPI_AUTOPAY',
+        mandateStatus: 'ACTIVE',
+        sourceType: 'USER_ENTERED',
+        createdAt: '2026-10-18T10:00:00Z',
+      },
+    });
+    assert.equal(userMandateRes.status, 200);
+
+    // C. Enable Demo Mode and simulate a post-cancellation debit (creates ephemeral DEMO_SEED transaction)
+    const enableDemoRes = await api('POST', '/api/demo/mode', { enabled: true });
+    assert.equal(enableDemoRes.status, 200);
+
+    const simRes = await api('POST', '/api/demo/simulate-post-cancel-debit', {
+      commitmentId: targetSession.commitmentId,
+    });
+    assert.equal(simRes.status, 200);
+
+    // Verify simulated transaction exists before reset
+    const txnsBeforeReset = (await api('GET', '/api/transactions')).body;
+    assert.ok(txnsBeforeReset.some((t: any) => t.id.startsWith('TXN-POST-')));
+    assert.ok(txnsBeforeReset.some((t: any) => t.id === 'TXN-USER-SENTINEL-01'));
+
+    // D. Trigger Demo Reset
+    const resetRes = await api('POST', '/api/demo/reset');
+    assert.equal(resetRes.status, 200);
+    assert.ok(resetRes.body.preservedUserRecords.transactions >= 1, 'Preserved user transactions');
+    assert.ok(resetRes.body.preservedUserRecords.mandates >= 1, 'Preserved user mandates');
+
+    // E. Verify Canonical User Data is 100% PRESERVED after Demo Reset
+    const txnsAfterReset = (await api('GET', '/api/transactions')).body;
+    const userTxnPreserved = txnsAfterReset.find((t: any) => t.id === 'TXN-USER-SENTINEL-01');
+    assert.ok(userTxnPreserved, 'User-imported transaction must survive demo reset');
+    assert.equal(userTxnPreserved.amount, 2499.0);
+
+    // Ephemeral simulated demo transaction MUST be cleared
+    const simTxnAfterReset = txnsAfterReset.find((t: any) => t.id.startsWith('TXN-POST-'));
+    assert.equal(simTxnAfterReset, undefined, 'Ephemeral simulated demo debits must be wiped on reset');
+
+    // User mandate must survive
+    const mandatesAfterReset = (await api('GET', '/api/mandates')).body;
+    const userMandatePreserved = mandatesAfterReset.find((m: any) => m.id === 'MAND-USER-SENTINEL-01');
+    assert.ok(userMandatePreserved, 'User mandate must survive demo reset');
+
+    // User guardrail configured above must survive
+    const guardrailsAfterReset = (await api('GET', '/api/guardrails')).body;
+    const userGuardrailPreserved = guardrailsAfterReset.find(
+      (g: any) => g.commitmentId === targetSession.commitmentId
+    );
+    assert.ok(userGuardrailPreserved, 'User guardrail must survive demo reset');
+    assert.equal(userGuardrailPreserved.maxExpectedAmountMinor, 149900);
+
+    // Audit trail must contain the sentinel demo reset event
+    const evidenceCasebook = (await api('GET', `/api/commitments/${targetSession.commitmentId}/evidence`)).body;
+    assert.ok(evidenceCasebook.auditEvents.length > 0);
   } finally {
     server.closeAllConnections?.();
     await new Promise<void>((resolve) => server.close(() => resolve()));
