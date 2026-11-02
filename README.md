@@ -35,15 +35,19 @@ Ordinary consumers face opaque bank statement descriptors (`RZP*STREAMBOX`, `SI-
 ## 3. Architecture & Technology Stack
 
 - **Backend (`server.ts`):** Node.js + Express + TypeScript API server with official `neo4j-driver` v6 connection pooling, parameterised Cypher queries, `SHOW CONSTRAINTS` verification, Sarvam AI concurrency-limited client (`runWithConcurrencyLimit`, 10s timeout), and atomic local persistence (`data/persistent-store.json` written via temporary file + `fs.renameSync` with explicit caller error reporting).
-- **Core Intelligence Engines (`src/engine/`):**
-  - `debitlensEngine.ts`: RFC-4180 CSV parser, descriptor normaliser, 6-tier identity resolver, temporal cadence detector, 100-point explainable confidence scorer, ground-truth evaluator, and graph builder.
-  - `reconciliationEngine.ts`: Three-way reconciliation engine, deterministic invoice/receipt term extractor (`expectedAmountMinor: null` when no currency token is present, `userVerified: false` until explicitly confirmed), Evidence Casebook & Append-Only Application Audit Timeline builder, Data Coverage analyser, Financial Guardrails, and grounded Contextual Bhasha Q&A builder.
+  - **Core Intelligence Engines (`src/engine/`):**
+  - `debitlensEngine.ts`: RFC-4180 CSV parser, strict signed/unsigned amount parsers (`parseStrictAmount`, `parseStrictSignedAmount`), descriptor normaliser, 6-tier identity resolver, temporal cadence detector, 100-point explainable confidence scorer, ground-truth evaluator, and graph builder.
+  - `reconciliationEngine.ts`: Three-way reconciliation engine, synchronized mandate completeness & lifecycle validator, deterministic invoice/receipt term extractor (`expectedAmountMinor: null` when no currency token is present, `userVerified: false` until explicitly confirmed), Evidence Casebook & Append-Only Application Audit Timeline builder, Data Coverage analyser, Financial Guardrails, and grounded Contextual Bhasha Q&A builder.
+  - `investigationEngine.ts`: Unrecognized Debit Investigation engine, Commitment Passport generator (3 distinct quality metrics: `recordCoverage`, `verificationQuality`, `financialReconciliationStatus`), Printable Evidence Pack HTML/JSON generator with XSS sanitization, Review & Resolve priority queue builder, and Smart Bank Statement CSV Column Mapping Wizard with canonical fingerprint deduplication.
 - **Frontend (`src/`):** React 19 + TypeScript + Tailwind CSS + Lucide Icons + Recharts workspace featuring:
   - **Overview Dashboard & Spend Breakdown**
-  - **Commitments & Recurring Candidates Review**
+  - **Commitments, Commitment Passport Modal & Printable Evidence Pack**
+  - **Review & Resolve Priority Inbox**
+  - **Unrecognized Debit Investigation Drawer**
   - **3-Way Reconciliation Centre, Extracted-Field Preview & Section 22 Judge Demo**
   - **Evidence Casebook, Append-Only Application Audit Timeline, Data Coverage & Guardrails**
   - **Transactions Explorer with Raw Statement Descriptor Search History**
+  - **Smart CSV Statement Mapping Wizard & Mandate Registry Import**
   - **Neo4j Commitment Map & Live Cypher Inspector**
   - **Sarvam Bhasha Explainer & Contextual Financial Q&A**
   - **Two-Layer Cancellation Centre (Independent Layer A & Layer B Lifecycles)**
@@ -74,7 +78,7 @@ Ordinary consumers face opaque bank statement descriptors (`RZP*STREAMBOX`, `SI-
    npm run dev
    # or: npm start
    ```
-3. Run automated unit & adversarial tests (36 tests across `src/utils/searchHistory.test.ts` and `src/engine/debitlensEngine.test.ts`, including ground-truth evaluation and all 9 three-way reconciliation outcomes):
+3. Run automated unit, financial integrity & adversarial tests (52 tests across `src/engine/debitlensEngine.test.ts` and `src/utils/searchHistory.test.ts`):
    ```bash
    npm test
    ```
@@ -85,6 +89,12 @@ Ordinary consumers face opaque bank statement descriptors (`RZP*STREAMBOX`, `SI-
    ```
 
 ---
+
+## 5. Prototype Architecture vs Production Deployment Boundaries
+
+- **Single-User Local Persistence Prototype:** Application state is persisted locally in `data/persistent-store.json` using atomic write-to-temp-plus-rename (`fs.renameSync`) and serialized through an in-memory mutation queue (`safeMutateState`) with automatic state snapshot rollback on write failure.
+- **Production Multi-User Evolution:** In a multi-tenant production deployment, `data/persistent-store.json` would be replaced by per-tenant encrypted PostgreSQL / Cloud SQL transactional storage with RBAC authentication, Account Aggregator (AA) / NPCI UPI AutoPay API webhooks, and hardware-backed KMS audit log signing.
+- **Regulatory Scope:** DebitLens is an informational consumer financial intelligence and evidence-preparation tool; it does not execute payments, revoke bank mandates directly, or provide formal legal advice.
 
 ## 5. Documentation Index (`/docs`)
 

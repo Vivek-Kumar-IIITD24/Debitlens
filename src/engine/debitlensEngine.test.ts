@@ -1744,17 +1744,19 @@ test('Phase 4 Usability: Smart Bank Statement CSV Mapping Wizard', () => {
   assert.ok(preview.headers.includes('Narration'));
   assert.ok(preview.headers.includes('Withdrawal Amt'));
 
-  // 2 debits (Netflix 649, Spotify 119) and 1 credit (Salary 85000 skipped)
-  assert.equal(preview.validRowsCount, 2);
+  // 2 debits (Netflix 649, Spotify 119) and 1 credit (Salary 85000 valid with CREDIT direction)
+  assert.equal(preview.validRowsCount, 3);
   const netflixRow = preview.previewRows.find((r) => r.mappedRow?.raw_description.includes('NETFLIX'));
   assert.ok(netflixRow);
   assert.equal(netflixRow.mappedRow?.amount, '649');
   assert.equal(netflixRow.mappedRow?.transaction_date, '2026-10-05');
+  assert.equal(netflixRow.direction, 'DEBIT');
 
   const salaryRow = preview.previewRows.find((r) => r.rowNumber === 3);
   assert.ok(salaryRow);
-  assert.equal(salaryRow.isValid, false);
-  assert.ok(salaryRow.validationError?.includes('Credit/Deposit row'));
+  assert.equal(salaryRow.isValid, true);
+  assert.equal(salaryRow.direction, 'CREDIT');
+  assert.equal(salaryRow.mappedRow?.amount, '85000');
 });
 
 // ----------------------------------------------------------------------------

@@ -23,6 +23,7 @@ import {
   ReviewQueueCategory,
 } from '../../types/debitlens';
 import { apiClient } from '../../services/apiClient';
+import { formatDateIN } from '../../utils/currency';
 
 interface ReviewAndResolveViewProps {
   onSelectCommitment?: (commitmentId: string) => void;
@@ -297,11 +298,21 @@ export const ReviewAndResolveView: React.FC<ReviewAndResolveViewProps> = ({
       ) : filteredItems.length === 0 ? (
         <div className="p-16 text-center bg-white rounded-2xl border border-slate-200 shadow-xs">
           <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-          <h3 className="text-lg font-bold text-slate-900">All clear!</h3>
-          <p className="text-sm text-slate-500 max-w-md mx-auto mt-1">
-            No items in the review queue match your current filter settings. All recurring debits,
-            mandates, and statements are reconciled.
-          </p>
+          {items.length > 0 ? (
+            <>
+              <h3 className="text-lg font-bold text-slate-900">No items match the selected filters.</h3>
+              <p className="text-sm text-slate-500 max-w-md mx-auto mt-1">
+                {items.length} review item(s) exist in the queue, but none match your active status, priority, or category filter settings.
+              </p>
+            </>
+          ) : (
+            <>
+              <h3 className="text-lg font-bold text-slate-900">All clear!</h3>
+              <p className="text-sm text-slate-500 max-w-md mx-auto mt-1">
+                No open review items remain in the queue. All recurring debits, mandates, and statements are currently reviewed.
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
@@ -324,11 +335,9 @@ export const ReviewAndResolveView: React.FC<ReviewAndResolveViewProps> = ({
                     {(() => {
                       const raw = (item as any).detectedAt || item.eventDate || item.createdAt;
                       if (!raw) return null;
-                      const d = new Date(raw);
-                      const formatted = isNaN(d.getTime()) ? raw : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
                       return (
                         <span className="text-xs text-slate-400 font-mono">
-                          {formatted}
+                          {formatDateIN(raw)}
                         </span>
                       );
                     })()}
@@ -376,6 +385,15 @@ export const ReviewAndResolveView: React.FC<ReviewAndResolveViewProps> = ({
                       >
                         <Eye className="w-3.5 h-3.5" />
                         Investigate Debit
+                      </button>
+                    )}
+
+                    {item.status === 'OPEN' && (
+                      <button
+                        onClick={() => handleUpdateStatus(item.id, 'IN_REVIEW')}
+                        className="px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors"
+                      >
+                        Mark Reviewed
                       </button>
                     )}
 

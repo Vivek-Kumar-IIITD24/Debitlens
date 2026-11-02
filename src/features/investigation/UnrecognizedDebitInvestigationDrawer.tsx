@@ -23,7 +23,7 @@ import {
   LanguageCode,
 } from '../../types/debitlens';
 import { apiClient } from '../../services/apiClient';
-import { formatINR, formatDateIN } from '../../utils/currency';
+import { formatINR, formatDateIN, formatDateTimeIN } from '../../utils/currency';
 
 interface UnrecognizedDebitInvestigationDrawerProps {
   transaction: TransactionRecord | null;
@@ -236,7 +236,9 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
                 <h4 className="text-sm font-bold text-indigo-950">System Assessment</h4>
                 <p className="text-xs text-indigo-800 mt-1 leading-relaxed">
                   {currentCase?.notes ||
-                    'This transaction was captured through an intermediary payment gateway. The billing entity name is truncated in bank records, leaving it isolated from known subscriptions.'}
+                    (transaction.processorName || transaction.isPaymentProcessorIsolated
+                      ? 'This transaction was captured through an intermediary payment gateway. The billing entity name is truncated in bank records, leaving it isolated from known subscriptions.'
+                      : 'Payment processor not identified from the available transaction details. The raw narration could not be linked to a known recurring commitment.')}
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2 text-xs">
                   <span className="px-2.5 py-1 bg-white/80 rounded border border-indigo-200 text-indigo-900 font-medium">
@@ -380,7 +382,7 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
                   3
                 </span>
                 <p>
-                  <strong>Prompt Bank Notification:</strong> Under RBI customer protection guidelines, notify your issuing bank promptly if this transaction is unauthorised to restrict your financial liability.
+                  <strong>Prompt Bank Notification:</strong> Report suspected unauthorised electronic transactions to your bank promptly. RBI customer protection rules depend on transaction type, customer negligence, and reporting time. Verify current procedure with your bank.
                 </p>
               </div>
             </div>
@@ -435,7 +437,7 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
                       <span className="font-semibold text-slate-900">{act.actionType}</span>:{' '}
                       <span>{act.notes}</span>
                       <span className="text-[10px] text-slate-400 block mt-0.5">
-                        {new Date(act.takenAt).toLocaleString('en-IN')}
+                        {formatDateTimeIN(act.takenAt)}
                       </span>
                     </div>
                   </div>

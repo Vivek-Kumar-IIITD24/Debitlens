@@ -988,7 +988,7 @@ export interface CommitmentPassport {
     serviceName: string;
     merchantName: string;
     merchantId?: string;
-    legalEntityName?: string;
+    legalEntityName?: string | null;
     category?: string;
     supportContact?: string | null;
     grievanceOfficer?: string | null;
@@ -1025,7 +1025,7 @@ export interface CommitmentPassport {
     totalSpent: number;
     firstDebitDate?: string | null;
     latestDebitDate?: string | null;
-    averageDebitAmount?: number;
+    averageDebitAmount?: number | null;
     cadence?: string;
   };
   sectionE_Reconciliation: {

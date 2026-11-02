@@ -239,8 +239,8 @@ export function restoreStateSnapshot(snapshot: PersistentAppStore) {
   customCasebookEntries = snapshot.customCasebookEntries;
   auditEventsStore = snapshot.auditEvents;
   guardrailsStore = snapshot.guardrails;
-  investigationCasesStore = snapshot.investigationCases;
-  reviewQueueStatusOverrides = snapshot.reviewQueueStatusOverrides;
+  investigationCasesStore = snapshot.investigationCases || [];
+  reviewQueueStatusOverrides = snapshot.reviewQueueStatusOverrides || {};
 }
 
 export async function safeMutateState<T>(
@@ -2821,6 +2821,22 @@ app.post('/api/investigations/:id/action', async (req, res) => {
     notes?: string;
     targetStatus?: UnrecognizedDebitCaseStatus;
   };
+  if (!actionType || typeof actionType !== 'string' || !actionType.trim()) {
+    res.status(400).json({ error: 'actionType is required.' });
+    return;
+  }
+  const ALLOWED_CASE_STATUSES: UnrecognizedDebitCaseStatus[] = [
+    'OPEN',
+    'UNDER_REVIEW',
+    'NEEDS_USER_INPUT',
+    'IDENTIFIED',
+    'UNRESOLVED',
+    'CLOSED',
+  ];
+  if (targetStatus && !ALLOWED_CASE_STATUSES.includes(targetStatus)) {
+    res.status(400).json({ error: `Invalid targetStatus "${targetStatus}".` });
+    return;
+  }
   const caseItem = investigationCasesStore.find((c) => c.id === id);
   if (!caseItem) {
     res.status(404).json({ error: 'Investigation case not found' });
@@ -2838,9 +2854,9 @@ app.post('/api/investigations/:id/action', async (req, res) => {
   }
   caseItem.actionsTaken.push({
     actionId: `ACT-${Date.now()}`,
-    actionType,
+    actionType: actionType.trim(),
     takenAt: new Date().toISOString(),
-    notes: notes || `Action ${actionType} recorded by user.`,
+    notes: notes || `Action ${actionType.trim()} recorded by user.`,
     actor: 'USER',
   });
   caseItem.updatedAt = new Date().toISOString();
@@ -2848,7 +2864,7 @@ app.post('/api/investigations/:id/action', async (req, res) => {
   recordAuditEvent({
     commitmentId: null,
     eventType: 'MERCHANT_CORRECTION',
-    summary: `Investigation ${caseItem.id} updated with action ${actionType} (Status: ${caseItem.status}).`,
+    summary: `Investigation ${caseItem.id} updated with action ${actionType.trim()} (Status: ${caseItem.status}).`,
     previousState: prevState,
     newState: caseItem.status,
     actor: 'USER_ACTION',
@@ -2860,9 +2876,9 @@ app.post('/api/investigations/:id/action', async (req, res) => {
 
 app.post('/api/investigations/:id/confirm-merchant', async (req, res) => {
   const id = req.params.id;
-  const { merchantId, rawDescription } = req.body as {
+  const { merchantId } = req.body as {
     merchantId: string;
-    rawDescription: string;
+    rawDescription?: string;
   };
   const caseItem = investigationCasesStore.find((c) => c.id === id);
   if (!caseItem) {
@@ -2880,7 +2896,20 @@ app.post('/api/investigations/:id/confirm-merchant', async (req, res) => {
     res.status(400).json({ error: `Invalid merchantId "${merchantId}": not found in catalogue.` });
     return;
   }
-  userMerchantOverrides[rawDescription] = merchantId;
+  // Block processor-only candidates from being directly confirmed without independent evidence
+  const matchingCandidate = caseItem.candidateMerchants?.find(
+    (c) => (c.merchantId || c.candidateMerchantId) === merchantId
+  );
+  if (matchingCandidate && matchingCandidate.candidateType === 'PROCESSOR_RELATIONSHIP') {
+    res.status(400).json({
+      error:
+        'Processor-only contextual relationships cannot be directly confirmed as merchant matches without independent receipt or descriptor evidence.',
+    });
+    return;
+  }
+  // Always use the canonical stored transaction descriptor so client cannot overwrite arbitrary descriptors
+  const canonicalDescriptor = txn.rawDescription;
+  userMerchantOverrides[canonicalDescriptor] = merchantId;
   caseItem.resolvedMerchantId = merchantId;
   (caseItem as any).confirmedMerchantId = merchantId;
   caseItem.status = 'IDENTIFIED';
@@ -2892,14 +2921,14 @@ app.post('/api/investigations/:id/confirm-merchant', async (req, res) => {
     actionId: `ACT-${Date.now()}`,
     actionType: 'CONFIRM_MERCHANT',
     takenAt: new Date().toISOString(),
-    notes: `Confirmed descriptor "${rawDescription}" matches merchant ${merch.canonicalName} (${merchantId}).`,
+    notes: `Confirmed descriptor "${canonicalDescriptor}" matches merchant ${merch.canonicalName} (${merchantId}).`,
     actor: 'USER',
   });
 
   recordAuditEvent({
     commitmentId: null,
     eventType: 'IDENTITY_MATCH_CONFIRMED',
-    summary: `Investigation ${caseItem.id}: Confirmed descriptor "${rawDescription}" maps to ${merch.canonicalName} (${merchantId}).`,
+    summary: `Investigation ${caseItem.id}: Confirmed descriptor "${canonicalDescriptor}" maps to ${merch.canonicalName} (${merchantId}).`,
     previousState: 'UNRESOLVED',
     newState: merchantId,
     actor: 'USER_ACTION',
@@ -2934,8 +2963,15 @@ app.get('/api/review-queue', (_req, res) => {
 app.post('/api/review-queue/:id/status', async (req, res) => {
   const id = req.params.id;
   const { status } = req.body as { status: ReviewQueueStatus };
-  if (!status) {
-    res.status(400).json({ error: 'status is required' });
+  const ALLOWED_QUEUE_STATUSES: ReviewQueueStatus[] = [
+    'OPEN',
+    'IN_REVIEW',
+    'WAITING_FOR_USER',
+    'RESOLVED',
+    'DISMISSED',
+  ];
+  if (!status || !ALLOWED_QUEUE_STATUSES.includes(status)) {
+    res.status(400).json({ error: 'Valid ReviewQueueStatus is required.' });
     return;
   }
   reviewQueueStatusOverrides[id] = status;

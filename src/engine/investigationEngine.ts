@@ -171,10 +171,10 @@ export function generateMerchantCandidates(
           serviceName: m.serviceName,
           candidateType: 'PROCESSOR_RELATIONSHIP',
           isProcessorOnly: true,
-          matchReason: `Known client of payment processor ${detectedProc.name}.`,
+          matchReason: `Other merchants may use this processor (${detectedProc.name}); no direct link to this transaction is established.`,
           evidenceSource: `PAYMENT_PROCESSOR [${detectedProc.name}]`,
           confidenceScore: 40,
-          confidenceExplanation: `Possible intermediary match: ${m.canonicalName} frequently processes via ${detectedProc.name}, but this does not confirm the debit without additional evidence.`,
+          confidenceExplanation: `Other merchants may use this processor; no direct link to this transaction is established.`,
         });
       }
     }
@@ -242,7 +242,7 @@ export function buildUnrecognizedDebitCase(params: {
     guidanceChecklist: [
       `Search Gmail/SMS for payments of ₹${transaction.amount} around ${transaction.transactionDate}.`,
       'Check banking/UPI app for active e-mandate or UPI AutoPay with matching ceiling amounts.',
-      'Under RBI customer protection guidelines, notify your bank promptly if this transaction is unauthorised to restrict your financial liability.',
+      'Report any suspected unauthorised transaction to your bank immediately through its official channels. Customer liability and reporting timelines depend on the cause of the transaction and the applicable RBI directions and bank policy. Keep your complaint acknowledgement or reference number.',
     ],
     actionsTaken: (existingCase as any).actionsTaken || [],
     createdAt: existingCase.createdAt || now,
@@ -422,6 +422,10 @@ export function buildReviewQueue(params: {
     const cmt = commitments.find((c) => c.id === alt.commitmentId);
     const alertEvidenceCount = (alt.transactionId ? 1 : 0) + (alt.commitmentId ? 1 : 0);
 
+    const rawCreatedAt = alt.createdAt || new Date().toISOString();
+    const cleanDateOnly = rawCreatedAt.includes('T') ? rawCreatedAt.slice(0, 10) : rawCreatedAt;
+    const cleanIsoTimestamp = rawCreatedAt.includes('T') ? rawCreatedAt : `${rawCreatedAt}T00:00:00Z`;
+
     items.push({
       id: `RQ-ALT-${alt.id}`,
       dedupKey,
@@ -436,13 +440,13 @@ export function buildReviewQueue(params: {
       merchantName: cmt?.merchantName || 'Merchant',
       amount: alt.detectedValue ? parseStrictAmount(alt.detectedValue.replace(/[^\d.]/g, '')) : null,
       amountMinor: null,
-      eventDate: alt.createdAt,
+      eventDate: cleanDateOnly,
       whyItAppeared: alt.description,
       supportingEvidenceCount: alertEvidenceCount,
       recommendedAction: alt.suggestedAction,
       actionType,
-      createdAt: `${alt.createdAt}T00:00:00Z`,
-      updatedAt: `${alt.createdAt}T00:00:00Z`,
+      createdAt: cleanIsoTimestamp,
+      updatedAt: cleanIsoTimestamp,
     });
   }
 
@@ -593,7 +597,11 @@ export function generateCommitmentPassport(params: {
     resolvedProvenance = 'USER_CONFIRMED';
   } else if (commitment.verificationStatus === 'CONFIRMED' || commitment.relationshipStatus === 'CONFIRMED') {
     resolvedProvenance = 'CONFIRMED';
-  } else if (commitment.relationshipStatus === 'SYSTEM_INFERRED' || commitment.confidenceLabel === 'HIGH') {
+  } else if (
+    commitment.relationshipStatus === 'INFERRED' ||
+    (commitment.relationshipStatus as string) === 'SYSTEM_INFERRED' ||
+    commitment.confidenceLabel === 'HIGH'
+  ) {
     resolvedProvenance = 'SYSTEM_INFERRED';
   } else if (commitment.confidenceLabel === 'MEDIUM') {
     resolvedProvenance = 'SUGGESTED';
@@ -1154,9 +1162,14 @@ export function parseCsvDate(
       }
     }
   } else {
-    // AUTO format
+    // AUTO format — only accept unambiguous ISO or unambiguous DD/MM or MM/DD where day > 12 or day === month
     if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-      return trimmed;
+      const [y, m, d] = trimmed.split('-').map(Number);
+      const testDate = new Date(Date.UTC(y, m - 1, d));
+      if (testDate.getUTCDate() === d && testDate.getUTCMonth() === m - 1) {
+        return trimmed;
+      }
+      return null;
     }
     const slashParts = trimmed.split(/[-/.]/);
     if (slashParts.length === 3) {
@@ -1164,17 +1177,27 @@ export function parseCsvDate(
       const p1 = parseInt(slashParts[1], 10);
       const p2 = slashParts[2].length === 2 ? `20${slashParts[2]}` : slashParts[2];
       const y = parseInt(p2, 10);
-      if (p0 > 12 && p0 <= 31 && p1 <= 12) {
-        return `${y}-${String(p1).padStart(2, '0')}-${String(p0).padStart(2, '0')}`;
-      } else if (p1 > 12 && p1 <= 31 && p0 <= 12) {
-        return `${y}-${String(p0).padStart(2, '0')}-${String(p1).padStart(2, '0')}`;
-      } else if (p0 <= 31 && p1 <= 12) {
-        return `${y}-${String(p1).padStart(2, '0')}-${String(p0).padStart(2, '0')}`;
+      if (y >= 1970 && y <= 2100) {
+        if (p0 > 12 && p0 <= 31 && p1 >= 1 && p1 <= 12) {
+          const testDate = new Date(Date.UTC(y, p1 - 1, p0));
+          if (testDate.getUTCDate() === p0 && testDate.getUTCMonth() === p1 - 1) {
+            return `${y}-${String(p1).padStart(2, '0')}-${String(p0).padStart(2, '0')}`;
+          }
+        } else if (p1 > 12 && p1 <= 31 && p0 >= 1 && p0 <= 12) {
+          const testDate = new Date(Date.UTC(y, p0 - 1, p1));
+          if (testDate.getUTCDate() === p1 && testDate.getUTCMonth() === p0 - 1) {
+            return `${y}-${String(p0).padStart(2, '0')}-${String(p1).padStart(2, '0')}`;
+          }
+        } else if (p0 === p1 && p0 >= 1 && p0 <= 12) {
+          const testDate = new Date(Date.UTC(y, p1 - 1, p0));
+          if (testDate.getUTCDate() === p0 && testDate.getUTCMonth() === p1 - 1) {
+            return `${y}-${String(p1).padStart(2, '0')}-${String(p0).padStart(2, '0')}`;
+          }
+        } else {
+          // Ambiguous date (e.g. 05/06/2026 under AUTO format) — reject so user selects explicit format
+          return null;
+        }
       }
-    }
-    const ms = Date.parse(trimmed);
-    if (!isNaN(ms)) {
-      return new Date(ms).toISOString().slice(0, 10);
     }
   }
   return null;
@@ -1323,6 +1346,8 @@ export function previewCsvMapping(
   const creditIdx = creditCol ? headers.indexOf(creditCol) : -1;
   const signedIdx = signedCol ? headers.indexOf(signedCol) : -1;
   const refIdx = config.referenceColumn ? headers.indexOf(config.referenceColumn) : -1;
+  const acctIdx = config.accountColumn ? headers.indexOf(config.accountColumn) : -1;
+  const currIdx = config.currencyColumn ? headers.indexOf(config.currencyColumn) : -1;
 
   const previewRows: CsvMappingPreviewRow[] = [];
   const validationErrors: { row: number; reason: string }[] = [];
@@ -1338,6 +1363,8 @@ export function previewCsvMapping(
     const rawDate = dateIdx >= 0 ? cells[dateIdx] || '' : '';
     const rawDesc = descIdx >= 0 ? cells[descIdx] || '' : '';
     const rawRef = refIdx >= 0 ? cells[refIdx] || '' : '';
+    const acctAlias = (acctIdx >= 0 && cells[acctIdx]) ? cells[acctIdx] : config.defaultAccountAlias || 'PRIMARY-ACCOUNT';
+    const currency = (currIdx >= 0 && cells[currIdx]) ? cells[currIdx].trim().toUpperCase() : 'INR';
 
     let interpretedAmount: number | null = null;
     let direction: 'DEBIT' | 'CREDIT' = 'DEBIT';
@@ -1395,10 +1422,12 @@ export function previewCsvMapping(
       rejectReason = `Invalid date "${rawDate}" under format ${config.dateFormat}`;
     }
 
-    const dedupKey = `${parsedDate}_${rawDesc}_${interpretedAmount}_${direction}`;
+    const dedupKey = `${acctAlias}_${currency}_${parsedDate}_${rawDesc}_${interpretedAmount}_${direction}`;
     if (isValid) {
       if (seenKeys.has(dedupKey)) {
         duplicateRowCount++;
+        isValid = false;
+        rejectReason = 'Duplicate row within file';
       } else {
         seenKeys.add(dedupKey);
         validRowCount++;
@@ -1413,9 +1442,9 @@ export function previewCsvMapping(
           transaction_date: parsedDate,
           raw_description: rawDesc,
           amount: String(interpretedAmount),
-          currency: 'INR',
+          currency,
           direction,
-          account_alias: config.defaultAccountAlias || 'PRIMARY-ACCOUNT',
+          account_alias: acctAlias,
           payment_rail: config.defaultRail || 'UNKNOWN',
           external_reference: rawRef || `MAP-${rowNum}`,
         }
