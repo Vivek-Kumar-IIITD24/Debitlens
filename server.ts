@@ -270,30 +270,6 @@ export function computeCanonicalTxnFingerprint(row: RawCsvRow): string {
 
 let mutationQueue = Promise.resolve();
 
-export async function safeMutateState<T>(
-  mutator: () => Promise<T> | T
-): Promise<{ success: boolean; result?: T; error?: string }> {
-  return new Promise((resolve) => {
-    mutationQueue = mutationQueue.then(async () => {
-      const snapshot = snapshotState();
-      try {
-        const result = await mutator();
-        const saveRes = savePersistentStore();
-        if (!saveRes.saved) {
-          restoreStateSnapshot(snapshot);
-          resolve({ success: false, error: saveRes.error || 'Failed to save persistent store.' });
-          return;
-        }
-        resolve({ success: true, result });
-      } catch (err) {
-        restoreStateSnapshot(snapshot);
-        const message = err instanceof Error ? err.message : String(err);
-        resolve({ success: false, error: message });
-      }
-    });
-  });
-}
-
 export type RouteMutationResult<T = any> =
   | { status?: number; body: T; syncGraph?: boolean }
   | { errorStatus: number; errorBody: { error: string; [key: string]: any } };
@@ -303,7 +279,7 @@ export type RouteMutationResult<T = any> =
  * rolls back completely on validation error, runtime throw, or disk write failure,
  * and triggers graph projection ONLY after canonical JSON commit succeeds.
  */
-async function executeSerializedMutation<T>(
+export async function executeSerializedMutation<T>(
   res: express.Response,
   mutator: () => Promise<RouteMutationResult<T>> | RouteMutationResult<T>
 ): Promise<void> {
@@ -1455,24 +1431,60 @@ app.get('/api/dashboard/summary', (_req, res) => {
   const activeCommitments = state.commitments.filter(
     (c) => c.status !== 'CANCELLED_USER_CONFIRMED' && c.verificationStatus !== 'REJECTED'
   );
-  const monthlyRecurringSpend = Number(
-    activeCommitments.reduce((sum, c) => sum + c.monthlyEquivalent, 0).toFixed(2)
-  );
-  const annualCommitmentTotal = Number(
-    activeCommitments.reduce((sum, c) => sum + c.annualisedAmount, 0).toFixed(2)
-  );
-  const discretionaryAnnual = Number(
-    activeCommitments
-      .filter((c) => !c.isFinancialObligation)
-      .reduce((sum, c) => sum + c.annualisedAmount, 0)
-      .toFixed(2)
-  );
-  const obligationAnnual = Number(
-    activeCommitments
-      .filter((c) => c.isFinancialObligation)
-      .reduce((sum, c) => sum + c.annualisedAmount, 0)
-      .toFixed(2)
-  );
+
+  const primaryCurrency = 'INR';
+  const totalsByCurrency: Record<
+    string,
+    {
+      currency: string;
+      monthlyRecurringSpend: number;
+      annualCommitmentTotal: number;
+      discretionaryAnnual: number;
+      obligationAnnual: number;
+      activeCommitmentsCount: number;
+    }
+  > = {};
+
+  for (const c of activeCommitments) {
+    const curr = (c.currency || 'INR').trim().toUpperCase();
+    if (!totalsByCurrency[curr]) {
+      totalsByCurrency[curr] = {
+        currency: curr,
+        monthlyRecurringSpend: 0,
+        annualCommitmentTotal: 0,
+        discretionaryAnnual: 0,
+        obligationAnnual: 0,
+        activeCommitmentsCount: 0,
+      };
+    }
+    const bucket = totalsByCurrency[curr];
+    bucket.monthlyRecurringSpend = Number(
+      (bucket.monthlyRecurringSpend + c.monthlyEquivalent).toFixed(2)
+    );
+    bucket.annualCommitmentTotal = Number(
+      (bucket.annualCommitmentTotal + c.annualisedAmount).toFixed(2)
+    );
+    if (c.isFinancialObligation) {
+      bucket.obligationAnnual = Number(
+        (bucket.obligationAnnual + c.annualisedAmount).toFixed(2)
+      );
+    } else {
+      bucket.discretionaryAnnual = Number(
+        (bucket.discretionaryAnnual + c.annualisedAmount).toFixed(2)
+      );
+    }
+    bucket.activeCommitmentsCount += 1;
+  }
+
+  const primaryBucket = totalsByCurrency[primaryCurrency] || {
+    currency: primaryCurrency,
+    monthlyRecurringSpend: 0,
+    annualCommitmentTotal: 0,
+    discretionaryAnnual: 0,
+    obligationAnnual: 0,
+    activeCommitmentsCount: 0,
+  };
+
   const priceChangeAlertsCount = state.alerts.filter(
     (a) => a.alertType === 'PRICE_INCREASE' && a.status === 'OPEN'
   ).length;
@@ -1488,11 +1500,17 @@ app.get('/api/dashboard/summary', (_req, res) => {
         c.entityClass === 'RECURRING_CANDIDATE'
     ).length + unresolvedTxnsCount;
 
+  const currencySummaries = Object.values(totalsByCurrency);
+
   res.json({
-    monthlyRecurringSpend,
-    annualCommitmentTotal,
-    discretionaryAnnual,
-    obligationAnnual,
+    primaryCurrency,
+    monthlyRecurringSpend: primaryBucket.monthlyRecurringSpend,
+    annualCommitmentTotal: primaryBucket.annualCommitmentTotal,
+    discretionaryAnnual: primaryBucket.discretionaryAnnual,
+    obligationAnnual: primaryBucket.obligationAnnual,
+    totalsByCurrency,
+    currencySummaries,
+    isMultiCurrency: currencySummaries.length > 1,
     activeCommitmentsCount: activeCommitments.length,
     totalCommitmentsCount: state.commitments.length,
     upcomingPaymentsCount: activeCommitments.filter((c) => Boolean(c.nextExpectedDate)).length,
@@ -1503,12 +1521,18 @@ app.get('/api/dashboard/summary', (_req, res) => {
   });
 });
 
-app.get('/api/dashboard/monthly-trend', (_req, res) => {
+app.get('/api/dashboard/monthly-trend', (req, res) => {
   const state = computeCurrentState();
+  const targetCurrency = String(req.query.currency || 'INR')
+    .trim()
+    .toUpperCase();
   const months = ['2026-06', '2026-07', '2026-08', '2026-09', '2026-10'];
   const trend = months.map((m) => {
     const monthTxns = state.transactions.filter(
-      (t) => t.direction === 'DEBIT' && t.transactionDate.startsWith(m)
+      (t) =>
+        t.direction === 'DEBIT' &&
+        t.transactionDate.startsWith(m) &&
+        (t.currency || 'INR').trim().toUpperCase() === targetCurrency
     );
     const subscriptions = monthTxns
       .filter(
@@ -1529,6 +1553,7 @@ app.get('/api/dashboard/monthly-trend', (_req, res) => {
       .reduce((s, t) => s + t.amount, 0);
     return {
       month: m,
+      currency: targetCurrency,
       subscriptions: Number(subscriptions.toFixed(2)),
       obligations: Number(obligations.toFixed(2)),
       unresolved: Number(unresolved.toFixed(2)),
@@ -2476,17 +2501,30 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
     description,
     sourceReference,
     amountMinor = null,
+    evidenceDate = null,
   } = (req.body || {}) as {
     category?: EvidenceCasebookEntry['category'];
     title: string;
     description: string;
     sourceReference: string;
     amountMinor?: number | null;
+    evidenceDate?: string | null;
   };
 
   if (!title || !description || !sourceReference) {
     res.status(400).json({ error: 'title, description, and sourceReference are required.' });
     return;
+  }
+
+  let parsedEvidenceDate: string | null = null;
+  if (evidenceDate !== null && evidenceDate !== undefined && String(evidenceDate).trim() !== '') {
+    parsedEvidenceDate = normalizeDateString(String(evidenceDate));
+    if (!parsedEvidenceDate) {
+      res.status(400).json({
+        error: `Invalid evidenceDate "${evidenceDate}". Provide a valid YYYY-MM-DD calendar date or omit it.`,
+      });
+      return;
+    }
   }
 
   await executeSerializedMutation(res, () => {
@@ -2502,7 +2540,10 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
     const entry: EvidenceCasebookEntry = {
       id: `CB-USER-${Date.now()}`,
       commitmentId: id,
-      timestamp: new Date().toISOString(),
+      timestamp: parsedEvidenceDate
+        ? `${parsedEvidenceDate}T10:00:00Z`
+        : new Date().toISOString(),
+      eventDate: parsedEvidenceDate,
       category,
       title,
       description,
@@ -2519,7 +2560,9 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
     recordAuditEvent({
       commitmentId: id,
       eventType: 'EVIDENCE_ATTACHED',
-      summary: `Attached evidence record "${title}" (Ref: ${sourceReference}).`,
+      summary: `Attached evidence record "${title}" (Ref: ${sourceReference}${
+        parsedEvidenceDate ? `, Date: ${parsedEvidenceDate}` : ''
+      }).`,
       previousState: null,
       newState: sourceReference,
     });
@@ -2685,6 +2728,7 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
     userCommitmentOverrides[cmtId] = {
       ...currentOverride,
       serviceLifecycleStatus,
+      ...(parsedEvidDate !== null ? { serviceCancelledAtOverride: parsedEvidDate } : {}),
       evidenceRecords: updatedEvid,
     };
 
@@ -2767,6 +2811,7 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
     userCommitmentOverrides[cmtId] = {
       ...currentOverride,
       mandateLifecycleStatus,
+      ...(parsedEvidDate !== null ? { mandateRevokedAtOverride: parsedEvidDate } : {}),
       evidenceRecords: updatedEvid,
     };
 
@@ -2817,21 +2862,49 @@ app.get('/api/cancellations/:id/monitoring', (req, res) => {
   const postCancelTxns = state.transactions.filter((t) =>
     sess.postCancellationTransactionIds.includes(t.id)
   );
+  const commitmentTransactions = state.transactions
+    .filter((t) => t.commitmentId === sess.commitmentId && t.direction === 'DEBIT')
+    .sort((a, b) => Date.parse(a.transactionDate) - Date.parse(b.transactionDate));
+
+  const srvStatus = cmt?.serviceLifecycleStatus || 'ACTIVE';
+  const mndStatus = cmt?.mandateLifecycleStatus || 'ACTIVE';
+  const hasCancelOrRevokeReported =
+    srvStatus === 'CANCELLATION_REPORTED_BY_USER' ||
+    srvStatus === 'CANCELLATION_EVIDENCE_ATTACHED' ||
+    mndStatus === 'REVOCATION_REPORTED_BY_USER' ||
+    mndStatus === 'REVOCATION_EVIDENCE_ATTACHED';
+  const effectiveCancelDate = sess.serviceCancelledAt || sess.paymentAuthorisationRevokedAt || null;
+
+  let monitoringStatus: string;
+  let monitoringExplanation: string;
+  if (postCancelTxns.length > 0) {
+    monitoringStatus = 'POST_CANCELLATION_DEBIT_DETECTED';
+    monitoringExplanation = `${postCancelTxns.length} debit(s) observed after recorded cancellation/revocation date (${effectiveCancelDate}).`;
+  } else if (sess.serviceCancelledAt && sess.paymentAuthorisationRevokedAt) {
+    monitoringStatus = 'MONITORING_ACTIVE_CLEAN';
+    monitoringExplanation = `Zero debits observed after service cancellation (${sess.serviceCancelledAt}) and mandate revocation (${sess.paymentAuthorisationRevokedAt}).`;
+  } else if (hasCancelOrRevokeReported && !effectiveCancelDate) {
+    monitoringStatus = 'EFFECTIVE_DATE_UNAVAILABLE';
+    monitoringExplanation =
+      'Cancellation or mandate revocation reported, but effective cancellation/revocation date is unavailable (null); cannot determine whether observed debits occurred before or after cancellation.';
+  } else {
+    monitoringStatus = 'AWAITING_BOTH_LAYERS';
+    monitoringExplanation =
+      'Awaiting verified effective dates for both Layer A (Merchant Service Cancellation) and Layer B (Payment Mandate Revocation).';
+  }
+
   res.json({
     sessionId: sess.id,
     commitmentId: sess.commitmentId,
-    serviceLifecycleStatus: cmt?.serviceLifecycleStatus || 'ACTIVE',
-    mandateLifecycleStatus: cmt?.mandateLifecycleStatus || 'ACTIVE',
+    serviceLifecycleStatus: srvStatus,
+    mandateLifecycleStatus: mndStatus,
     serviceCancelledAt: sess.serviceCancelledAt,
     paymentAuthorisationRevokedAt: sess.paymentAuthorisationRevokedAt,
     postCancellationDebitDetected: postCancelTxns.length > 0,
     postCancellationTransactions: postCancelTxns,
-    monitoringStatus:
-      postCancelTxns.length > 0
-        ? 'POST_CANCELLATION_DEBIT_DETECTED'
-        : sess.serviceCancelledAt && sess.paymentAuthorisationRevokedAt
-        ? 'MONITORING_ACTIVE_CLEAN'
-        : 'AWAITING_BOTH_LAYERS',
+    commitmentTransactions,
+    monitoringStatus,
+    monitoringExplanation,
   });
 });
 
@@ -3294,6 +3367,7 @@ app.get('/api/commitments/:id/evidence-pack', (req, res) => {
     serviceTerms,
     reconciliation: finding,
     alerts,
+    cancellationSession: session,
     casebookEntries: casebook.entries,
     auditEvents: casebook.auditEvents,
   });
@@ -3334,6 +3408,7 @@ app.get('/api/commitments/:id/evidence-pack/print', (req, res) => {
     serviceTerms,
     reconciliation: finding,
     alerts,
+    cancellationSession: session,
     casebookEntries: casebook.entries,
     auditEvents: casebook.auditEvents,
   });
@@ -3641,7 +3716,7 @@ app.post('/api/review-queue/:id/status', async (req, res) => {
     const isReopening =
       (previousStatus === 'RESOLVED' || previousStatus === 'DISMISSED') && status === 'OPEN';
     if (
-      (status === 'RESOLVED' || isReopening) &&
+      (status === 'RESOLVED' || status === 'DISMISSED' || isReopening) &&
       (!resolutionReason || !String(resolutionReason).trim())
     ) {
       return {
@@ -3649,7 +3724,7 @@ app.post('/api/review-queue/:id/status', async (req, res) => {
         errorBody: {
           error: isReopening
             ? `A non-empty resolutionReason is required when reopening a ${previousStatus} review queue item to OPEN.`
-            : 'A non-empty resolutionReason is required when marking a review queue item as RESOLVED.',
+            : `A non-empty resolutionReason is required when marking a review queue item as ${status}.`,
         },
       };
     }

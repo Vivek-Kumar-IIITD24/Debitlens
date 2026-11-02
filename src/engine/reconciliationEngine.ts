@@ -1600,7 +1600,9 @@ export function buildCommitmentEvidenceCasebook(params: {
       entries.push({
         id: `CB-CANC-${ev.id}`,
         commitmentId: commitment.id,
-        timestamp: ev.createdAt || `${ev.evidenceDate}T14:00:00Z`,
+        timestamp:
+          ev.createdAt || (ev.evidenceDate ? `${ev.evidenceDate}T14:00:00Z` : new Date().toISOString()),
+        eventDate: ev.evidenceDate ?? null,
         category:
           ev.evidenceType === 'MANDATE_REVOCATION'
             ? 'MANDATE_REVOCATION_EVENT'
@@ -1609,7 +1611,10 @@ export function buildCommitmentEvidenceCasebook(params: {
         description: ev.description,
         sourceReference: ev.referenceNumber,
         amountMinor: null,
+        currency: commitment.currency || 'INR',
         verificationStatus: (ev.verificationStatus as any) || 'EVIDENCE_ATTACHED',
+        evidenceRecordLifecycle: ev.evidenceRecordLifecycle || 'EVIDENCE_REFERENCE_RECORDED',
+        sourceType: ev.sourceType || 'USER_ENTERED',
         actor: 'USER_EVIDENCE_SUBMISSION',
       });
     }
@@ -1761,34 +1766,41 @@ export function deriveIndependentLifecycleStatuses(
   serviceLifecycleStatus: ServiceLifecycleStatus;
   mandateLifecycleStatus: MandateLifecycleStatus;
 } {
+  const hasServiceReceipt = session.evidence.some(
+    (e) => e.evidenceType === 'SERVICE_CONFIRMATION'
+  );
+  const hasMandateReceipt = session.evidence.some(
+    (e) => e.evidenceType === 'MANDATE_REVOCATION'
+  );
+  const hasUnresponsiveNote = session.evidence.some(
+    (e) => e.evidenceType === 'MERCHANT_UNRESPONSIVE'
+  );
+
   let serviceLifecycleStatus: ServiceLifecycleStatus = 'ACTIVE';
   if (overrideServiceStatus) {
     serviceLifecycleStatus = overrideServiceStatus;
-  } else if (session.status === 'NEEDS_MERCHANT_RESPONSE') {
+  } else if (session.status === 'NEEDS_MERCHANT_RESPONSE' || hasUnresponsiveNote) {
     serviceLifecycleStatus = 'MERCHANT_UNRESPONSIVE';
+  } else if (hasServiceReceipt) {
+    serviceLifecycleStatus = 'CANCELLATION_EVIDENCE_ATTACHED';
   } else if (session.serviceCancelledAt) {
-    const hasServiceReceipt = session.evidence.some(
-      (e) => e.evidenceType === 'SERVICE_CONFIRMATION'
-    );
-    serviceLifecycleStatus = hasServiceReceipt
-      ? 'CANCELLATION_EVIDENCE_ATTACHED'
-      : 'CANCELLATION_REPORTED_BY_USER';
-  } else if (session.status === 'SERVICE_CANCELLATION_PENDING') {
-    serviceLifecycleStatus = 'CANCELLATION_REQUESTED';
+    serviceLifecycleStatus = 'CANCELLATION_REPORTED_BY_USER';
   }
 
   let mandateLifecycleStatus: MandateLifecycleStatus = 'ACTIVE';
   if (overrideMandateStatus) {
     mandateLifecycleStatus = overrideMandateStatus;
+  } else if (hasMandateReceipt) {
+    mandateLifecycleStatus = 'REVOCATION_EVIDENCE_ATTACHED';
+  } else if (session.paymentAuthorisationRevokedAt) {
+    mandateLifecycleStatus = 'REVOCATION_REPORTED_BY_USER';
   } else if (!mandate) {
     mandateLifecycleStatus = 'MANDATE_NOT_VISIBLE_IN_IMPORTED_DATA';
-  } else if (session.paymentAuthorisationRevokedAt || mandate.mandateStatus === 'REVOKED' || mandate.mandateStatus === 'REVOCATION_REPORTED') {
-    const hasMandateReceipt = session.evidence.some(
-      (e) => e.evidenceType === 'MANDATE_REVOCATION'
-    );
-    mandateLifecycleStatus = hasMandateReceipt
-      ? 'REVOCATION_EVIDENCE_ATTACHED'
-      : 'REVOCATION_REPORTED_BY_USER';
+  } else if (
+    mandate.mandateStatus === 'REVOKED' ||
+    mandate.mandateStatus === 'REVOCATION_REPORTED'
+  ) {
+    mandateLifecycleStatus = 'REVOCATION_REPORTED_BY_USER';
   } else if (mandate.mandateStatus === 'PAUSED') {
     mandateLifecycleStatus = 'PAUSED_REPORTED_BY_USER';
   }
@@ -1839,16 +1851,24 @@ export function buildGroundedContextualQuestionResponse(params: {
     .sort((a, b) => Date.parse(a.transactionDate) - Date.parse(b.transactionDate));
   const latestTxn = cmtTxns[cmtTxns.length - 1];
 
+  const cmtCcy = reconciliation?.currency || commitment.currency || 'INR';
   const actualFormatted = formatMinorINR(
-    reconciliation?.actualTransactionAmountMinor ?? toMinorUnits(commitment.latestAmount)
+    reconciliation?.actualTransactionAmountMinor ?? toMinorUnits(commitment.latestAmount, cmtCcy),
+    cmtCcy
   );
   const expectedFormatted =
     reconciliation?.expectedServiceAmountMinor != null
-      ? formatMinorINR(reconciliation.expectedServiceAmountMinor)
-      : formatMinorINR(toMinorUnits(commitment.typicalAmount));
+      ? formatMinorINR(
+          reconciliation.expectedServiceAmountMinor,
+          reconciliation.expectedServiceCurrency || serviceTerms?.currency || cmtCcy
+        )
+      : formatMinorINR(toMinorUnits(commitment.typicalAmount, cmtCcy), cmtCcy);
   const mandateFormatted =
     reconciliation?.mandateMaxAmountMinor != null
-      ? formatMinorINR(reconciliation.mandateMaxAmountMinor)
+      ? formatMinorINR(
+          reconciliation.mandateMaxAmountMinor,
+          reconciliation.mandateCurrency || mandate?.currency || cmtCcy
+        )
       : 'Not visible in imported records';
   const mandateRef = mandate?.mandateReference || commitment.mandateRef || 'No imported mandate ref';
   const docId = serviceTerms?.id || 'No attached invoice';
@@ -1859,7 +1879,7 @@ export function buildGroundedContextualQuestionResponse(params: {
   let englishAnswer = `Grounded Financial Summary for ${commitment.serviceName} (${commitment.merchantName}): `;
 
   if (reconciliation && reconciliation.status === 'AMOUNT_DISCREPANCY') {
-    const diffFormatted = formatMinorINR(Math.abs(reconciliation.discrepancyAmountMinor || 0));
+    const diffFormatted = formatMinorINR(Math.abs(reconciliation.discrepancyAmountMinor || 0), cmtCcy);
     englishAnswer += `Your latest statement debit ${latestTxnId} on ${latestDate} was ${actualFormatted}, whereas your documented service invoice (${docId}) states ${expectedFormatted} — an amount discrepancy of +${diffFormatted}. This debit succeeded automatically because your active ${commitment.paymentRail.replace(
       /_/g,
       ' '

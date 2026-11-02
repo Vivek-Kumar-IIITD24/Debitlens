@@ -366,7 +366,7 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
                 </span>
                 <p>
                   <strong>Search receipts:</strong> Check Gmail/SMS for payments of{' '}
-                  {formatINR(transaction.amount)} on or around{' '}
+                  {formatINR(transaction.amount, transaction.currency)} on or around{' '}
                   {formatDateIN(transaction.transactionDate)}.
                 </p>
               </div>

@@ -64,7 +64,7 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
   >('SERVICE_CONFIRMATION');
   const [referenceNumber, setReferenceNumber] = useState('');
   const [description, setDescription] = useState('');
-  const [evidenceDate, setEvidenceDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [evidenceDate, setEvidenceDate] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -124,7 +124,7 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
           >
             {commitments.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.merchantName} — {c.serviceName} ({formatINR(c.latestAmount)} · {c.cancellationState.replace(/_/g, ' ')})
+                {c.merchantName} — {c.serviceName} ({formatINR(c.latestAmount, c.currency)} · {c.cancellationState.replace(/_/g, ' ')})
               </option>
             ))}
           </select>
@@ -252,7 +252,7 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
           <div className="text-sm font-mono font-bold text-teal-800 mt-1 tabular-nums">
             {activeCommitment.isFinancialObligation
               ? 'Contractual Obligation'
-              : `${formatINR(activeCommitment.annualisedAmount)}/yr`}
+              : `${formatINR(activeCommitment.annualisedAmount, activeCommitment.currency)}/yr`}
           </div>
           <div className="text-[11px] text-slate-500 mt-1">
             Last verified: {activePlaybook.lastVerifiedDate}
@@ -513,7 +513,7 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
                   <div className="flex items-center justify-between font-mono text-slate-700">
                     <span className="font-semibold text-slate-900">{ev.referenceNumber}</span>
                     <span>
-                      {ev.evidenceType.replace(/_/g, ' ')} · {ev.evidenceDate}
+                      {ev.evidenceType.replace(/_/g, ' ')} · {ev.evidenceDate || 'Date not specified'}
                     </span>
                   </div>
                   <p className="text-slate-600">{ev.description}</p>

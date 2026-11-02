@@ -35,6 +35,7 @@ import {
 import {
   toMinorUnits,
   fromMinorUnits,
+  formatCurrency,
   isValidCurrencyCode,
   normalizeCurrencyCode,
 } from '../utils/currency';
@@ -677,8 +678,11 @@ export function calculateConfidenceBreakdown(params: {
 export interface UserCommitmentStateOverride {
   lastUsedDate?: string | null;
   completedStepIds?: string[];
+  stepCompletedAt?: Record<string, string | null>;
   evidenceRecords?: CancellationSessionRecord['evidence'];
   cancelledAtOverride?: string | null;
+  serviceCancelledAtOverride?: string | null;
+  mandateRevokedAtOverride?: string | null;
   entityClass?: 'RECURRING_CANDIDATE' | 'FINANCIAL_COMMITMENT';
   verificationStatus?: 'PENDING_REVIEW' | 'CONFIRMED' | 'USER_CONFIRMED' | 'REJECTED';
   serviceLifecycleStatus?: ServiceLifecycleStatus;
@@ -974,9 +978,9 @@ export function detectCommitmentsAndAlerts(
       detectionExplanation += `Neo4j alias resolution unified multiple statement strings into one commitment history. `;
     }
     if (trialNotif) {
-      detectionExplanation += `Linked to trial notification (${trialNotif.trialStartDate} to ${trialNotif.trialEndDate}) followed by first paid debit of ₹${latestAmount} on ${latestTxn.transactionDate}.`;
+      detectionExplanation += `Linked to trial notification (${trialNotif.trialStartDate} to ${trialNotif.trialEndDate}) followed by first paid debit of ${formatCurrency(latestAmount, groupCurrency)} on ${latestTxn.transactionDate}.`;
     } else if (resumedAfterGap) {
-      detectionExplanation += `Monthly ₹${typicalAmount} pattern paused after May 2026 (${missedCyclesCount} missed cycles) and resumed in August & October 2026.`;
+      detectionExplanation += `Monthly ${formatCurrency(typicalAmount, groupCurrency)} pattern paused after May 2026 (${missedCyclesCount} missed cycles) and resumed in August & October 2026.`;
     } else if (recurrenceType === 'YEARLY') {
       detectionExplanation += `Detected annual cadence (~365 days) across ${sorted.map((s) => s.transactionDate.slice(0, 4)).join(', ')}.`;
     } else if (recurrenceType === 'IRREGULAR') {
@@ -1106,10 +1110,10 @@ export function detectCommitmentsAndAlerts(
         transactionId: latestTxn.id,
         alertType: 'PRICE_INCREASE',
         title: `Detected Amount Increase on ${merchant.serviceName} (+${priceChangePercent}%)`,
-        description: `Latest debit on ${latestTxn.transactionDate} is ₹${latestAmount}, compared to prior baseline of ₹${typicalAmount} (+₹${priceChangeAmount} per billing cycle, or ₹${annualPriceIncreaseImpact}/year). Could reflect a plan adjustment, tax revision, or rate update.`,
+        description: `Latest debit on ${latestTxn.transactionDate} is ${formatCurrency(latestAmount, groupCurrency)}, compared to prior baseline of ${formatCurrency(typicalAmount, groupCurrency)} (+${formatCurrency(priceChangeAmount, groupCurrency)} per billing cycle, or ${formatCurrency(annualPriceIncreaseImpact, groupCurrency)}/year). Could reflect a plan adjustment, tax revision, or rate update.`,
         severity: 'HIGH',
-        detectedValue: `₹${latestAmount}`,
-        previousValue: `₹${typicalAmount}`,
+        detectedValue: formatCurrency(latestAmount, groupCurrency),
+        previousValue: formatCurrency(typicalAmount, groupCurrency),
         percentageChange: priceChangePercent,
         annualImpact: annualPriceIncreaseImpact,
         evidenceReference: `Transactions ${sorted.slice(-2).map((t) => t.id).join(' vs ')}`,
@@ -1128,14 +1132,14 @@ export function detectCommitmentsAndAlerts(
         transactionId: latestTxn.id,
         alertType: 'TRIAL_CONVERSION',
         title: `Free Trial Converted to Paid Auto-Debit: ${merchant.serviceName}`,
-        description: `14-day trial started on ${trialNotif.trialStartDate} ended on ${trialNotif.trialEndDate}, triggering first paid UPI AutoPay debit of ₹${latestAmount} (${latestTxn.rawDescription}).`,
+        description: `14-day trial started on ${trialNotif.trialStartDate} ended on ${trialNotif.trialEndDate}, triggering first paid UPI AutoPay debit of ${formatCurrency(latestAmount, groupCurrency)} (${latestTxn.rawDescription}).`,
         severity: 'HIGH',
-        detectedValue: `₹${latestAmount}/month`,
-        previousValue: '₹0 (14-Day Free Trial)',
+        detectedValue: `${formatCurrency(latestAmount, groupCurrency)}/month`,
+        previousValue: `${formatCurrency(0, groupCurrency)} (14-Day Free Trial)`,
         percentageChange: null,
         annualImpact: latestAmount * 12,
         evidenceReference: `Notification ${trialNotif.id} + Debit ${latestTxn.id}`,
-        suggestedAction: 'Verify whether you intend to keep LearnPro AI Pro at ₹11,988/year or cancel service + UPI AutoPay mandate.',
+        suggestedAction: `Verify whether you intend to keep ${merchant.serviceName} at ${formatCurrency(latestAmount * 12, groupCurrency)}/year or cancel service + UPI AutoPay mandate.`,
         createdAt: latestTxn.transactionDate,
         status: 'OPEN',
       });
@@ -1148,9 +1152,9 @@ export function detectCommitmentsAndAlerts(
         transactionId: latestTxn.id,
         alertType: 'RESUMED_PAYMENT',
         title: `Resumed Recurring Activity After ${missedCyclesCount}-Cycle Gap: ${merchant.serviceName}`,
-        description: `After monthly charges in Mar–May 2026 across RZP*READCLOUD and READCLOUD*SUB, no debits occurred in Jun–Jul 2026, followed by renewed ₹${latestAmount} debits in Aug and Oct 2026.`,
+        description: `After monthly charges in Mar–May 2026 across RZP*READCLOUD and READCLOUD*SUB, no debits occurred in Jun–Jul 2026, followed by renewed ${formatCurrency(latestAmount, groupCurrency)} debits in Aug and Oct 2026.`,
         severity: 'MEDIUM',
-        detectedValue: `₹${latestAmount} on ${latestTxn.transactionDate}`,
+        detectedValue: `${formatCurrency(latestAmount, groupCurrency)} on ${latestTxn.transactionDate}`,
         previousValue: 'Paused Jun–Jul 2026',
         percentageChange: null,
         annualImpact: latestAmount * 12,
@@ -1168,10 +1172,10 @@ export function detectCommitmentsAndAlerts(
         transactionId: latestTxn.id,
         alertType: 'ANNUAL_RENEWAL',
         title: `Annual Subscription Commitment Detected: ${merchant.serviceName}`,
-        description: `Yearly Google Play charge of ₹${latestAmount} detected across ${sorted.map((s) => s.transactionDate.slice(0, 4)).join(', ')} (${latestTxn.rawDescription}). Often missed by monthly-only trackers.`,
+        description: `Yearly Google Play charge of ${formatCurrency(latestAmount, groupCurrency)} detected across ${sorted.map((s) => s.transactionDate.slice(0, 4)).join(', ')} (${latestTxn.rawDescription}). Often missed by monthly-only trackers.`,
         severity: 'INFO',
-        detectedValue: `₹${latestAmount}/year`,
-        previousValue: `₹${typicalAmount}/year`,
+        detectedValue: `${formatCurrency(latestAmount, groupCurrency)}/year`,
+        previousValue: `${formatCurrency(typicalAmount, groupCurrency)}/year`,
         percentageChange: 0,
         annualImpact: latestAmount,
         evidenceReference: `Supporting annual debits: ${sorted.map((t) => t.id).join(', ')}`,
@@ -1188,14 +1192,14 @@ export function detectCommitmentsAndAlerts(
         transactionId: latestTxn.id,
         alertType: 'POTENTIALLY_UNUSED',
         title: `Potentially Unused Commitment (${daysSinceLastUsed} Days Since User-Reported Use): ${merchant.serviceName}`,
-        description: `Based on your self-reported last-used date (${lastUsedDate}), ${merchant.serviceName} has not been used for ${daysSinceLastUsed} days while recurring billing of ₹${latestAmount} (${recurrenceType.toLowerCase()}) remains active.`,
+        description: `Based on your self-reported last-used date (${lastUsedDate}), ${merchant.serviceName} has not been used for ${daysSinceLastUsed} days while recurring billing of ${formatCurrency(latestAmount, groupCurrency)} (${recurrenceType.toLowerCase()}) remains active.`,
         severity: 'MEDIUM',
         detectedValue: `${daysSinceLastUsed} days inactive`,
         previousValue: `Last used ${lastUsedDate}`,
         percentageChange: null,
         annualImpact: annualisedAmount,
         evidenceReference: `User-reported usage signal (${lastUsedDate}) + Debit ${latestTxn.id}`,
-        suggestedAction: `Evaluate cancelling ${merchant.serviceName} to save up to ₹${annualisedAmount.toLocaleString('en-IN')}/year.`,
+        suggestedAction: `Evaluate cancelling ${merchant.serviceName} to save up to ${formatCurrency(annualisedAmount, groupCurrency)}/year.`,
         createdAt: referenceToday,
         status: 'OPEN',
       });
@@ -1204,6 +1208,7 @@ export function detectCommitmentsAndAlerts(
     if (hasPostCancelDebit) {
       const postTxnId = session.postCancellationTransactionIds[0];
       const postTxn = sorted.find((t) => t.id === postTxnId) || latestTxn;
+      const effectiveCancelDate = session.serviceCancelledAt || session.paymentAuthorisationRevokedAt;
       postTxn.isPostCancellationDebit = true;
       alerts.push({
         id: `ALT-POSTCANCEL-${commitmentId}`,
@@ -1211,10 +1216,10 @@ export function detectCommitmentsAndAlerts(
         transactionId: postTxn.id,
         alertType: 'POST_CANCELLATION_DEBIT',
         title: `Possible Post-Cancellation Debit — Review Required: ${merchant.serviceName}`,
-        description: `A debit of ₹${postTxn.amount} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, which is AFTER your recorded service & mandate cancellation on ${session.serviceCancelledAt}.`,
+        description: `A debit of ${formatCurrency(postTxn.amount, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, which is AFTER your recorded service & mandate cancellation on ${effectiveCancelDate}.`,
         severity: 'HIGH',
-        detectedValue: `₹${postTxn.amount} on ${postTxn.transactionDate}`,
-        previousValue: `Cancelled on ${session.serviceCancelledAt}`,
+        detectedValue: `${formatCurrency(postTxn.amount, groupCurrency)} on ${postTxn.transactionDate}`,
+        previousValue: `Cancelled on ${effectiveCancelDate}`,
         percentageChange: null,
         annualImpact: annualisedAmount,
         evidenceReference: `Cancellation Ref ${session.evidence[0]?.referenceNumber || 'N/A'} vs Debit ${postTxn.id}`,
@@ -1232,6 +1237,7 @@ export function detectCommitmentsAndAlerts(
       (t.matchingMethod === 'PROCESSOR_ONLY_UNRESOLVED' || t.matchingMethod === 'GENERIC_MECHANISM_ONLY')
   );
   for (const uTxn of unresolvedTxns) {
+    const uCurr = normalizeCurrencyCode(uTxn.currency, 'INR');
     alerts.push({
       id: `ALT-UNRES-${uTxn.id}`,
       commitmentId: null,
@@ -1239,10 +1245,10 @@ export function detectCommitmentsAndAlerts(
       alertType: 'UNIDENTIFIED_MERCHANT',
       title: `Unresolved Descriptor: ${uTxn.rawDescription}`,
       description: uTxn.processorName
-        ? `Transaction ${uTxn.id} (₹${uTxn.amount} on ${uTxn.transactionDate}) identifies ${uTxn.processorName} as the payment processor, but lacks sufficient alias evidence to establish the underlying merchant. Kept isolated to prevent false subscription merging.`
-        : `Transaction ${uTxn.id} (₹${uTxn.amount} on ${uTxn.transactionDate}) contains only a generic ${uTxn.paymentMechanism} payment marker without processor or merchant evidence. Kept isolated for manual review.`,
+        ? `Transaction ${uTxn.id} (${formatCurrency(uTxn.amount, uCurr)} on ${uTxn.transactionDate}) identifies ${uTxn.processorName} as the payment processor, but lacks sufficient alias evidence to establish the underlying merchant. Kept isolated to prevent false subscription merging.`
+        : `Transaction ${uTxn.id} (${formatCurrency(uTxn.amount, uCurr)} on ${uTxn.transactionDate}) contains only a generic ${uTxn.paymentMechanism} payment marker without processor or merchant evidence. Kept isolated for manual review.`,
       severity: 'MEDIUM',
-      detectedValue: `₹${uTxn.amount} (${uTxn.rawDescription})`,
+      detectedValue: `${formatCurrency(uTxn.amount, uCurr)} (${uTxn.rawDescription})`,
       previousValue: null,
       percentageChange: null,
       annualImpact: null,
@@ -1256,7 +1262,7 @@ export function detectCommitmentsAndAlerts(
   return { commitments, alerts, playbooks, sessions };
 }
 
-function buildPlaybookAndSessionForCommitment(params: {
+export function buildPlaybookAndSessionForCommitment(params: {
   commitmentId: string;
   sessionId: string;
   merchant: (typeof MERCHANT_CATALOGUE)[number];
@@ -1399,49 +1405,98 @@ function buildPlaybookAndSessionForCommitment(params: {
   }
 
   const completedSet = new Set(override.completedStepIds || []);
-  const completedDate = override.cancelledAtOverride || '2026-10-30';
+  const isValidIsoDateString = (d: string | null | undefined): d is string =>
+    typeof d === 'string' && d.trim().length > 0 && !Number.isNaN(Date.parse(d.trim()));
 
-  const steps: CancellationPlaybookStep[] = [...layerASteps, ...layerBSteps].map((s) => ({
-    ...s,
-    completed: completedSet.has(s.id),
-    completedAt: completedSet.has(s.id) ? completedDate : null,
-  }));
+  const steps: CancellationPlaybookStep[] = [...layerASteps, ...layerBSteps].map((s) => {
+    const isCompleted = completedSet.has(s.id);
+    const explicitStepDate =
+      override.stepCompletedAt?.[s.id] ??
+      (isValidIsoDateString(override.cancelledAtOverride) ? override.cancelledAtOverride.trim() : null);
+    return {
+      ...s,
+      completed: isCompleted,
+      completedAt: isCompleted ? explicitStepDate : null,
+    };
+  });
 
-  const layerADone = steps
-    .filter((s) => s.layer === 'LAYER_A_SERVICE')
-    .every((s) => s.completed);
-  const layerBDone = steps
-    .filter((s) => s.layer === 'LAYER_B_MANDATE')
-    .every((s) => s.completed);
   const anyDone = steps.some((s) => s.completed);
 
   const evidence = override.evidenceRecords ? [...override.evidenceRecords] : [];
   const hasUnresponsiveNote = evidence.some((e) => e.evidenceType === 'MERCHANT_UNRESPONSIVE');
 
+  const serviceEvidenceWithDate = evidence.find(
+    (e) => e.evidenceType === 'SERVICE_CONFIRMATION' && isValidIsoDateString(e.evidenceDate)
+  );
+  const mandateEvidenceWithDate = evidence.find(
+    (e) => e.evidenceType === 'MANDATE_REVOCATION' && isValidIsoDateString(e.evidenceDate)
+  );
+
+  const rawServiceCancelledAt =
+    override.serviceCancelledAtOverride !== undefined
+      ? override.serviceCancelledAtOverride
+      : override.cancelledAtOverride !== undefined
+      ? override.cancelledAtOverride
+      : serviceEvidenceWithDate?.evidenceDate ?? null;
+  const serviceCancelledAt = isValidIsoDateString(rawServiceCancelledAt)
+    ? rawServiceCancelledAt.trim()
+    : null;
+
+  const rawMandateRevokedAt =
+    override.mandateRevokedAtOverride !== undefined
+      ? override.mandateRevokedAtOverride
+      : override.cancelledAtOverride !== undefined
+      ? override.cancelledAtOverride
+      : mandateEvidenceWithDate?.evidenceDate ?? null;
+  const paymentAuthorisationRevokedAt = isValidIsoDateString(rawMandateRevokedAt)
+    ? rawMandateRevokedAt.trim()
+    : null;
+
+  const hasExternalServiceCancel =
+    Boolean(serviceCancelledAt) ||
+    evidence.some((e) => e.evidenceType === 'SERVICE_CONFIRMATION') ||
+    override.serviceLifecycleStatus === 'CANCELLATION_REPORTED_BY_USER' ||
+    override.serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED' ||
+    override.serviceLifecycleStatus === 'CANCELLED';
+
+  const hasExternalMandateRevoke =
+    Boolean(paymentAuthorisationRevokedAt) ||
+    evidence.some((e) => e.evidenceType === 'MANDATE_REVOCATION') ||
+    override.mandateLifecycleStatus === 'REVOCATION_REPORTED_BY_USER' ||
+    override.mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED' ||
+    override.mandateLifecycleStatus === 'REVOKED';
+
   let status: CancellationWorkflowState = 'NOT_STARTED';
-  if (hasUnresponsiveNote) {
+  if (hasUnresponsiveNote || override.serviceLifecycleStatus === 'MERCHANT_UNRESPONSIVE') {
     status = 'NEEDS_MERCHANT_RESPONSE';
-  } else if (layerADone && layerBDone) {
+  } else if (hasExternalServiceCancel && hasExternalMandateRevoke) {
     status = 'BOTH_USER_CONFIRMED';
-  } else if (layerADone && !layerBDone) {
+  } else if (hasExternalServiceCancel && !hasExternalMandateRevoke) {
     status = 'SERVICE_CANCELLED_PAYMENT_PENDING';
-  } else if (!layerADone && layerBDone) {
+  } else if (!hasExternalServiceCancel && hasExternalMandateRevoke) {
     status = 'PAYMENT_AUTHORITY_REVOKED_SERVICE_PENDING';
-  } else if (anyDone) {
+  } else if (
+    anyDone ||
+    override.serviceLifecycleStatus === 'CANCELLATION_REQUESTED' ||
+    override.mandateLifecycleStatus === 'REVOCATION_REQUESTED'
+  ) {
     status = 'SERVICE_CANCELLATION_PENDING';
   }
 
-  const serviceCancelledAt = layerADone ? completedDate : null;
-  const paymentAuthorisationRevokedAt = layerBDone ? completedDate : null;
-
+  const effectiveCancelAnchor = serviceCancelledAt || paymentAuthorisationRevokedAt;
   const postCancellationTransactionIds: string[] = [];
-  if (serviceCancelledAt && paymentAuthorisationRevokedAt) {
+  if (effectiveCancelAnchor) {
     for (const txn of sortedTransactions) {
-      if (Date.parse(txn.transactionDate) > Date.parse(serviceCancelledAt)) {
+      if (Date.parse(txn.transactionDate) > Date.parse(effectiveCancelAnchor)) {
         postCancellationTransactionIds.push(txn.id);
       }
     }
   }
+
+  const earliestEvidenceDate =
+    evidence.find((e) => isValidIsoDateString(e.evidenceDate))?.evidenceDate?.trim() || null;
+  const initiatedAt =
+    serviceCancelledAt || paymentAuthorisationRevokedAt || earliestEvidenceDate || null;
 
   const playbook: CancellationPlaybookRecord = {
     id: `PB-${commitmentId}`,
@@ -1477,10 +1532,10 @@ function buildPlaybookAndSessionForCommitment(params: {
     serviceName: merchant.serviceName,
     paymentRail,
     status,
-    initiatedAt: anyDone ? completedDate : null,
+    initiatedAt,
     serviceCancelledAt,
     paymentAuthorisationRevokedAt,
-    lastReviewedAt: '2026-10-31',
+    lastReviewedAt: initiatedAt || '2026-10-31',
     steps,
     evidence,
     postCancellationTransactionIds,

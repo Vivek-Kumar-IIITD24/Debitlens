@@ -530,8 +530,11 @@ export function generateCommitmentPassport(params: {
     params.reconciliationFinding || params.reconciliation || null;
   const cancellationSession: CancellationSessionRecord | null =
     params.cancellationSession || params.session || null;
-  const evidenceCasebookEntries: EvidenceCasebookEntry[] =
-    params.evidenceCasebookEntries || params.casebookEntries || [];
+  const evidenceCasebookEntries: EvidenceCasebookEntry[] = (
+    params.evidenceCasebookEntries ||
+    params.casebookEntries ||
+    []
+  ).filter((e: any) => !e.commitmentId || e.commitmentId === commitment.id);
 
   const cmtTxns = transactions
     .filter((t) => t.commitmentId === commitment.id && t.direction === 'DEBIT')
@@ -774,12 +777,40 @@ export function generateCommitmentPassport(params: {
   };
 
   const sessionEv = cancellationSession?.evidence || [];
-  const derivedEvidenceRecordLifecycle: EvidenceRecordLifecycleStatus =
-    sessionEv.length === 0
-      ? 'NO_EVIDENCE_RECORDED'
-      : sessionEv.some((e) => Boolean(e.referenceNumber && e.referenceNumber !== 'UNSPECIFIED-REF' && !e.referenceNumber.startsWith('REF-NOTE-')))
-      ? 'EVIDENCE_REFERENCE_RECORDED'
-      : 'USER_NOTE_RECORDED';
+  const customEv = evidenceCasebookEntries.filter(
+    (e) =>
+      e.actor === 'USER_CASEBOOK_ATTACHMENT' ||
+      e.actor === 'USER_EVIDENCE_SUBMISSION' ||
+      e.category === 'SERVICE_CANCELLATION_EVENT' ||
+      e.category === 'MANDATE_REVOCATION_EVENT' ||
+      e.evidenceRecordLifecycle === 'EVIDENCE_REFERENCE_RECORDED' ||
+      e.evidenceRecordLifecycle === 'USER_NOTE_RECORDED'
+  );
+  const hasReferenceRecorded =
+    sessionEv.some(
+      (e) =>
+        e.evidenceRecordLifecycle === 'EVIDENCE_REFERENCE_RECORDED' ||
+        Boolean(
+          e.referenceNumber &&
+            e.referenceNumber !== 'UNSPECIFIED-REF' &&
+            !e.referenceNumber.startsWith('REF-NOTE-')
+        )
+    ) ||
+    customEv.some(
+      (e) =>
+        e.evidenceRecordLifecycle === 'EVIDENCE_REFERENCE_RECORDED' ||
+        Boolean(
+          e.sourceReference &&
+            e.sourceReference !== 'UNSPECIFIED-REF' &&
+            !e.sourceReference.startsWith('REF-NOTE-')
+        )
+    );
+  const hasNoteRecorded = sessionEv.length > 0 || customEv.length > 0;
+  const derivedEvidenceRecordLifecycle: EvidenceRecordLifecycleStatus = hasReferenceRecorded
+    ? 'EVIDENCE_REFERENCE_RECORDED'
+    : hasNoteRecorded
+    ? 'USER_NOTE_RECORDED'
+    : 'NO_EVIDENCE_RECORDED';
 
   const sectionF_Cancellation = {
     serviceLifecycleStatus: commitment.serviceLifecycleStatus,
@@ -792,17 +823,40 @@ export function generateCommitmentPassport(params: {
     cancellationSummary,
   };
 
+  const mappedCasebookRecords = evidenceCasebookEntries.map((e) => ({
+    id: e.id,
+    title: e.title,
+    description: e.description,
+    date: (e as any).eventDate !== undefined ? (e as any).eventDate : e.timestamp || null,
+    evidenceDate: (e as any).eventDate !== undefined ? (e as any).eventDate : null,
+    verificationStatus: e.verificationStatus,
+    evidenceRecordLifecycle:
+      e.evidenceRecordLifecycle ||
+      (e.actor === 'USER_CASEBOOK_ATTACHMENT' || e.actor === 'USER_EVIDENCE_SUBMISSION'
+        ? 'EVIDENCE_REFERENCE_RECORDED'
+        : undefined),
+    sourceReference: e.sourceReference,
+    sourceType: e.sourceType || 'UNKNOWN',
+  }));
+  const existingSourceRefs = new Set(mappedCasebookRecords.map((r) => r.sourceReference));
+  const unmappedSessionRecords = sessionEv
+    .filter((ev) => !existingSourceRefs.has(ev.referenceNumber))
+    .map((ev) => ({
+      id: `CB-CANC-${ev.id}`,
+      title: `${ev.evidenceType.replace(/_/g, ' ')}: Ref ${ev.referenceNumber}`,
+      description: ev.description,
+      date: ev.evidenceDate ?? null,
+      evidenceDate: ev.evidenceDate ?? null,
+      verificationStatus: ev.verificationStatus || 'EVIDENCE_ATTACHED',
+      evidenceRecordLifecycle: ev.evidenceRecordLifecycle || 'EVIDENCE_REFERENCE_RECORDED',
+      sourceReference: ev.referenceNumber,
+      sourceType: ev.sourceType || 'USER_ENTERED',
+    }));
+  const allPassportEvidenceRecords = [...mappedCasebookRecords, ...unmappedSessionRecords];
+
   const sectionG_Evidence = {
-    evidenceRecordsCount: evidenceCasebookEntries.length,
-    evidenceRecords: evidenceCasebookEntries.map((e) => ({
-      id: e.id,
-      title: e.title,
-      description: e.description,
-      date: (e as any).eventDate || e.timestamp || '',
-      verificationStatus: e.verificationStatus,
-      sourceReference: e.sourceReference,
-      sourceType: e.sourceType || 'UNKNOWN',
-    })),
+    evidenceRecordsCount: allPassportEvidenceRecords.length,
+    evidenceRecords: allPassportEvidenceRecords,
   };
 
   const recordCoverage = {
@@ -933,6 +987,9 @@ export function generateEvidencePackData(params: {
     params.reconciliationFinding || params.reconciliation || null;
   const cancellationSession: CancellationSessionRecord | null =
     params.cancellationSession || params.session || null;
+  const packCasebookEntries: EvidenceCasebookEntry[] = (
+    params.casebookEntries || []
+  ).filter((e: any) => !e.commitmentId || e.commitmentId === commitment.id);
 
   const cmtTxns = transactions
     .filter((t) => t.commitmentId === commitment.id)
@@ -953,7 +1010,20 @@ export function generateEvidencePackData(params: {
   if (!mandate) missingGaps.push('No bank mandate record found in imported data');
   if (commitment.confidenceScore < 80) missingGaps.push('Merchant identity unconfirmed by user');
 
-  const postCancelTxns = cmtTxns.filter((t) => t.isPostCancellationDebit);
+  const effectiveCancelDate =
+    cancellationSession?.serviceCancelledAt ||
+    cancellationSession?.paymentAuthorisationRevokedAt ||
+    null;
+  const postCancelIdSet = new Set(cancellationSession?.postCancellationTransactionIds || []);
+  const postCancelTxns = cmtTxns.filter(
+    (t) =>
+      t.direction === 'DEBIT' &&
+      (Boolean(t.isPostCancellationDebit) ||
+        postCancelIdSet.has(t.id) ||
+        (effectiveCancelDate &&
+          !Number.isNaN(Date.parse(effectiveCancelDate)) &&
+          Date.parse(t.transactionDate) > Date.parse(effectiveCancelDate)))
+  );
   const cmtDebitTxns = cmtTxns.filter((t) => t.direction === 'DEBIT');
 
   // Explicit provenance classification from record metadata (Section 9 / Gate F)
@@ -1024,19 +1094,40 @@ export function generateEvidencePackData(params: {
   );
 
   const evItems = cancellationSession?.evidence || [];
-  const evidenceRecordLifecycle: EvidenceRecordLifecycleStatus =
-    evItems.length === 0
-      ? 'NO_EVIDENCE_RECORDED'
-      : evItems.some(
-          (e) =>
-            Boolean(
-              e.referenceNumber &&
-                e.referenceNumber !== 'UNSPECIFIED-REF' &&
-                !e.referenceNumber.startsWith('REF-NOTE-')
-            )
+  const customPackEv = packCasebookEntries.filter(
+    (e) =>
+      e.actor === 'USER_CASEBOOK_ATTACHMENT' ||
+      e.actor === 'USER_EVIDENCE_SUBMISSION' ||
+      e.category === 'SERVICE_CANCELLATION_EVENT' ||
+      e.category === 'MANDATE_REVOCATION_EVENT' ||
+      e.evidenceRecordLifecycle === 'EVIDENCE_REFERENCE_RECORDED' ||
+      e.evidenceRecordLifecycle === 'USER_NOTE_RECORDED'
+  );
+  const hasPackRefRecorded =
+    evItems.some(
+      (e) =>
+        e.evidenceRecordLifecycle === 'EVIDENCE_REFERENCE_RECORDED' ||
+        Boolean(
+          e.referenceNumber &&
+            e.referenceNumber !== 'UNSPECIFIED-REF' &&
+            !e.referenceNumber.startsWith('REF-NOTE-')
         )
-      ? 'EVIDENCE_REFERENCE_RECORDED'
-      : 'USER_NOTE_RECORDED';
+    ) ||
+    customPackEv.some(
+      (e) =>
+        e.evidenceRecordLifecycle === 'EVIDENCE_REFERENCE_RECORDED' ||
+        Boolean(
+          e.sourceReference &&
+            e.sourceReference !== 'UNSPECIFIED-REF' &&
+            !e.sourceReference.startsWith('REF-NOTE-')
+        )
+    );
+  const hasPackNoteRecorded = evItems.length > 0 || customPackEv.length > 0;
+  const evidenceRecordLifecycle: EvidenceRecordLifecycleStatus = hasPackRefRecorded
+    ? 'EVIDENCE_REFERENCE_RECORDED'
+    : hasPackNoteRecorded
+    ? 'USER_NOTE_RECORDED'
+    : 'NO_EVIDENCE_RECORDED';
 
   const sLife = String(commitment.serviceLifecycleStatus || 'UNKNOWN');
   const mLife = String(commitment.mandateLifecycleStatus || 'UNKNOWN');
@@ -1144,8 +1235,18 @@ export function generateEvidencePackData(params: {
         service: cancellationSession?.serviceCancelledAt || null,
         mandate: cancellationSession?.paymentAuthorisationRevokedAt || null,
       },
-      confirmationReferences: evItems.map((e) => e.referenceNumber),
-      evidenceSources: evItems.map((e) => e.evidenceType),
+      confirmationReferences: Array.from(
+        new Set([
+          ...evItems.map((e) => e.referenceNumber).filter(Boolean),
+          ...customPackEv.map((e) => e.sourceReference).filter(Boolean),
+        ])
+      ),
+      evidenceSources: Array.from(
+        new Set([
+          ...evItems.map((e) => e.evidenceType).filter(Boolean),
+          ...customPackEv.map((e) => e.category).filter(Boolean),
+        ])
+      ),
       // Section 7.1 & 7.2: Never derive verified acknowledgement or completion from evidenceType alone, and never claim file upload without an uploaded file
       verificationStatus:
         evidenceRecordLifecycle === 'EVIDENCE_REFERENCE_RECORDED'
@@ -1166,14 +1267,17 @@ export function generateEvidencePackData(params: {
       })),
       monitoringStatement:
         postCancelTxns.length > 0
-          ? `${postCancelTxns.length} debit(s) occurred after recorded cancellation date.`
+          ? `${postCancelTxns.length} debit(s) occurred after recorded cancellation date (${effectiveCancelDate}).`
+          : (serviceActionLifecycle !== 'NOT_STARTED' || mandateActionLifecycle !== 'NOT_STARTED') &&
+            !effectiveCancelDate
+          ? 'Cancellation or revocation has been reported, but the post-action timeline cannot yet be established because the effective cancellation/revocation date is unavailable (null). Observed transactions remain preserved in transaction history.'
           : 'No subsequent statement debits detected after recorded cancellation date.',
     },
     dataLimitations: {
       missingDocuments: !terms,
       missingMandateDetails: !mandate || getEffectiveMandateStatus(mandate) === 'INCOMPLETE',
       unconfirmedMerchant: commitment.confidenceScore < 80,
-      unverifiedCancellation: !cancellationSession || cancellationSession.evidence.length === 0,
+      unverifiedCancellation: !hasPackRefRecorded && !hasPackNoteRecorded,
       evidenceGaps: missingGaps,
     },
     provenanceNotice:

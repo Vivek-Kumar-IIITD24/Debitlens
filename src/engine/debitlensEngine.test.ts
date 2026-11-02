@@ -39,6 +39,7 @@ import {
   parseCsvDate,
   parseAllMappedCsvRows,
   computeCanonicalCsvRowFingerprint,
+  buildPlaybookAndSessionForCommitment,
 } from './debitlensEngine';
 import {
   toMinorUnits,
@@ -2997,6 +2998,176 @@ test('Gates A, B, D, E Server Integration: Authoritative merchant confirmation, 
       'EVIDENCE_REFERENCE_RECORDED',
       'Reference-only evidence must be EVIDENCE_REFERENCE_RECORDED, never DOCUMENT_UPLOADED'
     );
+    assert.ok(
+      fitclubPassport.sectionG_Evidence.evidenceRecords.some(
+        (r: any) => r.sourceReference === 'TKT-FITCLUB-901' && r.date === null
+      ),
+      'Session evidence with null date must appear in Commitment Passport sectionG_Evidence with date: null'
+    );
+
+    // Verify Evidence Pack also reflects the session evidence and retains null date
+    const packRes = await api('GET', '/api/commitments/CMT-FITCLUB/evidence-pack');
+    assert.equal(packRes.status, 200);
+    assert.equal(
+      packRes.body.cancellationEvidence.evidenceRecordLifecycle,
+      'EVIDENCE_REFERENCE_RECORDED'
+    );
+    assert.ok(
+      packRes.body.cancellationEvidence.confirmationReferences.includes('TKT-FITCLUB-901'),
+      'Evidence Pack confirmationReferences must include session evidence reference TKT-FITCLUB-901'
+    );
+
+    // Verify Casebook POST /api/commitments/:id/evidence with omitted date also propagates to Passport & Evidence Pack with null date and does not contaminate unrelated commitments
+    const casebookEvRes = await api('POST', '/api/commitments/CMT-CLOUDNOTES/evidence', {
+      category: 'SERVICE_CANCELLATION_EVENT',
+      title: 'CloudNotes Web Cancellation Ref',
+      description: 'Submitted cancellation in CloudNotes billing settings',
+      sourceReference: 'CN-REF-2026-7788',
+    });
+    assert.equal(casebookEvRes.status, 200);
+
+    const cnPassportRes = await api('GET', '/api/commitments/CMT-CLOUDNOTES/passport');
+    assert.equal(cnPassportRes.status, 200);
+    assert.equal(
+      cnPassportRes.body.sectionF_Cancellation.evidenceRecordLifecycle,
+      'EVIDENCE_REFERENCE_RECORDED'
+    );
+    const cnEvRec = cnPassportRes.body.sectionG_Evidence.evidenceRecords.find(
+      (r: any) => r.sourceReference === 'CN-REF-2026-7788'
+    );
+    assert.ok(cnEvRec, 'Casebook evidence must appear in CloudNotes Commitment Passport');
+    assert.equal(cnEvRec.date, null, 'Omitted evidenceDate on POST /api/commitments/:id/evidence must remain null');
+    assert.notEqual(
+      cnPassportRes.body.sectionF_Cancellation.evidenceRecordLifecycle,
+      'DOCUMENT_UPLOADED'
+    );
+
+    const cnPackRes = await api('GET', '/api/commitments/CMT-CLOUDNOTES/evidence-pack');
+    assert.equal(cnPackRes.status, 200);
+    assert.equal(
+      cnPackRes.body.cancellationEvidence.evidenceRecordLifecycle,
+      'EVIDENCE_REFERENCE_RECORDED'
+    );
+    assert.ok(
+      cnPackRes.body.cancellationEvidence.confirmationReferences.includes('CN-REF-2026-7788')
+    );
+
+    // Ensure unrelated commitment CMT-MUSICFLOW is not contaminated by CMT-FITCLUB or CMT-CLOUDNOTES evidence
+    const mfPassportRes = await api('GET', '/api/commitments/CMT-MUSICFLOW/passport');
+    assert.equal(mfPassportRes.status, 200);
+    assert.equal(
+      mfPassportRes.body.sectionG_Evidence.evidenceRecords.some(
+        (r: any) =>
+          r.sourceReference === 'TKT-FITCLUB-901' || r.sourceReference === 'CN-REF-2026-7788'
+      ),
+      false,
+      'Unrelated commitment passport must never contain another commitment evidence record'
+    );
+
+    // 6. Gate D: Review Queue requires non-empty resolutionReason for DISMISSED as well as RESOLVED and reopening
+    const rqAfterReopen = (await api('GET', '/api/review-queue')).body.find(
+      (i: any) => i.id === openRq.id
+    );
+    assert.equal(rqAfterReopen.status, 'OPEN');
+
+    const dismissEmptyReason = await api('POST', `/api/review-queue/${openRq.id}/status`, {
+      status: 'DISMISSED',
+      resolutionReason: '   ',
+    });
+    assert.equal(
+      dismissEmptyReason.status,
+      400,
+      'Dismissing a review queue item with whitespace-only resolutionReason must return HTTP 400'
+    );
+
+    const dismissValidReason = await api('POST', `/api/review-queue/${openRq.id}/status`, {
+      status: 'DISMISSED',
+      resolutionReason: 'Confirmed one-time charge with cardholder',
+    });
+    assert.equal(dismissValidReason.status, 200);
+
+    const reopenWithoutReason = await api('POST', `/api/review-queue/${openRq.id}/status`, {
+      status: 'OPEN',
+    });
+    assert.equal(
+      reopenWithoutReason.status,
+      400,
+      'Reopening a DISMISSED review queue item without resolutionReason must return HTTP 400'
+    );
+
+    // 7. Gate A: Reporting service cancellation or mandate revocation without a date keeps serviceCancelledAt/paymentAuthorisationRevokedAt null and monitoring reports EFFECTIVE_DATE_UNAVAILABLE
+    const srvNoDateRes = await api('PATCH', '/api/cancellations/CMT-MUSICFLOW/service-status', {
+      serviceLifecycleStatus: 'CANCELLATION_REPORTED_BY_USER',
+      referenceNumber: 'MF-NO-DATE-REF',
+      notes: 'Reported cancelled without knowing exact date',
+    });
+    assert.equal(srvNoDateRes.status, 200);
+    assert.equal(srvNoDateRes.body.session.serviceCancelledAt, null);
+    assert.equal(srvNoDateRes.body.session.paymentAuthorisationRevokedAt, null);
+
+    const monNoDate = await api('GET', '/api/cancellations/CMT-MUSICFLOW/monitoring');
+    assert.equal(monNoDate.status, 200);
+    assert.equal(monNoDate.body.serviceCancelledAt, null);
+    assert.equal(monNoDate.body.monitoringStatus, 'EFFECTIVE_DATE_UNAVAILABLE');
+    assert.ok(
+      String(monNoDate.body.monitoringExplanation).includes('unavailable'),
+      'Monitoring explanation must state that the effective cancellation/revocation date is unavailable'
+    );
+
+    // 8. Gate B: Multi-currency import separates USD from INR in /api/dashboard/summary and /api/dashboard/monthly-trend
+    const summaryBeforeUsd = await api('GET', '/api/dashboard/summary');
+    const inrMonthlyBefore = summaryBeforeUsd.body.monthlyRecurringSpend;
+    const inrAnnualBefore = summaryBeforeUsd.body.annualCommitmentTotal;
+
+    const usdCsv = [
+      'Date,Narration,Debit,Credit,Account,Currency,Reference',
+      '2026-08-12,RZP*STREAMBOX,19.99,,HDFC-INTL-CC,USD,UTR-USD-AUG',
+      '2026-09-12,RZP*STREAMBOX,19.99,,HDFC-INTL-CC,USD,UTR-USD-SEP',
+      '2026-10-12,RZP*STREAMBOX,19.99,,HDFC-INTL-CC,USD,UTR-USD-OCT',
+    ].join('\n');
+
+    const importUsdRes = await api('POST', '/api/import/transactions/apply-mapped', {
+      csvContent: usdCsv,
+      config: {
+        dateColumn: 'Date',
+        descriptionColumn: 'Narration',
+        amountMode: 'SEPARATE_DEBIT_CREDIT',
+        debitColumn: 'Debit',
+        debitAmountColumn: 'Debit',
+        creditColumn: 'Credit',
+        creditAmountColumn: 'Credit',
+        accountColumn: 'Account',
+        currencyColumn: 'Currency',
+        referenceColumn: 'Reference',
+        dateFormat: 'YYYY-MM-DD',
+      },
+    });
+    assert.equal(importUsdRes.status, 200);
+    assert.equal(importUsdRes.body.importedRowsCount, 3);
+
+    const summaryAfterUsd = await api('GET', '/api/dashboard/summary');
+    assert.equal(
+      summaryAfterUsd.body.monthlyRecurringSpend,
+      inrMonthlyBefore,
+      'Importing USD recurring transactions must NEVER add USD amounts into INR monthlyRecurringSpend'
+    );
+    assert.equal(
+      summaryAfterUsd.body.annualCommitmentTotal,
+      inrAnnualBefore,
+      'Importing USD recurring transactions must NEVER add USD amounts into INR annualCommitmentTotal'
+    );
+    assert.equal(summaryAfterUsd.body.isMultiCurrency, true);
+    assert.ok(summaryAfterUsd.body.totalsByCurrency.INR);
+    assert.ok(summaryAfterUsd.body.totalsByCurrency.USD);
+    assert.equal(summaryAfterUsd.body.totalsByCurrency.USD.monthlyRecurringSpend, 19.99);
+
+    const trendInr = await api('GET', '/api/dashboard/monthly-trend?currency=INR');
+    const trendUsd = await api('GET', '/api/dashboard/monthly-trend?currency=USD');
+    assert.equal(trendInr.status, 200);
+    assert.equal(trendUsd.status, 200);
+    const octUsd = trendUsd.body.find((p: any) => p.month === '2026-10');
+    assert.equal(octUsd.currency, 'USD');
+    assert.equal(octUsd.subscriptions, 19.99);
   } finally {
     server.closeAllConnections?.();
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -3006,5 +3177,145 @@ test('Gates A, B, D, E Server Integration: Authoritative merchant confirmation, 
   }
 });
 
+test('Gate A Regression: Completing local checklist steps on a commitment with Nov/Dec 2026 transactions never fabricates 2026-10-30 and never triggers false post-cancellation alerts', () => {
+  const rowsWithNov2026: RawCsvRow[] = [
+    {
+      transaction_id: 'TXN-NOV-1',
+      transaction_date: '2026-09-15',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'UTR-NOV-1',
+    },
+    {
+      transaction_id: 'TXN-NOV-2',
+      transaction_date: '2026-10-15',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'UTR-NOV-2',
+    },
+    {
+      transaction_id: 'TXN-NOV-3',
+      transaction_date: '2026-11-15',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'UTR-NOV-3',
+    },
+  ];
 
+  const txns = parseAndNormaliseTransactions(rowsWithNov2026).transactions;
+  const { commitments } = detectCommitmentsAndAlerts(txns, []);
+  const streambox = commitments[0];
+  assert.ok(streambox);
 
+  // User completes ALL Layer A and Layer B checklist steps locally without providing any external cancellation/revocation date
+  const checklistOnlyOverrides = {
+    [streambox.id]: {
+      completedStepIds: [
+        `STEP-${streambox.id}-A1`,
+        `STEP-${streambox.id}-A2`,
+        `STEP-${streambox.id}-B1`,
+        `STEP-${streambox.id}-B2`,
+      ],
+    },
+  };
+
+  const checklistResult = detectCommitmentsAndAlerts(txns, [], checklistOnlyOverrides);
+  const session = checklistResult.sessions[0];
+  assert.ok(session);
+
+  // 1. Neither serviceCancelledAt nor paymentAuthorisationRevokedAt may be set to '2026-10-30' or any fabricated date
+  assert.equal(
+    session.serviceCancelledAt,
+    null,
+    'Checklist step completion alone must NEVER set serviceCancelledAt'
+  );
+  assert.equal(
+    session.paymentAuthorisationRevokedAt,
+    null,
+    'Checklist step completion alone must NEVER set paymentAuthorisationRevokedAt'
+  );
+  for (const step of session.steps) {
+    assert.notEqual(
+      step.completedAt,
+      '2026-10-30',
+      'Checklist step completedAt must never default to fabricated 2026-10-30'
+    );
+  }
+
+  // 2. The Nov 2026 transaction must NOT be flagged as a post-cancellation debit
+  assert.equal(
+    session.postCancellationTransactionIds.length,
+    0,
+    'Checklist completion without a valid cancellation/revocation date must NEVER flag Nov 2026+ transactions as post-cancellation debits'
+  );
+  assert.equal(
+    checklistResult.alerts.some((a) => a.alertType === 'POST_CANCELLATION_DEBIT'),
+    false,
+    'Checklist completion without a valid cancellation/revocation date must NEVER create a POST_CANCELLATION_DEBIT alert'
+  );
+
+  // 3. Conversely, when a real effective cancellation date (2026-11-01) IS recorded before the 2026-11-15 debit, post-cancellation detection fires accurately
+  const datedCancelOverrides = {
+    [streambox.id]: {
+      serviceLifecycleStatus: 'CANCELLATION_EVIDENCE_ATTACHED' as const,
+      serviceCancelledAtOverride: '2026-11-01',
+    },
+  };
+  const datedResult = detectCommitmentsAndAlerts(txns, [], datedCancelOverrides);
+  const datedSession = datedResult.sessions[0];
+  assert.equal(datedSession.serviceCancelledAt, '2026-11-01');
+  assert.deepEqual(datedSession.postCancellationTransactionIds, ['TXN-NOV-3']);
+  assert.equal(
+    datedResult.alerts.some((a) => a.alertType === 'POST_CANCELLATION_DEBIT'),
+    true,
+    'Valid cancellation date prior to subsequent debit must trigger POST_CANCELLATION_DEBIT alert'
+  );
+});
+
+test('Gate B Regression: Null/undefined monetary amounts never render as ₹0.00, genuine zero formats in its currency, and unsupported currencies never display ₹', () => {
+  // 1. Null, undefined, and NaN amounts return 'Amount unavailable', never ₹0.00
+  assert.equal(formatCurrency(null, 'INR'), 'Amount unavailable');
+  assert.equal(formatCurrency(undefined, 'INR'), 'Amount unavailable');
+  assert.equal(formatCurrency(Number.NaN, 'INR'), 'Amount unavailable');
+  assert.equal(formatMinorCurrency(null, 'INR'), 'Amount unavailable');
+  assert.equal(formatMinorCurrency(undefined, 'INR'), 'Amount unavailable');
+  assert.equal(formatMinorCurrency(Number.NaN, 'INR'), 'Amount unavailable');
+
+  // 2. Genuine numeric zero still formats as a valid zero monetary value in the requested currency
+  assert.ok(formatCurrency(0, 'INR') === '₹0' || formatCurrency(0, 'INR') === '₹0.00');
+  assert.ok(formatMinorCurrency(0, 'INR') === '₹0' || formatMinorCurrency(0, 'INR') === '₹0.00');
+  assert.ok(formatCurrency(0, 'USD').includes('$0'));
+  assert.equal(formatCurrency(0, 'USD').includes('₹'), false);
+
+  // 3. Unsupported or invalid currency codes are rejected by normalizeCurrencyCode and never fall back to ₹
+  assert.equal(normalizeCurrencyCode('XYZ'), '');
+  assert.equal(normalizeCurrencyCode('INVALID'), '');
+  assert.equal(normalizeCurrencyCode(''), '');
+
+  const unsupportedMajor = formatCurrency(499, 'XYZ');
+  const unsupportedMinor = formatMinorCurrency(49900, 'XYZ');
+  assert.equal(
+    unsupportedMajor.includes('₹'),
+    false,
+    'Unsupported currency code XYZ must NEVER be rendered with an Indian Rupee (₹) symbol'
+  );
+  assert.equal(
+    unsupportedMinor.includes('₹'),
+    false,
+    'Unsupported minor currency code XYZ must NEVER be rendered with an Indian Rupee (₹) symbol'
+  );
+  assert.ok(unsupportedMajor.includes('XYZ'));
+  assert.ok(unsupportedMajor.includes('Unsupported currency'));
+});

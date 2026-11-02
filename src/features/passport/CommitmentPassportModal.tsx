@@ -545,7 +545,7 @@ export const CommitmentPassportModal: React.FC<CommitmentPassportModalProps> = (
                               {rec.verificationStatus}
                             </span>
                             <span className="text-slate-400 font-mono text-[11px]">
-                              {formatDateIN(rec.date)}
+                              {rec.date ? formatDateIN(rec.date) : 'Date unavailable'}
                             </span>
                           </div>
                           <p className="text-slate-600 mt-1">{rec.description}</p>

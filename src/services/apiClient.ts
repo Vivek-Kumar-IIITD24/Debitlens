@@ -42,11 +42,24 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export interface DashboardSummaryData {
+export interface CurrencyCommitmentSummary {
+  currency: string;
   monthlyRecurringSpend: number;
   annualCommitmentTotal: number;
   discretionaryAnnual: number;
   obligationAnnual: number;
+  activeCommitmentsCount: number;
+}
+
+export interface DashboardSummaryData {
+  primaryCurrency?: string;
+  monthlyRecurringSpend: number;
+  annualCommitmentTotal: number;
+  discretionaryAnnual: number;
+  obligationAnnual: number;
+  totalsByCurrency?: Record<string, CurrencyCommitmentSummary>;
+  currencySummaries?: CurrencyCommitmentSummary[];
+  isMultiCurrency?: boolean;
   activeCommitmentsCount: number;
   totalCommitmentsCount: number;
   upcomingPaymentsCount: number;
@@ -58,6 +71,7 @@ export interface DashboardSummaryData {
 
 export interface MonthlyTrendPoint {
   month: string;
+  currency?: string;
   subscriptions: number;
   obligations: number;
   unresolved: number;

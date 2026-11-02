@@ -73,7 +73,7 @@ Ordinary consumers face opaque bank statement descriptors (`RZP*STREAMBOX`, `SI-
    npm run dev
    # or: npm start
    ```
-3. Run automated unit, financial integrity & adversarial tests (56 tests across `src/engine/debitlensEngine.test.ts` and `src/utils/searchHistory.test.ts`):
+3. Run automated unit, financial integrity & adversarial tests (62 tests across `src/engine/debitlensEngine.test.ts` and `src/utils/searchHistory.test.ts`):
    ```bash
    npm test
    ```
@@ -87,7 +87,7 @@ Ordinary consumers face opaque bank statement descriptors (`RZP*STREAMBOX`, `SI-
 
 ## 5. Prototype Architecture vs Production Deployment Boundaries
 
-- **Single-User Local Persistence Prototype:** Application state is persisted locally in `data/persistent-store.json` using atomic write-to-temp-plus-rename (`fs.renameSync`) and serialized through an in-memory mutation queue (`safeMutateState`) with automatic state snapshot rollback on write failure.
+- **Single-User Local Persistence Prototype:** Application state is persisted locally in `data/persistent-store.json` using atomic write-to-temp-plus-rename (`fs.renameSync`) and serialized through an in-memory route mutation queue (`executeSerializedMutation`) with full deep-copy state snapshot rollback on validation error, runtime throw, or disk write failure, and asynchronous Neo4j graph projection triggered only after canonical JSON commit succeeds.
 - **Production Multi-User Evolution:** In a multi-tenant production deployment, `data/persistent-store.json` would be replaced by per-tenant encrypted PostgreSQL / Cloud SQL transactional storage with RBAC authentication, Account Aggregator (AA) / NPCI UPI AutoPay API webhooks, and hardware-backed KMS audit log signing.
 - **Regulatory Scope:** DebitLens is an informational consumer financial intelligence and evidence-preparation tool; it does not execute payments, revoke bank mandates directly, or provide formal legal advice.
 

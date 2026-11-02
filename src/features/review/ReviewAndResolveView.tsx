@@ -72,9 +72,17 @@ export const ReviewAndResolveView: React.FC<ReviewAndResolveViewProps> = ({
   ) => {
     try {
       setError(null);
-      const reasonToSend =
+      const fallbackReason =
         status === 'RESOLVED'
-          ? (resolutionReason || resolutionReasonInput || 'Verified against statement records').trim()
+          ? 'Verified against statement records'
+          : status === 'DISMISSED'
+          ? 'Dismissed after user review'
+          : status === 'OPEN'
+          ? 'Reopened for further investigation'
+          : undefined;
+      const reasonToSend =
+        status === 'RESOLVED' || status === 'DISMISSED' || status === 'OPEN'
+          ? (resolutionReason || resolutionReasonInput || fallbackReason || '').trim()
           : resolutionReason;
       const updated = await apiClient.updateReviewQueueStatus(itemId, status, reasonToSend);
       setItems(updated);

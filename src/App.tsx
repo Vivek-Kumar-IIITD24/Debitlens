@@ -825,7 +825,7 @@ export default function App() {
                 <div className="p-4 rounded-xl bg-white border border-slate-200">
                   <div className="text-xs text-slate-500">Monthly Equivalent</div>
                   <div className="text-xl font-mono font-bold text-slate-900 mt-1 tabular-nums">
-                    {formatINR(summary.monthlyRecurringSpend)}
+                    {formatINR(summary.monthlyRecurringSpend, summary.primaryCurrency || 'INR')}
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
                     Across {summary.activeCommitmentsCount} active commitments
@@ -835,7 +835,7 @@ export default function App() {
                 <div className="p-4 rounded-xl bg-white border border-slate-200">
                   <div className="text-xs text-slate-500">Projected Annual Total</div>
                   <div className="text-xl font-mono font-bold text-teal-800 mt-1 tabular-nums">
-                    {formatINR(summary.annualCommitmentTotal)}
+                    {formatINR(summary.annualCommitmentTotal, summary.primaryCurrency || 'INR')}
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
                     Includes annual & quarterly
@@ -845,7 +845,7 @@ export default function App() {
                 <div className="p-4 rounded-xl bg-white border border-slate-200">
                   <div className="text-xs text-slate-500">Discretionary Subscriptions</div>
                   <div className="text-xl font-mono font-bold text-slate-900 mt-1 tabular-nums">
-                    {formatINR(summary.discretionaryAnnual)}/yr
+                    {formatINR(summary.discretionaryAnnual, summary.primaryCurrency || 'INR')}/yr
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
                     OTT, music, cloud, fitness
@@ -855,7 +855,7 @@ export default function App() {
                 <div className="p-4 rounded-xl bg-white border border-slate-200">
                   <div className="text-xs text-slate-500">Contractual Obligations</div>
                   <div className="text-xl font-mono font-bold text-slate-900 mt-1 tabular-nums">
-                    {formatINR(summary.obligationAnnual)}/yr
+                    {formatINR(summary.obligationAnnual, summary.primaryCurrency || 'INR')}/yr
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
                     Loan EMI, insurance, utility
@@ -882,6 +882,25 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
+              {summary.isMultiCurrency && summary.currencySummaries && summary.currencySummaries.length > 1 && (
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <span className="font-semibold text-slate-800">
+                    Currency-Segmented Commitment Totals (Non-INR commitments are never summed into INR totals):
+                  </span>
+                  <div className="flex flex-wrap items-center gap-3 font-mono">
+                    {summary.currencySummaries.map((cs) => (
+                      <span
+                        key={cs.currency}
+                        className="px-2.5 py-1 rounded-md bg-white border border-slate-200 text-slate-800"
+                      >
+                        <strong>{cs.currency}:</strong> {formatINR(cs.monthlyRecurringSpend, cs.currency)}/mo ·{' '}
+                        {formatINR(cs.annualCommitmentTotal, cs.currency)}/yr ({cs.activeCommitmentsCount} active)
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Charts & Upcoming Renewals Split */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1045,15 +1064,15 @@ export default function App() {
                             </span>
                           </td>
                           <td className="py-3 px-3 font-mono tabular-nums text-right font-semibold text-slate-900">
-                            {formatINR(c.latestAmount)}
+                            {formatINR(c.latestAmount, c.currency)}
                             {c.priceChangeDetected && (
                               <div className="text-[10px] text-rose-700">
-                                +{c.priceChangePercent}% vs {formatINR(c.typicalAmount)}
+                                +{c.priceChangePercent}% vs {formatINR(c.typicalAmount, c.currency)}
                               </div>
                             )}
                           </td>
                           <td className="py-3 px-3 font-mono tabular-nums text-right font-semibold text-teal-800">
-                            {formatINR(c.annualisedAmount)}/yr
+                            {formatINR(c.annualisedAmount, c.currency)}/yr
                           </td>
                           <td className="py-3 px-3 font-mono text-[11px] text-slate-700 tabular-nums">
                             {c.confidenceScore}/100 ({c.confidenceLabel}) · {c.status.replace(/_/g, ' ')}
@@ -1325,10 +1344,10 @@ export default function App() {
                       <div className="flex flex-wrap items-center gap-4 shrink-0">
                         <div className="text-right font-mono tabular-nums">
                           <div className="text-base font-bold text-slate-900">
-                            {formatINR(cmt.latestAmount)}
+                            {formatINR(cmt.latestAmount, cmt.currency)}
                           </div>
                           <div className="text-xs text-teal-800 font-semibold">
-                            {formatINR(cmt.annualisedAmount)}/yr ({formatINR(cmt.monthlyEquivalent)}/mo eq)
+                            {formatINR(cmt.annualisedAmount, cmt.currency)}/yr ({formatINR(cmt.monthlyEquivalent, cmt.currency)}/mo eq)
                           </div>
                           <div className="text-[11px] text-slate-500">
                             Next expected: {formatDateIN(cmt.nextExpectedDate)}

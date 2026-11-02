@@ -241,7 +241,7 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-800/70 text-[11px] font-mono text-slate-400">
                     <span>Ref: {entry.sourceReference}</span>
                     <span>
-                      {entry.amountMinor !== null ? `${formatMinorINR(entry.amountMinor)} · ` : ''}
+                      {entry.amountMinor !== null ? `${formatMinorINR(entry.amountMinor, entry.currency)} · ` : ''}
                       Status: <strong className="text-slate-200">{entry.verificationStatus}</strong> · Actor: {entry.actor}
                     </span>
                   </div>

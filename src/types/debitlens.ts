@@ -473,6 +473,7 @@ export interface EvidenceCasebookEntry {
   id: string;
   commitmentId: string;
   timestamp: string;
+  eventDate?: string | null;
   category: EvidenceCategoryType;
   title: string;
   description: string;
@@ -1124,9 +1125,12 @@ export interface CommitmentPassport {
       id: string;
       title: string;
       description: string;
-      date: string;
+      date: string | null;
+      evidenceDate?: string | null;
       verificationStatus: string;
+      evidenceRecordLifecycle?: EvidenceRecordLifecycleStatus;
       sourceReference?: string | null;
+      sourceType?: string;
     }[];
   };
   dataCoverage: {
