@@ -14,6 +14,24 @@ export function isValidCalendarDate(year: number, month: number, day: number): b
   );
 }
 
+export function isStrictValidIsoDate(d: string | null | undefined): d is string {
+  if (typeof d !== 'string') return false;
+  const trimmed = d.trim();
+  const m = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return false;
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  const day = parseInt(m[3], 10);
+  return isValidCalendarDate(year, month, day);
+}
+
+export function getRuntimeDateISO(overrideDate?: string): string {
+  if (overrideDate && isStrictValidIsoDate(overrideDate)) {
+    return overrideDate.trim();
+  }
+  return new Date().toISOString().slice(0, 10);
+}
+
 export function normalizeDateString(input: unknown): string | null {
   if (input === null || input === undefined) return null;
   const str = String(input).trim();

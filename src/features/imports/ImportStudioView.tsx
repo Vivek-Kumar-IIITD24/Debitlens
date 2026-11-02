@@ -522,7 +522,7 @@ export const ImportStudioView: React.FC<ImportStudioViewProps> = ({
                               {r.mappedRow?.raw_description || '—'}
                             </td>
                             <td className="p-2.5 font-bold font-mono">
-                              {r.mappedRow ? formatINR(Number(r.mappedRow.amount)) : '—'}
+                              {r.mappedRow ? formatINR(Number(r.mappedRow.amount), r.mappedRow.currency || 'INR') : '—'}
                             </td>
                             <td className="p-2.5">
                               {r.isValid ? (

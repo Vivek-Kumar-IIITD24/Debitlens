@@ -72,7 +72,7 @@ export const MerchantExplanationPanel: React.FC<MerchantExplanationPanelProps> =
                 .filter((t) => t.direction === 'DEBIT')
                 .map((t) => (
                   <option key={t.id} value={t.id}>
-                    {t.id} · {t.rawDescription} · {formatINR(t.amount)} (
+                    {t.id} · {t.rawDescription} · {formatINR(t.amount, t.currency)} (
                     {t.merchantName || 'UNRESOLVED PROCESSOR-ONLY'})
                   </option>
                 ))}

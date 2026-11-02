@@ -193,7 +193,8 @@ export const apiClient = {
       evidenceType: 'SERVICE_CONFIRMATION' | 'MANDATE_REVOCATION' | 'SUPPORT_TICKET' | 'MERCHANT_UNRESPONSIVE';
       description: string;
       referenceNumber: string;
-      evidenceDate: string;
+      evidenceDate?: string | null;
+      effectiveDate?: string | null;
     }
   ) =>
     fetchJson<{ session: CancellationSessionRecord; commitment: CommitmentRecord }>(
@@ -209,6 +210,8 @@ export const apiClient = {
       serviceLifecycleStatus: ServiceLifecycleStatus;
       referenceNumber?: string;
       notes?: string;
+      effectiveDate?: string | null;
+      evidenceDate?: string | null;
     }
   ) =>
     fetchJson<{ commitment: CommitmentRecord; session: CancellationSessionRecord }>(
@@ -224,6 +227,9 @@ export const apiClient = {
       mandateLifecycleStatus: MandateLifecycleStatus;
       referenceNumber?: string;
       notes?: string;
+      revocationDate?: string | null;
+      effectiveDate?: string | null;
+      evidenceDate?: string | null;
     }
   ) =>
     fetchJson<{ commitment: CommitmentRecord; session: CancellationSessionRecord }>(
@@ -241,9 +247,19 @@ export const apiClient = {
       mandateLifecycleStatus: MandateLifecycleStatus;
       serviceCancelledAt: string | null;
       paymentAuthorisationRevokedAt: string | null;
+      serviceMonitoringEligible?: boolean;
+      mandateMonitoringEligible?: boolean;
+      serviceMonitoringStatus?: string;
+      mandateMonitoringStatus?: string;
+      postServiceCancellationDebitDetected?: boolean;
+      postMandateRevocationDebitDetected?: boolean;
+      postServiceCancellationTransactions?: TransactionRecord[];
+      postMandateRevocationTransactions?: TransactionRecord[];
+      debitsBetweenServiceCancelAndMandateRevoke?: TransactionRecord[];
       postCancellationDebitDetected: boolean;
       postCancellationTransactions: TransactionRecord[];
       monitoringStatus: string;
+      monitoringExplanation?: string;
     }>(`/api/cancellations/${sessionOrCommitmentId}/monitoring`),
   getMandates: () => fetchJson<MandateRecord[]>('/api/mandates'),
   importMandates: (payload: { mandates?: Partial<MandateRecord>[]; mandate?: Partial<MandateRecord> }) =>

@@ -17,6 +17,7 @@ import {
   buildCommitmentGraphResponse,
   NotificationInput,
 } from '../engine/debitlensEngine';
+import { formatCurrency } from '../utils/currency';
 
 export interface Neo4jRuntimeStatus {
   configured: boolean;
@@ -348,7 +349,7 @@ export class Neo4jPersistenceService {
       allNodesMap.set(uTxn.id, {
         id: uTxn.id,
         label: 'Transaction',
-        title: `${uTxn.id} · ₹${uTxn.amount} (UNRESOLVED)`,
+        title: `${uTxn.id} · ${formatCurrency(uTxn.amount, uTxn.currency || 'INR')} (UNRESOLVED)`,
         subtitle: `${uTxn.transactionDate} · ${uTxn.rawDescription}`,
         status: 'UNRESOLVED',
         confidence: uTxn.confidenceScore,
@@ -359,6 +360,7 @@ export class Neo4jPersistenceService {
           transactionDate: uTxn.transactionDate,
           amount: uTxn.amount,
           amountMinor: uTxn.amountMinor ?? Math.round(uTxn.amount * 100),
+          currency: uTxn.currency || 'INR',
           rawDescription: uTxn.rawDescription,
           normalisedDescription: uTxn.normalisedDescription,
           paymentRail: uTxn.paymentRail,
@@ -388,6 +390,7 @@ export class Neo4jPersistenceService {
           status: 'UNRESOLVED_NEEDS_REVIEW',
         },
       });
+      const syncNowIso = new Date().toISOString();
       allEdgesMap.set(`EDGE-TXN-DESC-${uTxn.id}`, {
         id: `EDGE-TXN-DESC-${uTxn.id}`,
         source: uTxn.id,
@@ -398,7 +401,7 @@ export class Neo4jPersistenceService {
         matchingMethod: uTxn.matchingMethod,
         evidenceType: 'UNRESOLVED_DESCRIPTOR',
         sourceReference: uTxn.id,
-        createdAt: '2026-10-31T00:00:00Z',
+        createdAt: syncNowIso,
         evidenceSummary: uTxn.resolutionExplanation,
         isCoreCommitmentPath: true,
       });
@@ -413,7 +416,7 @@ export class Neo4jPersistenceService {
           matchingMethod: 'SPECIFIC_PROCESSOR_MATCH',
           evidenceType: 'PROCESSOR_ONLY_LINK',
           sourceReference: uTxn.id,
-          createdAt: '2026-10-31T00:00:00Z',
+          createdAt: syncNowIso,
           evidenceSummary: `Connected to processor node ONLY; intentionally NOT merged into any subscription.`,
           isCoreCommitmentPath: true,
         });

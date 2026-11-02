@@ -8,7 +8,7 @@ npm test
 # Executes: tsx --test src/utils/searchHistory.test.ts src/engine/debitlensEngine.test.ts
 ```
 
-### Summary of Results: **62 / 62 Passing (0 Failures)**
+### Summary of Results: **65 / 65 Passing (0 Failures)**
 
 | Test # | Suite | Test Name | Status |
 |---|---|---|---|
@@ -67,13 +67,16 @@ npm test
 | 53 | `debitlensEngine.test.ts` | Gate F (Explicit Source Provenance): Mandate and ServiceTerms with `-01` or `DOC-SEED-` IDs use explicit `sourceType` and default unknown legacy records to `UNKNOWN` | PASS |
 | 54 | `debitlensEngine.test.ts` | Gates A, B, C, D, E Server Integration: Authoritative merchant confirmation, rollback-safe serialized persistence (`executeSerializedMutation`), null evidence dates, end-to-end Passport & Evidence Pack propagation, multi-currency dashboard isolation, and review queue / investigation state machines | PASS |
 | 55 | `debitlensEngine.test.ts` | Gate A Regression: Completing local checklist steps on a commitment with Nov/Dec 2026 transactions never fabricates `2026-10-30` and never triggers false post-cancellation alerts | PASS |
-| 56 | `debitlensEngine.test.ts` | Gate B Regression: Null/undefined monetary amounts never render as `₹0.00`, genuine zero formats in its currency, and unsupported currencies never display `₹` | PASS |
-| 57 | `searchHistory.test.ts` | `normalizeSearchQuery` trims leading/trailing whitespace and collapses internal spaces | PASS |
-| 58 | `searchHistory.test.ts` | `addSearchHistoryEntry` prepends new query and ignores blank queries | PASS |
-| 59 | `searchHistory.test.ts` | `addSearchHistoryEntry` deduplicates case-insensitively and moves item to top | PASS |
-| 60 | `searchHistory.test.ts` | `addSearchHistoryEntry` enforces `maxEntries` limit | PASS |
-| 61 | `searchHistory.test.ts` | `removeSearchHistoryEntry` and `clearSearchHistory` remove items properly | PASS |
-| 62 | `searchHistory.test.ts` | `filterTransactionsByQuery` and `countDescriptorMatches` match raw descriptors and respect status filter | PASS |
+| 56 | `debitlensEngine.test.ts` | Gate B Regression: Null/undefined monetary amounts never render as `₹0.00`, genuine zero formats in its currency, and unsupported/omitted currencies never display `₹` | PASS |
+| 57 | `debitlensEngine.test.ts` | Section 2 Currency Integrity: Multi-currency USD/EUR preservation across Alerts, Casebook, Graph, Bhasha & Investigation | PASS |
+| 58 | `debitlensEngine.test.ts` | Section 3 & 4 Regression: Runtime date provider, honest playbook verification status, and engine-level strict calendar validation | PASS |
+| 59 | `debitlensEngine.test.ts` | Section 5.5 Lifecycle Matrix: Request vs completion dates, `evidenceDate` non-aliasing, refund exclusion, and idempotency | PASS |
+| 60 | `searchHistory.test.ts` | `normalizeSearchQuery` trims leading/trailing whitespace and collapses internal spaces | PASS |
+| 61 | `searchHistory.test.ts` | `addSearchHistoryEntry` prepends new query and ignores blank queries | PASS |
+| 62 | `searchHistory.test.ts` | `addSearchHistoryEntry` deduplicates case-insensitively and moves item to top | PASS |
+| 63 | `searchHistory.test.ts` | `addSearchHistoryEntry` enforces `maxEntries` limit | PASS |
+| 64 | `searchHistory.test.ts` | `removeSearchHistoryEntry` and `clearSearchHistory` remove items properly | PASS |
+| 65 | `searchHistory.test.ts` | `filterTransactionsByQuery` and `countDescriptorMatches` match raw descriptors and respect status filter | PASS |
 
 ---
 

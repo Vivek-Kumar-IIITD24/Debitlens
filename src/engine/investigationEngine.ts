@@ -250,7 +250,7 @@ export function buildUnrecognizedDebitCase(params: {
     evidenceIds: existingCase.evidenceIds || [transaction.id],
     recommendedNextAction,
     guidanceChecklist: [
-      `Search Gmail/SMS for payments of ₹${transaction.amount} around ${transaction.transactionDate}.`,
+      `Search Gmail/SMS for payments of ${formatCurrency(transaction.amount, transaction.currency || 'INR')} around ${transaction.transactionDate}.`,
       'Check banking/UPI app for active e-mandate or UPI AutoPay with matching ceiling amounts.',
       'Report any suspected unauthorised transaction to your bank immediately through its official channels. Customer liability and reporting timelines depend on the cause of the transaction and the applicable RBI directions and bank policy. Keep your complaint acknowledgement or reference number.',
     ],

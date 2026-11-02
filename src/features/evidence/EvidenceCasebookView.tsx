@@ -47,12 +47,14 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
   const [newDesc, setNewDesc] = useState('');
   const [newCategory, setNewCategory] =
     useState<EvidenceCasebookEntry['category']>('SERVICE_CANCELLATION_EVENT');
-  const [maxCapInr, setMaxCapInr] = useState<string>('499');
+  const [maxCapMajor, setMaxCapMajor] = useState<string>('499');
   const [reminderDays, setReminderDays] = useState<string>('3');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const activeCommitment =
     commitments.find((c) => c.id === selectedCommitmentId) || commitments[0] || null;
+  const activeCurrency = activeCommitment?.currency || 'INR';
+  const activeGuardrail = guardrails.find((g) => g.commitmentId === activeCommitment?.id) || null;
 
   const loadCasebookAndCoverage = async (cmtId: string) => {
     const [cb, cov, gr] = await Promise.all([
@@ -66,9 +68,13 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
     setCoverage(cov);
     setGuardrails(gr);
     const activeGr = gr.find((g) => g.commitmentId === cmtId);
+    const cmt = commitments.find((c) => c.id === cmtId);
+    const grCurr = activeGr?.currency || cmt?.currency || 'INR';
     if (activeGr) {
-      setMaxCapInr(String(fromMinorUnits(activeGr.maxExpectedAmountMinor)));
+      setMaxCapMajor(String(fromMinorUnits(activeGr.maxExpectedAmountMinor, grCurr)));
       setReminderDays(String(activeGr.preDebitReminderDays));
+    } else if (cmt) {
+      setMaxCapMajor(String(cmt.typicalAmount));
     }
   };
 
@@ -98,8 +104,11 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
   const handleSaveGuardrail = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeCommitment) return;
+    const guardrailCurrency = activeCommitment.currency || 'INR';
+    const minorCap = toMinorUnits(Number(maxCapMajor || activeCommitment.typicalAmount || 499), guardrailCurrency);
     const updated = await apiClient.updateGuardrail(activeCommitment.id, {
-      maxExpectedAmountMinor: toMinorUnits(Number(maxCapInr || 499)),
+      currency: guardrailCurrency,
+      maxExpectedAmountMinor: minorCap,
       preDebitReminderDays: Number(reminderDays || 3),
       alertOnAnyIncrease: true,
     });
@@ -107,7 +116,10 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
       prev.map((g) => (g.commitmentId === updated.commitmentId ? updated : g))
     );
     setStatusMessage(
-      `Saved financial guardrail for ${activeCommitment.serviceName}: Max expected debit ₹${maxCapInr}, pre-debit alert ${reminderDays} days prior.`
+      `Saved financial guardrail for ${activeCommitment.serviceName}: Max expected debit ${formatMinorINR(
+        minorCap,
+        guardrailCurrency
+      )} (${guardrailCurrency}), pre-debit alert ${reminderDays} days prior.`
     );
   };
 
@@ -355,19 +367,27 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
             onSubmit={handleSaveGuardrail}
             className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 space-y-3"
           >
-            <h3 className="text-xs font-semibold text-white flex items-center gap-1.5">
-              <Sliders className="w-4 h-4 text-amber-400" />
-              Financial Guardrails ({activeCommitment?.serviceName})
-            </h3>
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold text-white flex items-center gap-1.5">
+                <Sliders className="w-4 h-4 text-amber-400" />
+                Financial Guardrails ({activeCommitment?.serviceName} · {activeCurrency})
+              </h3>
+              {activeGuardrail?.provenance && (
+                <span className="px-2 py-0.5 text-[10px] font-mono rounded bg-slate-800 text-slate-300">
+                  {activeGuardrail.provenance}
+                </span>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-[10px] text-slate-400 mb-1">
-                  Max Expected Debit Threshold (INR)
+                  Max Expected Debit Threshold ({activeCurrency})
                 </label>
                 <input
                   type="number"
-                  value={maxCapInr}
-                  onChange={(e) => setMaxCapInr(e.target.value)}
+                  step="any"
+                  value={maxCapMajor}
+                  onChange={(e) => setMaxCapMajor(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"
                 />
               </div>
@@ -387,7 +407,7 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
               type="submit"
               className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs cursor-pointer"
             >
-              Save Guardrail Threshold
+              Save Guardrail Threshold ({activeCurrency})
             </button>
           </form>
 

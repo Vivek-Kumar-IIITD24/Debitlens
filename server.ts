@@ -53,6 +53,7 @@ import {
   AuditEventRecord,
   FinancialGuardrailConfig,
   ServiceLifecycleStatus,
+  RecordSourceProvenance,
   MandateLifecycleStatus,
   RecurrenceFrequency,
   PaymentRailType,
@@ -1446,7 +1447,9 @@ app.get('/api/dashboard/summary', (_req, res) => {
   > = {};
 
   for (const c of activeCommitments) {
-    const curr = (c.currency || 'INR').trim().toUpperCase();
+    const rawCurr =
+      c.currency !== undefined && c.currency !== null ? String(c.currency).trim().toUpperCase() : '';
+    const curr = isValidCurrencyCode(rawCurr) ? rawCurr : 'UNKNOWN';
     if (!totalsByCurrency[curr]) {
       totalsByCurrency[curr] = {
         currency: curr,
@@ -1510,6 +1513,7 @@ app.get('/api/dashboard/summary', (_req, res) => {
     obligationAnnual: primaryBucket.obligationAnnual,
     totalsByCurrency,
     currencySummaries,
+    unknownCurrencyCommitmentsCount: totalsByCurrency['UNKNOWN']?.activeCommitmentsCount || 0,
     isMultiCurrency: currencySummaries.length > 1,
     activeCommitmentsCount: activeCommitments.length,
     totalCommitmentsCount: state.commitments.length,
@@ -1532,7 +1536,7 @@ app.get('/api/dashboard/monthly-trend', (req, res) => {
       (t) =>
         t.direction === 'DEBIT' &&
         t.transactionDate.startsWith(m) &&
-        (t.currency || 'INR').trim().toUpperCase() === targetCurrency
+        normalizeCurrencyCode(t.currency) === targetCurrency
     );
     const subscriptions = monthTxns
       .filter(
@@ -2667,12 +2671,13 @@ app.post('/api/commitments/:id/cancellation', async (req, res) => {
 });
 
 app.patch('/api/cancellations/:id/service-status', async (req, res) => {
-  const { serviceLifecycleStatus, referenceNumber, notes, effectiveDate, evidenceDate } = (req.body || {}) as {
+  const { serviceLifecycleStatus, referenceNumber, notes, effectiveDate, evidenceDate, sourceType } = (req.body || {}) as {
     serviceLifecycleStatus: ServiceLifecycleStatus;
     referenceNumber?: string;
     notes?: string;
     effectiveDate?: string | null;
     evidenceDate?: string | null;
+    sourceType?: RecordSourceProvenance;
   };
   await executeSerializedMutation(res, () => {
     const state = computeCurrentState();
@@ -2686,19 +2691,35 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
       };
     }
 
-    const rawDateInput = effectiveDate ?? evidenceDate ?? null;
-    let parsedEvidDate: string | null = null;
-    if (rawDateInput !== null && rawDateInput !== undefined && String(rawDateInput).trim() !== '') {
-      parsedEvidDate = normalizeDateString(String(rawDateInput));
-      if (!parsedEvidDate) {
+    let parsedEffectiveDate: string | null = null;
+    if (effectiveDate !== null && effectiveDate !== undefined && String(effectiveDate).trim() !== '') {
+      parsedEffectiveDate = normalizeDateString(String(effectiveDate));
+      if (!parsedEffectiveDate) {
         return {
           errorStatus: 400,
           errorBody: {
-            error: `Invalid effectiveDate/evidenceDate "${rawDateInput}". Provide a valid YYYY-MM-DD calendar date or omit it.`,
+            error: `Invalid effectiveDate "${effectiveDate}". Provide a valid YYYY-MM-DD calendar date or omit it.`,
           },
         };
       }
     }
+
+    let parsedEvidDate: string | null = null;
+    if (evidenceDate !== null && evidenceDate !== undefined && String(evidenceDate).trim() !== '') {
+      parsedEvidDate = normalizeDateString(String(evidenceDate));
+      if (!parsedEvidDate) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: `Invalid evidenceDate "${evidenceDate}". Provide a valid YYYY-MM-DD calendar date or omit it.`,
+          },
+        };
+      }
+    }
+
+    const isServiceCompletion =
+      serviceLifecycleStatus === 'CANCELLATION_REPORTED_BY_USER' ||
+      serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED';
 
     const cmtId = sess.commitmentId;
     const prevCmt = state.commitments.find((c) => c.id === cmtId);
@@ -2707,28 +2728,65 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
     const existingEvid = currentOverride.evidenceRecords ?? sess.evidence;
     const updatedEvid = [...existingEvid];
 
-    if (referenceNumber) {
-      updatedEvid.push({
-        id: `EVID-SRV-${Date.now()}`,
-        cancellationSessionId: sess.id,
-        evidenceType:
-          serviceLifecycleStatus === 'MERCHANT_UNRESPONSIVE'
-            ? 'MERCHANT_UNRESPONSIVE'
-            : 'SERVICE_CONFIRMATION',
-        description: notes || `Service lifecycle updated to ${serviceLifecycleStatus}`,
-        referenceNumber,
-        evidenceDate: parsedEvidDate,
-        evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
-        sourceType: 'USER_ENTERED',
-        verificationStatus: 'EVIDENCE_ATTACHED',
-        createdAt: new Date().toISOString(),
-      });
+    const cleanRef = referenceNumber ? referenceNumber.trim() : '';
+    const hasExistingServiceEvidence = updatedEvid.some(
+      (e) => e.evidenceType === 'SERVICE_CONFIRMATION' && Boolean(e.referenceNumber?.trim())
+    );
+    if (
+      serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED' &&
+      !cleanRef &&
+      !hasExistingServiceEvidence
+    ) {
+      return {
+        errorStatus: 400,
+        errorBody: {
+          error:
+            'Cannot set Layer A status to CANCELLATION_EVIDENCE_ATTACHED without a valid SERVICE_CONFIRMATION evidence reference number.',
+        },
+      };
     }
+
+    if (cleanRef) {
+      const evidType =
+        serviceLifecycleStatus === 'MERCHANT_UNRESPONSIVE'
+          ? 'MERCHANT_UNRESPONSIVE'
+          : 'SERVICE_CONFIRMATION';
+      const alreadyExists = updatedEvid.some(
+        (e) =>
+          e.referenceNumber === cleanRef &&
+          e.evidenceType === evidType &&
+          (e.evidenceDate ?? null) === (parsedEvidDate ?? null)
+      );
+      if (!alreadyExists) {
+        updatedEvid.push({
+          id: `EVID-SRV-${Date.now()}`,
+          cancellationSessionId: sess.id,
+          evidenceType: evidType,
+          description: notes || `Service lifecycle updated to ${serviceLifecycleStatus}`,
+          referenceNumber: cleanRef,
+          evidenceDate: parsedEvidDate,
+          ...(isServiceCompletion && parsedEffectiveDate ? { effectiveDate: parsedEffectiveDate } : {}),
+          evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
+          sourceType: sourceType || 'USER_ENTERED',
+          verificationStatus:
+            serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED'
+              ? 'EVIDENCE_ATTACHED'
+              : 'USER_REPORTED',
+          createdAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    const nextServiceCancelledAt = isServiceCompletion
+      ? effectiveDate !== undefined
+        ? parsedEffectiveDate
+        : currentOverride.serviceCancelledAtOverride ?? sess.serviceCancelledAt ?? null
+      : null;
 
     userCommitmentOverrides[cmtId] = {
       ...currentOverride,
       serviceLifecycleStatus,
-      ...(parsedEvidDate !== null ? { serviceCancelledAtOverride: parsedEvidDate } : {}),
+      serviceCancelledAtOverride: nextServiceCancelledAt,
       evidenceRecords: updatedEvid,
     };
 
@@ -2736,10 +2794,14 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
       commitmentId: cmtId,
       eventType: 'SERVICE_STATUS_UPDATED',
       summary: `Updated Layer A Service Lifecycle Status to ${serviceLifecycleStatus}${
-        referenceNumber ? ` (Ref: ${referenceNumber})` : ''
-      }.`,
-      previousState: prevCmt?.serviceLifecycleStatus || 'ACTIVE',
-      newState: serviceLifecycleStatus,
+        cleanRef ? ` (Ref: ${cleanRef})` : ''
+      }${nextServiceCancelledAt ? ` [Effective Date: ${nextServiceCancelledAt}]` : ''}.`,
+      previousState: `${prevCmt?.serviceLifecycleStatus || 'ACTIVE'}${
+        sess.serviceCancelledAt ? ` (${sess.serviceCancelledAt})` : ''
+      }`,
+      newState: `${serviceLifecycleStatus}${
+        nextServiceCancelledAt ? ` (${nextServiceCancelledAt})` : ''
+      }`,
     });
 
     const updatedState = computeCurrentState();
@@ -2753,12 +2815,14 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
 });
 
 app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
-  const { mandateLifecycleStatus, referenceNumber, notes, revocationDate, evidenceDate } = (req.body || {}) as {
+  const { mandateLifecycleStatus, referenceNumber, notes, revocationDate, effectiveDate, evidenceDate, sourceType } = (req.body || {}) as {
     mandateLifecycleStatus: MandateLifecycleStatus;
     referenceNumber?: string;
     notes?: string;
     revocationDate?: string | null;
+    effectiveDate?: string | null;
     evidenceDate?: string | null;
+    sourceType?: RecordSourceProvenance;
   };
   await executeSerializedMutation(res, () => {
     const state = computeCurrentState();
@@ -2772,19 +2836,41 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
       };
     }
 
-    const rawDateInput = revocationDate ?? evidenceDate ?? null;
-    let parsedEvidDate: string | null = null;
-    if (rawDateInput !== null && rawDateInput !== undefined && String(rawDateInput).trim() !== '') {
-      parsedEvidDate = normalizeDateString(String(rawDateInput));
-      if (!parsedEvidDate) {
+    const hasExplicitRevocationParam = revocationDate !== undefined || effectiveDate !== undefined;
+    const rawRevocationInput = revocationDate !== undefined ? revocationDate : effectiveDate ?? null;
+    let parsedRevocationDate: string | null = null;
+    if (
+      rawRevocationInput !== null &&
+      rawRevocationInput !== undefined &&
+      String(rawRevocationInput).trim() !== ''
+    ) {
+      parsedRevocationDate = normalizeDateString(String(rawRevocationInput));
+      if (!parsedRevocationDate) {
         return {
           errorStatus: 400,
           errorBody: {
-            error: `Invalid revocationDate/evidenceDate "${rawDateInput}". Provide a valid YYYY-MM-DD calendar date or omit it.`,
+            error: `Invalid revocationDate "${rawRevocationInput}". Provide a valid YYYY-MM-DD calendar date or omit it.`,
           },
         };
       }
     }
+
+    let parsedEvidDate: string | null = null;
+    if (evidenceDate !== null && evidenceDate !== undefined && String(evidenceDate).trim() !== '') {
+      parsedEvidDate = normalizeDateString(String(evidenceDate));
+      if (!parsedEvidDate) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: `Invalid evidenceDate "${evidenceDate}". Provide a valid YYYY-MM-DD calendar date or omit it.`,
+          },
+        };
+      }
+    }
+
+    const isMandateCompletion =
+      mandateLifecycleStatus === 'REVOCATION_REPORTED_BY_USER' ||
+      mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED';
 
     const cmtId = sess.commitmentId;
     const prevCmt = state.commitments.find((c) => c.id === cmtId);
@@ -2793,25 +2879,63 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
     const existingEvid = currentOverride.evidenceRecords ?? sess.evidence;
     const updatedEvid = [...existingEvid];
 
-    if (referenceNumber) {
-      updatedEvid.push({
-        id: `EVID-MND-${Date.now()}`,
-        cancellationSessionId: sess.id,
-        evidenceType: 'MANDATE_REVOCATION',
-        description: notes || `Mandate lifecycle updated to ${mandateLifecycleStatus}`,
-        referenceNumber,
-        evidenceDate: parsedEvidDate,
-        evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
-        sourceType: 'USER_ENTERED',
-        verificationStatus: 'EVIDENCE_ATTACHED',
-        createdAt: new Date().toISOString(),
-      });
+    const cleanRef = referenceNumber ? referenceNumber.trim() : '';
+    const hasExistingMandateEvidence = updatedEvid.some(
+      (e) => e.evidenceType === 'MANDATE_REVOCATION' && Boolean(e.referenceNumber?.trim())
+    );
+    if (
+      mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED' &&
+      !cleanRef &&
+      !hasExistingMandateEvidence
+    ) {
+      return {
+        errorStatus: 400,
+        errorBody: {
+          error:
+            'Cannot set Layer B status to REVOCATION_EVIDENCE_ATTACHED without a valid MANDATE_REVOCATION evidence reference number.',
+        },
+      };
     }
+
+    if (cleanRef) {
+      const alreadyExists = updatedEvid.some(
+        (e) =>
+          e.referenceNumber === cleanRef &&
+          e.evidenceType === 'MANDATE_REVOCATION' &&
+          (e.evidenceDate ?? null) === (parsedEvidDate ?? null)
+      );
+      if (!alreadyExists) {
+        updatedEvid.push({
+          id: `EVID-MND-${Date.now()}`,
+          cancellationSessionId: sess.id,
+          evidenceType: 'MANDATE_REVOCATION',
+          description: notes || `Mandate lifecycle updated to ${mandateLifecycleStatus}`,
+          referenceNumber: cleanRef,
+          evidenceDate: parsedEvidDate,
+          ...(isMandateCompletion && parsedRevocationDate
+            ? { effectiveDate: parsedRevocationDate }
+            : {}),
+          evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
+          sourceType: sourceType || 'USER_ENTERED',
+          verificationStatus:
+            mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED'
+              ? 'EVIDENCE_ATTACHED'
+              : 'USER_REPORTED',
+          createdAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    const nextMandateRevokedAt = isMandateCompletion
+      ? hasExplicitRevocationParam
+        ? parsedRevocationDate
+        : currentOverride.mandateRevokedAtOverride ?? sess.paymentAuthorisationRevokedAt ?? null
+      : null;
 
     userCommitmentOverrides[cmtId] = {
       ...currentOverride,
       mandateLifecycleStatus,
-      ...(parsedEvidDate !== null ? { mandateRevokedAtOverride: parsedEvidDate } : {}),
+      mandateRevokedAtOverride: nextMandateRevokedAt,
       evidenceRecords: updatedEvid,
     };
 
@@ -2834,10 +2958,14 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
       commitmentId: cmtId,
       eventType: 'MANDATE_STATUS_UPDATED',
       summary: `Updated Layer B Mandate Lifecycle Status to ${mandateLifecycleStatus}${
-        referenceNumber ? ` (Ref: ${referenceNumber})` : ''
-      }.`,
-      previousState: prevCmt?.mandateLifecycleStatus || 'ACTIVE',
-      newState: mandateLifecycleStatus,
+        cleanRef ? ` (Ref: ${cleanRef})` : ''
+      }${nextMandateRevokedAt ? ` [Effective Revocation Date: ${nextMandateRevokedAt}]` : ''}.`,
+      previousState: `${prevCmt?.mandateLifecycleStatus || 'ACTIVE'}${
+        sess.paymentAuthorisationRevokedAt ? ` (${sess.paymentAuthorisationRevokedAt})` : ''
+      }`,
+      newState: `${mandateLifecycleStatus}${
+        nextMandateRevokedAt ? ` (${nextMandateRevokedAt})` : ''
+      }`,
     });
 
     const updatedState = computeCurrentState();
@@ -2862,27 +2990,70 @@ app.get('/api/cancellations/:id/monitoring', (req, res) => {
   const postCancelTxns = state.transactions.filter((t) =>
     sess.postCancellationTransactionIds.includes(t.id)
   );
+  const postServiceCancelTxns = state.transactions.filter((t) =>
+    (sess.postServiceCancellationTransactionIds || []).includes(t.id)
+  );
+  const postMandateRevokeTxns = state.transactions.filter((t) =>
+    (sess.postMandateRevocationTransactionIds || []).includes(t.id)
+  );
+  const debitsBetweenServiceCancelAndMandateRevoke = postServiceCancelTxns.filter((t) =>
+    sess.paymentAuthorisationRevokedAt
+      ? t.transactionDate <= sess.paymentAuthorisationRevokedAt
+      : true
+  );
   const commitmentTransactions = state.transactions
     .filter((t) => t.commitmentId === sess.commitmentId && t.direction === 'DEBIT')
-    .sort((a, b) => Date.parse(a.transactionDate) - Date.parse(b.transactionDate));
+    .sort((a, b) => a.transactionDate.localeCompare(b.transactionDate));
 
   const srvStatus = cmt?.serviceLifecycleStatus || 'ACTIVE';
   const mndStatus = cmt?.mandateLifecycleStatus || 'ACTIVE';
-  const hasCancelOrRevokeReported =
+  const hasServiceCancelReported =
     srvStatus === 'CANCELLATION_REPORTED_BY_USER' ||
-    srvStatus === 'CANCELLATION_EVIDENCE_ATTACHED' ||
+    srvStatus === 'CANCELLATION_EVIDENCE_ATTACHED';
+  const hasMandateRevokeReported =
     mndStatus === 'REVOCATION_REPORTED_BY_USER' ||
     mndStatus === 'REVOCATION_EVIDENCE_ATTACHED';
+  const hasCancelOrRevokeReported = hasServiceCancelReported || hasMandateRevokeReported;
+
+  const serviceMonitoringEligible = Boolean(sess.serviceCancelledAt);
+  const mandateMonitoringEligible = Boolean(sess.paymentAuthorisationRevokedAt);
   const effectiveCancelDate = sess.serviceCancelledAt || sess.paymentAuthorisationRevokedAt || null;
+
+  const serviceMonitoringStatus = sess.serviceCancelledAt
+    ? postServiceCancelTxns.length > 0
+      ? 'POST_SERVICE_CANCELLATION_DEBIT_DETECTED'
+      : 'SERVICE_MONITORING_CLEAN'
+    : hasServiceCancelReported
+    ? 'SERVICE_EFFECTIVE_DATE_UNAVAILABLE'
+    : 'SERVICE_ACTIVE';
+
+  const mandateMonitoringStatus = sess.paymentAuthorisationRevokedAt
+    ? postMandateRevokeTxns.length > 0
+      ? 'POST_MANDATE_REVOCATION_DEBIT_DETECTED'
+      : 'MANDATE_MONITORING_CLEAN'
+    : hasMandateRevokeReported
+    ? 'MANDATE_REVOCATION_DATE_UNAVAILABLE'
+    : 'MANDATE_ACTIVE';
 
   let monitoringStatus: string;
   let monitoringExplanation: string;
-  if (postCancelTxns.length > 0) {
+  if (postMandateRevokeTxns.length > 0) {
     monitoringStatus = 'POST_CANCELLATION_DEBIT_DETECTED';
-    monitoringExplanation = `${postCancelTxns.length} debit(s) observed after recorded cancellation/revocation date (${effectiveCancelDate}).`;
+    monitoringExplanation = `${postMandateRevokeTxns.length} debit(s) observed after recorded Layer B mandate revocation date (${sess.paymentAuthorisationRevokedAt}).`;
+  } else if (postServiceCancelTxns.length > 0) {
+    monitoringStatus = 'POST_CANCELLATION_DEBIT_DETECTED';
+    monitoringExplanation = sess.paymentAuthorisationRevokedAt
+      ? `${postServiceCancelTxns.length} debit(s) observed after Layer A service cancellation (${sess.serviceCancelledAt}) and before/on Layer B mandate revocation (${sess.paymentAuthorisationRevokedAt}); zero debits after mandate revocation.`
+      : `${postServiceCancelTxns.length} debit(s) observed after Layer A service cancellation (${sess.serviceCancelledAt}) while Layer B payment mandate revocation date is not yet recorded.`;
   } else if (sess.serviceCancelledAt && sess.paymentAuthorisationRevokedAt) {
     monitoringStatus = 'MONITORING_ACTIVE_CLEAN';
-    monitoringExplanation = `Zero debits observed after service cancellation (${sess.serviceCancelledAt}) and mandate revocation (${sess.paymentAuthorisationRevokedAt}).`;
+    monitoringExplanation = `Zero debits observed after Layer A service cancellation (${sess.serviceCancelledAt}) and Layer B mandate revocation (${sess.paymentAuthorisationRevokedAt}).`;
+  } else if (sess.serviceCancelledAt && !sess.paymentAuthorisationRevokedAt) {
+    monitoringStatus = 'SERVICE_MONITORING_ONLY_MANDATE_DATE_UNAVAILABLE';
+    monitoringExplanation = `Zero debits observed after Layer A service cancellation (${sess.serviceCancelledAt}). Layer B mandate revocation effective date is unavailable (null).`;
+  } else if (!sess.serviceCancelledAt && sess.paymentAuthorisationRevokedAt) {
+    monitoringStatus = 'MANDATE_MONITORING_ONLY_SERVICE_DATE_UNAVAILABLE';
+    monitoringExplanation = `Zero debits observed after Layer B mandate revocation (${sess.paymentAuthorisationRevokedAt}). Layer A service cancellation effective date is unavailable (null).`;
   } else if (hasCancelOrRevokeReported && !effectiveCancelDate) {
     monitoringStatus = 'EFFECTIVE_DATE_UNAVAILABLE';
     monitoringExplanation =
@@ -2900,6 +3071,15 @@ app.get('/api/cancellations/:id/monitoring', (req, res) => {
     mandateLifecycleStatus: mndStatus,
     serviceCancelledAt: sess.serviceCancelledAt,
     paymentAuthorisationRevokedAt: sess.paymentAuthorisationRevokedAt,
+    serviceMonitoringEligible,
+    mandateMonitoringEligible,
+    serviceMonitoringStatus,
+    mandateMonitoringStatus,
+    postServiceCancellationDebitDetected: postServiceCancelTxns.length > 0,
+    postMandateRevocationDebitDetected: postMandateRevokeTxns.length > 0,
+    postServiceCancellationTransactions: postServiceCancelTxns,
+    postMandateRevocationTransactions: postMandateRevokeTxns,
+    debitsBetweenServiceCancelAndMandateRevoke,
     postCancellationDebitDetected: postCancelTxns.length > 0,
     postCancellationTransactions: postCancelTxns,
     commitmentTransactions,
@@ -2944,11 +3124,13 @@ app.patch('/api/cancellation/sessions/:id/steps/:stepId', async (req, res) => {
 });
 
 app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
-  const { evidenceType, description, referenceNumber, evidenceDate } = req.body as {
+  const { evidenceType, description, referenceNumber, evidenceDate, effectiveDate, sourceType } = req.body as {
     evidenceType: CancellationEvidenceRecord['evidenceType'];
     description: string;
     referenceNumber: string;
     evidenceDate?: string | null;
+    effectiveDate?: string | null;
+    sourceType?: RecordSourceProvenance;
   };
   if (!referenceNumber || !description) {
     res.status(400).json({ error: 'Reference number and description are required.' });
@@ -2979,33 +3161,59 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
       }
     }
 
+    let parsedEffectiveDate: string | null = null;
+    if (effectiveDate !== undefined && effectiveDate !== null && String(effectiveDate).trim() !== '') {
+      parsedEffectiveDate = normalizeDateString(String(effectiveDate));
+      if (!parsedEffectiveDate) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: `Invalid effectiveDate "${effectiveDate}". Provide a valid YYYY-MM-DD calendar date or omit it.`,
+          },
+        };
+      }
+    }
+
     const cmtId = sess.commitmentId;
     const existingEvidence = userCommitmentOverrides[cmtId]?.evidenceRecords ?? sess.evidence;
-    const newEvid: CancellationEvidenceRecord = {
-      id: `EVID-${Date.now()}`,
-      cancellationSessionId: sess.id,
-      evidenceType: evidenceType || 'SERVICE_CONFIRMATION',
-      description,
-      referenceNumber,
-      evidenceDate: parsedEvidenceDate,
-      evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
-      sourceType: 'USER_ENTERED',
-      verificationStatus: 'USER_REPORTED',
-      createdAt: new Date().toISOString(),
-    };
-    userCommitmentOverrides[cmtId] = {
-      ...(userCommitmentOverrides[cmtId] || {}),
-      evidenceRecords: [...existingEvidence, newEvid],
-    };
-    recordAuditEvent({
-      commitmentId: cmtId,
-      eventType: 'EVIDENCE_ATTACHED',
-      summary: `Attached ${evidenceType || 'SERVICE_CONFIRMATION'} evidence reference (Ref: ${referenceNumber}${
-        parsedEvidenceDate ? `, Date: ${parsedEvidenceDate}` : ''
-      }).`,
-      previousState: null,
-      newState: referenceNumber,
-    });
+    const cleanRef = referenceNumber.trim();
+    const resolvedType = evidenceType || 'SERVICE_CONFIRMATION';
+    const existingDuplicate = existingEvidence.find(
+      (e) =>
+        e.referenceNumber === cleanRef &&
+        e.evidenceType === resolvedType &&
+        (e.evidenceDate ?? null) === (parsedEvidenceDate ?? null) &&
+        (e.effectiveDate ?? null) === (parsedEffectiveDate ?? null)
+    );
+    const newEvid: CancellationEvidenceRecord =
+      existingDuplicate || {
+        id: `EVID-${Date.now()}`,
+        cancellationSessionId: sess.id,
+        evidenceType: resolvedType,
+        description,
+        referenceNumber: cleanRef,
+        evidenceDate: parsedEvidenceDate,
+        ...(parsedEffectiveDate ? { effectiveDate: parsedEffectiveDate } : {}),
+        evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
+        sourceType: sourceType || 'USER_ENTERED',
+        verificationStatus: 'USER_REPORTED',
+        createdAt: new Date().toISOString(),
+      };
+    if (!existingDuplicate) {
+      userCommitmentOverrides[cmtId] = {
+        ...(userCommitmentOverrides[cmtId] || {}),
+        evidenceRecords: [...existingEvidence, newEvid],
+      };
+      recordAuditEvent({
+        commitmentId: cmtId,
+        eventType: 'EVIDENCE_ATTACHED',
+        summary: `Attached ${resolvedType} evidence reference (Ref: ${cleanRef}${
+          parsedEvidenceDate ? `, Evidence Date: ${parsedEvidenceDate}` : ''
+        }${parsedEffectiveDate ? `, Effective Date: ${parsedEffectiveDate}` : ''}).`,
+        previousState: null,
+        newState: cleanRef,
+      });
+    }
     const updatedState = computeCurrentState();
     return {
       body: {
@@ -3040,6 +3248,7 @@ app.get('/api/guardrails', (_req, res) => {
 app.patch('/api/guardrails/:commitmentId', async (req, res) => {
   const cmtId = req.params.commitmentId;
   const {
+    currency,
     maxExpectedAmountMinor,
     alertOnAnyIncrease,
     preDebitReminderDays,
@@ -3047,22 +3256,59 @@ app.patch('/api/guardrails/:commitmentId', async (req, res) => {
   } = (req.body || {}) as Partial<FinancialGuardrailConfig>;
 
   await executeSerializedMutation(res, () => {
-    computeCurrentState();
+    const state = computeCurrentState();
+    const targetCommitment = state.commitments.find((c) => c.id === cmtId);
+    const commitmentCurrency = normalizeCurrencyCode(targetCommitment?.currency, 'INR');
+
+    if (currency !== undefined && currency !== null && String(currency).trim() !== '') {
+      if (!isValidCurrencyCode(currency)) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: `Unsupported or invalid guardrail currency "${currency}".`,
+          },
+        };
+      }
+      const normalizedReqCurrency = normalizeCurrencyCode(currency);
+      if (targetCommitment && normalizedReqCurrency !== commitmentCurrency) {
+        return {
+          errorStatus: 400,
+          errorBody: {
+            error: `Cross-currency guardrail mismatch: commitment ${cmtId} is denominated in ${commitmentCurrency}, cannot configure guardrail in ${normalizedReqCurrency}.`,
+          },
+        };
+      }
+    }
+
     const idx = guardrailsStore.findIndex((g) => g.commitmentId === cmtId);
+    const nowIso = new Date().toISOString();
     const existing: FinancialGuardrailConfig =
       idx >= 0
         ? guardrailsStore[idx]
         : {
             commitmentId: cmtId,
-            maxExpectedAmountMinor: 49900,
+            currency: commitmentCurrency,
+            maxExpectedAmountMinor: toMinorUnits(
+              targetCommitment?.typicalAmount ?? 499,
+              commitmentCurrency
+            ),
             alertOnAnyIncrease: true,
             preDebitReminderDays: 3,
             requireTwoLayerCancellationConfirmation: true,
-            updatedAt: new Date().toISOString(),
+            sourceType: 'SYSTEM_GENERATED',
+            provenance: 'SYSTEM_DERIVED',
+            createdAt: nowIso,
+            updatedAt: nowIso,
           };
+
+    const resolvedCurrency =
+      currency && isValidCurrencyCode(currency)
+        ? normalizeCurrencyCode(currency)
+        : existing.currency || commitmentCurrency;
 
     const updated: FinancialGuardrailConfig = {
       ...existing,
+      currency: resolvedCurrency,
       ...(maxExpectedAmountMinor !== undefined
         ? { maxExpectedAmountMinor: Number(maxExpectedAmountMinor) }
         : {}),
@@ -3079,7 +3325,10 @@ app.patch('/api/guardrails/:commitmentId', async (req, res) => {
             ),
           }
         : {}),
-      updatedAt: new Date().toISOString(),
+      sourceType: 'USER_ENTERED',
+      provenance: 'USER_CONFIGURED',
+      createdAt: existing.createdAt || nowIso,
+      updatedAt: nowIso,
     };
 
     if (idx >= 0) {
@@ -3087,6 +3336,15 @@ app.patch('/api/guardrails/:commitmentId', async (req, res) => {
     } else {
       guardrailsStore.push(updated);
     }
+
+    recordAuditEvent({
+      commitmentId: cmtId,
+      eventType: 'GUARDRAIL_UPDATED',
+      summary: `Updated financial guardrail for ${cmtId} (${resolvedCurrency} minor cap: ${updated.maxExpectedAmountMinor}, reminder: ${updated.preDebitReminderDays}d).`,
+      previousState: `${existing.currency} ${existing.maxExpectedAmountMinor}`,
+      newState: `${updated.currency} ${updated.maxExpectedAmountMinor}`,
+    });
+
     return { syncGraph: false, body: updated };
   });
 });

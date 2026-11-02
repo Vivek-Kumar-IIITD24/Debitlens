@@ -65,7 +65,7 @@ export const MultilingualAlert: React.FC<MultilingualAlertProps> = ({
         <div className="text-xs font-mono text-slate-700 tabular-nums">
           Detected: <strong>{alert.detectedValue}</strong>
           {alert.previousValue ? ` (Prior: ${alert.previousValue})` : ''}
-          {alert.annualImpact ? ` · Annual Impact: ${formatINR(alert.annualImpact)}` : ''}
+          {alert.annualImpact ? ` · Annual Impact: ${formatINR(alert.annualImpact, alert.currency || 'INR')}` : ''}
         </div>
       </div>
 

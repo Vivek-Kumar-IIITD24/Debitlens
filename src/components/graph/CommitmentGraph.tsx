@@ -270,7 +270,7 @@ export const CommitmentGraph: React.FC<CommitmentGraphProps> = ({
             >
               {(filteredCommitments.length > 0 ? filteredCommitments : commitments).map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.merchantName} — {c.serviceName} ({formatINR(c.latestAmount)} · {c.connectedDescriptors.length} alias{c.connectedDescriptors.length > 1 ? 'es' : ''})
+                  {c.merchantName} — {c.serviceName} ({formatINR(c.latestAmount, c.currency)} · {c.connectedDescriptors.length} alias{c.connectedDescriptors.length > 1 ? 'es' : ''})
                 </option>
               ))}
             </select>
@@ -489,7 +489,7 @@ export const CommitmentGraph: React.FC<CommitmentGraphProps> = ({
                     <th className="py-2.5 px-3 font-semibold">Date</th>
                     <th className="py-2.5 px-3 font-semibold">Raw Statement Descriptor</th>
                     <th className="py-2.5 px-3 font-semibold">Account Alias</th>
-                    <th className="py-2.5 px-3 font-semibold text-right">Amount (INR)</th>
+                    <th className="py-2.5 px-3 font-semibold text-right">Amount</th>
                     <th className="py-2.5 px-3 font-semibold text-right">Action</th>
                   </tr>
                 </thead>
@@ -501,7 +501,7 @@ export const CommitmentGraph: React.FC<CommitmentGraphProps> = ({
                       <td className="py-2 px-3 font-mono text-slate-800">{rec.rawDescriptor}</td>
                       <td className="py-2 px-3 font-mono text-slate-600">{rec.accountAlias}</td>
                       <td className="py-2 px-3 font-mono tabular-nums font-semibold text-slate-900 text-right">
-                        {formatINR(rec.amount)}
+                        {formatINR(rec.amount, rec.currency || 'INR')}
                       </td>
                       <td className="py-2 px-3 text-right">
                         <button

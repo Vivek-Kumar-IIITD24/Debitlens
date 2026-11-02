@@ -361,6 +361,7 @@ export interface DetectionAlertRecord {
   previousValue: string | null;
   percentageChange: number | null;
   annualImpact: number | null;
+  currency?: string;
   evidenceReference: string;
   suggestedAction: string;
   createdAt: string;
@@ -547,10 +548,14 @@ export interface DataCoverageSummary {
 
 export interface FinancialGuardrailConfig {
   commitmentId: string;
+  currency: string;
   maxExpectedAmountMinor: number;
   alertOnAnyIncrease: boolean;
   preDebitReminderDays: number;
   requireTwoLayerCancellationConfirmation: boolean;
+  sourceType?: RecordSourceProvenance;
+  provenance?: 'SYSTEM_DERIVED' | 'USER_CONFIGURED';
+  createdAt?: string;
   updatedAt: string;
 }
 
@@ -573,6 +578,7 @@ export interface CancellationEvidenceRecord {
   description: string;
   referenceNumber: string;
   evidenceDate: string | null;
+  effectiveDate?: string | null;
   verificationStatus?: 'USER_REPORTED' | 'EVIDENCE_ATTACHED';
   evidenceRecordLifecycle?: EvidenceRecordLifecycleStatus;
   actionLifecycle?: ActionLifecycleStatus;
@@ -611,10 +617,14 @@ export interface CancellationSessionRecord {
   initiatedAt: string | null;
   serviceCancelledAt: string | null;
   paymentAuthorisationRevokedAt: string | null;
-  lastReviewedAt: string;
+  lastReviewedAt: string | null;
   steps: CancellationPlaybookStep[];
   evidence: CancellationEvidenceRecord[];
   postCancellationTransactionIds: string[];
+  postServiceCancellationTransactionIds?: string[];
+  postMandateRevocationTransactionIds?: string[];
+  serviceMonitoringEligible?: boolean;
+  mandateMonitoringEligible?: boolean;
   monitoringStatus?: 'MONITORING_ACTIVE' | 'POST_CANCELLATION_DEBIT_DETECTED' | 'NO_SUBSEQUENT_DEBIT_IN_IMPORTED_RECORDS';
   monitoringSummary?: string;
 }
@@ -710,6 +720,7 @@ export interface CommitmentGraphResponse {
       date: string;
       rawDescriptor: string;
       amount: number;
+      currency?: string;
       accountAlias: string;
     }[];
   };

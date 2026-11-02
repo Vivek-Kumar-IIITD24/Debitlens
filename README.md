@@ -73,7 +73,7 @@ Ordinary consumers face opaque bank statement descriptors (`RZP*STREAMBOX`, `SI-
    npm run dev
    # or: npm start
    ```
-3. Run automated unit, financial integrity & adversarial tests (62 tests across `src/engine/debitlensEngine.test.ts` and `src/utils/searchHistory.test.ts`):
+3. Run automated unit, financial integrity & adversarial tests (65 tests across `src/engine/debitlensEngine.test.ts` and `src/utils/searchHistory.test.ts`):
    ```bash
    npm test
    ```

@@ -29,6 +29,7 @@ import {
   getMinorUnitLabel,
 } from '../utils/currency';
 import { SUPPORTED_LANGUAGES } from './referenceData';
+import { normalizeDateString } from '../utils/dateUtils';
 
 // ============================================================================
 // 1. INITIAL SEED MANDATES (Section 7 & 17)
@@ -746,9 +747,12 @@ export function getEffectiveMandateStatus(
     return 'EXPIRED';
   }
   if (mandate.endDate) {
-    const endMs = Date.parse(mandate.endDate);
-    if (!isNaN(endMs) && endMs < evaluationDate.getTime()) {
-      return 'EXPIRED';
+    const normalizedEndDate = normalizeDateString(mandate.endDate);
+    if (normalizedEndDate) {
+      const evalIso = evaluationDate.toISOString().slice(0, 10);
+      if (normalizedEndDate < evalIso) {
+        return 'EXPIRED';
+      }
     }
   }
   if (mandate.mandateStatus === 'ACTIVE') {
@@ -1426,6 +1430,8 @@ export function runFullReconciliation(params: {
           ? linkedCommitment.serviceName
           : `${mnd.merchantName} (${mnd.paymentRail.replace(/_/g, ' ')})`,
         status: 'MANDATE_WITHOUT_RECENT_TRANSACTION',
+        currency: mnd.currency,
+        mandateCurrency: mnd.currency,
         expectedServiceAmountMinor: null,
         expectedServiceAmount: null,
         actualTransactionAmountMinor: null,
@@ -1440,7 +1446,8 @@ export function runFullReconciliation(params: {
         mandateReference: mnd.mandateReference,
         serviceDocumentId: null,
         explanation: `Imported mandate ${mnd.mandateReference} for ${mnd.merchantName} (ceiling ${formatMinorINR(
-          mnd.maxAmountMinor
+          mnd.maxAmountMinor,
+          mnd.currency
         )}/${mnd.frequency.toLowerCase()}) remains ACTIVE since ${
           mnd.startDate
         }, but no recent debit transactions were found in the imported statement window.`,
@@ -1458,7 +1465,7 @@ export function runFullReconciliation(params: {
   const unresolvedTxns = transactions.filter((t) => t.resolutionStatus === 'UNRESOLVED');
   if (unresolvedTxns.length > 0) {
     const latestUnres = unresolvedTxns[unresolvedTxns.length - 1];
-    const amtMinor = toMinorUnits(latestUnres.amount);
+    const amtMinor = toMinorUnits(latestUnres.amount, latestUnres.currency);
     findings.push({
       id: 'REC-UNRESOLVED-POOL',
       commitmentId: 'UNRESOLVED-POOL',
@@ -1467,6 +1474,8 @@ export function runFullReconciliation(params: {
         .map((t) => t.id)
         .join(', ')})`,
       status: 'UNRESOLVED',
+      currency: latestUnres.currency,
+      actualTransactionCurrency: latestUnres.currency,
       expectedServiceAmountMinor: null,
       expectedServiceAmount: null,
       actualTransactionAmountMinor: amtMinor,
@@ -1533,19 +1542,22 @@ export function buildCommitmentEvidenceCasebook(params: {
 
   // 1. Mandate record evidence (labelled IMPORTED_RECORD, never automatically CONFIRMED)
   if (mandate) {
+    const mndCcy = mandate.currency || commitment.currency || 'INR';
     entries.push({
       id: `CB-MND-${mandate.id}`,
       commitmentId: commitment.id,
       timestamp: `${mandate.startDate}T09:00:00Z`,
       category: 'MANDATE_RECORD',
       title: `Payment Authorisation Record (${mandate.sourceType}): ${mandate.mandateReference}`,
-      description: `${mandate.paymentRail.replace(/_/g, ' ')} mandate authorised up to ${formatMinorINR(
-        mandate.maxAmountMinor
+      description: `${mandate.paymentRail.replace(/_/g, ' ')} mandate authorised up to ${formatMinorCurrency(
+        mandate.maxAmountMinor,
+        mndCcy
       )} (${mandate.frequency}) for ${mandate.merchantName}. Current mandate status: ${
         mandate.mandateStatus
       }.`,
       sourceReference: mandate.mandateReference,
       amountMinor: mandate.maxAmountMinor,
+      currency: mndCcy,
       verificationStatus: 'IMPORTED_RECORD',
       actor: mandate.sourceType === 'USER_IMPORTED' ? 'USER_MANDATE_IMPORT' : 'SEEDED_MANDATE_REGISTRY',
     });
@@ -1553,9 +1565,10 @@ export function buildCommitmentEvidenceCasebook(params: {
 
   // 2. Service Terms / Invoice evidence (USER_CONFIRMED if userVerified=true, otherwise INFERRED)
   if (serviceTerms) {
+    const docCcy = serviceTerms.currency || commitment.currency || 'INR';
     const formattedPrice =
       serviceTerms.expectedAmountMinor !== null
-        ? formatMinorINR(serviceTerms.expectedAmountMinor)
+        ? formatMinorCurrency(serviceTerms.expectedAmountMinor, docCcy)
         : 'Price Unavailable';
     entries.push({
       id: `CB-DOC-${serviceTerms.id}`,
@@ -1569,6 +1582,7 @@ export function buildCommitmentEvidenceCasebook(params: {
       )}..."`,
       sourceReference: serviceTerms.id,
       amountMinor: serviceTerms.expectedAmountMinor,
+      currency: docCcy,
       verificationStatus: serviceTerms.userVerified ? 'USER_CONFIRMED' : 'INFERRED',
       actor: serviceTerms.userVerified ? 'USER_VERIFIED_TERMS' : 'DOCUMENT_INTELLIGENCE_PARSER',
     });
@@ -1576,19 +1590,22 @@ export function buildCommitmentEvidenceCasebook(params: {
 
   // 3. Supporting transactions
   for (const txn of cmtTxns) {
+    const txnCcy = txn.currency || commitment.currency || 'INR';
+    const amtMinor = txn.amountMinor ?? toMinorUnits(txn.amount, txnCcy);
     entries.push({
       id: `CB-TXN-${txn.id}`,
       commitmentId: commitment.id,
       timestamp: `${txn.transactionDate}T12:00:00Z`,
       category: 'TRANSACTION_EVIDENCE',
-      title: `${txn.direction} ${formatMinorINR(toMinorUnits(txn.amount))} — ${txn.rawDescription}`,
+      title: `${txn.direction} ${formatMinorCurrency(amtMinor, txnCcy)} — ${txn.rawDescription}`,
       description: `Resolved to ${txn.merchantName || 'Unresolved'} via ${txn.matchingMethod} (${
         txn.confidenceScore
       }% confidence). Account: ${txn.accountAlias}. Rail: ${txn.paymentRail}.${
         txn.isPostCancellationDebit ? ' [FLAGGED: Occurred after recorded cancellation]' : ''
       }`,
       sourceReference: txn.id,
-      amountMinor: toMinorUnits(txn.amount),
+      amountMinor: amtMinor,
+      currency: txnCcy,
       verificationStatus: txn.resolutionStatus,
       actor: 'STATEMENT_IMPORT_ENGINE',
     });
@@ -1743,14 +1760,22 @@ export function buildDataCoverageSummary(params: {
 export function buildInitialSeedGuardrails(
   commitments: CommitmentRecord[]
 ): FinancialGuardrailConfig[] {
-  return commitments.map((c) => ({
-    commitmentId: c.id,
-    maxExpectedAmountMinor: toMinorUnits(c.typicalAmount),
-    alertOnAnyIncrease: true,
-    preDebitReminderDays: 3,
-    requireTwoLayerCancellationConfirmation: true,
-    updatedAt: '2026-10-31T00:00:00Z',
-  }));
+  const nowIso = new Date().toISOString();
+  return commitments.map((c) => {
+    const guardrailCurrency = normalizeCurrencyCode(c.currency, 'INR');
+    return {
+      commitmentId: c.id,
+      currency: guardrailCurrency,
+      maxExpectedAmountMinor: toMinorUnits(c.typicalAmount, guardrailCurrency),
+      alertOnAnyIncrease: true,
+      preDebitReminderDays: 3,
+      requireTwoLayerCancellationConfirmation: true,
+      sourceType: 'SYSTEM_GENERATED',
+      provenance: 'SYSTEM_DERIVED',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+  });
 }
 
 // ============================================================================

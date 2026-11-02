@@ -64,18 +64,19 @@ import {
   filterTransactionsByQuery,
   countDescriptorMatches,
 } from './utils/searchHistory';
-import { CommitmentGraph } from './components/graph/CommitmentGraph';
 import { TransactionSearchHistory } from './components/transactions/TransactionSearchHistory';
 import { LanguageSelector } from './features/language/LanguageSelector';
 import { MerchantExplanationPanel } from './features/language/MerchantExplanationPanel';
 import { CancellationExplanation } from './features/language/CancellationExplanation';
 import { MultilingualAlert } from './features/language/MultilingualAlert';
+import { ContextualBhashaAskPanel } from './features/language/ContextualBhashaAskPanel';
+
+import { CommitmentGraph } from './components/graph/CommitmentGraph';
 import { CancellationCentreView } from './features/cancellation/CancellationCentreView';
 import { ImportStudioView } from './features/imports/ImportStudioView';
 import { MethodologyMetricsView } from './features/methodology/MethodologyMetricsView';
 import { ReconciliationCentreView } from './features/reconciliation/ReconciliationCentreView';
 import { EvidenceCasebookView } from './features/evidence/EvidenceCasebookView';
-import { ContextualBhashaAskPanel } from './features/language/ContextualBhashaAskPanel';
 import { SettingsView } from './features/settings/SettingsView';
 import { UnrecognizedDebitInvestigationDrawer } from './features/investigation/UnrecognizedDebitInvestigationDrawer';
 import { ReviewAndResolveView } from './features/review/ReviewAndResolveView';
@@ -1643,15 +1644,29 @@ export default function App() {
                 await apiClient.simulatePostCancelDebit(commitmentId);
                 await loadAllData();
               }}
-              onUpdateServiceStatus={async (commitmentId, serviceLifecycleStatus) => {
+              onUpdateServiceStatus={async (commitmentId, serviceLifecycleStatus, options) => {
                 await apiClient.updateServiceLifecycleStatus(commitmentId, {
                   serviceLifecycleStatus,
+                  ...(options?.effectiveDate !== undefined
+                    ? { effectiveDate: options.effectiveDate }
+                    : {}),
+                  ...(options?.referenceNumber
+                    ? { referenceNumber: options.referenceNumber }
+                    : {}),
+                  ...(options?.notes ? { notes: options.notes } : {}),
                 });
                 await loadAllData();
               }}
-              onUpdateMandateStatus={async (commitmentId, mandateLifecycleStatus) => {
+              onUpdateMandateStatus={async (commitmentId, mandateLifecycleStatus, options) => {
                 await apiClient.updateMandateLifecycleStatus(commitmentId, {
                   mandateLifecycleStatus,
+                  ...(options?.revocationDate !== undefined
+                    ? { revocationDate: options.revocationDate }
+                    : {}),
+                  ...(options?.referenceNumber
+                    ? { referenceNumber: options.referenceNumber }
+                    : {}),
+                  ...(options?.notes ? { notes: options.notes } : {}),
                 });
                 await loadAllData();
               }}

@@ -32,17 +32,28 @@ interface CancellationCentreViewProps {
       evidenceType: 'SERVICE_CONFIRMATION' | 'MANDATE_REVOCATION' | 'SUPPORT_TICKET' | 'MERCHANT_UNRESPONSIVE';
       description: string;
       referenceNumber: string;
-      evidenceDate: string;
+      evidenceDate?: string | null;
+      effectiveDate?: string | null;
     }
   ) => Promise<void>;
   onSimulatePostCancelDebit: (commitmentId: string) => Promise<void>;
   onUpdateServiceStatus?: (
     commitmentId: string,
-    status: ServiceLifecycleStatus
+    status: ServiceLifecycleStatus,
+    options?: {
+      effectiveDate?: string | null;
+      referenceNumber?: string;
+      notes?: string;
+    }
   ) => Promise<void>;
   onUpdateMandateStatus?: (
     commitmentId: string,
-    status: MandateLifecycleStatus
+    status: MandateLifecycleStatus,
+    options?: {
+      revocationDate?: string | null;
+      referenceNumber?: string;
+      notes?: string;
+    }
   ) => Promise<void>;
 }
 
@@ -65,6 +76,7 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
   const [referenceNumber, setReferenceNumber] = useState('');
   const [description, setDescription] = useState('');
   const [evidenceDate, setEvidenceDate] = useState('');
+  const [evidenceEffectiveDate, setEvidenceEffectiveDate] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -72,6 +84,37 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
     commitments.find((c) => c.id === selectedCommitmentId) || commitments[0];
   const activePlaybook = playbooks.find((p) => p.commitmentId === activeCommitment?.id);
   const activeSession = sessions.find((s) => s.commitmentId === activeCommitment?.id);
+
+  const [layerAStatusDraft, setLayerAStatusDraft] = useState<ServiceLifecycleStatus>(
+    activeCommitment?.serviceLifecycleStatus || 'ACTIVE'
+  );
+  const [layerAEffectiveDateDraft, setLayerAEffectiveDateDraft] = useState<string>(
+    activeSession?.serviceCancelledAt || ''
+  );
+  const [layerARefDraft, setLayerARefDraft] = useState<string>('');
+
+  const [layerBStatusDraft, setLayerBStatusDraft] = useState<MandateLifecycleStatus>(
+    activeCommitment?.mandateLifecycleStatus || 'ACTIVE'
+  );
+  const [layerBRevocationDateDraft, setLayerBRevocationDateDraft] = useState<string>(
+    activeSession?.paymentAuthorisationRevokedAt || ''
+  );
+  const [layerBRefDraft, setLayerBRefDraft] = useState<string>('');
+
+  React.useEffect(() => {
+    setLayerAStatusDraft(activeCommitment?.serviceLifecycleStatus || 'ACTIVE');
+    setLayerAEffectiveDateDraft(activeSession?.serviceCancelledAt || '');
+    setLayerARefDraft('');
+    setLayerBStatusDraft(activeCommitment?.mandateLifecycleStatus || 'ACTIVE');
+    setLayerBRevocationDateDraft(activeSession?.paymentAuthorisationRevokedAt || '');
+    setLayerBRefDraft('');
+  }, [
+    activeCommitment?.id,
+    activeCommitment?.serviceLifecycleStatus,
+    activeCommitment?.mandateLifecycleStatus,
+    activeSession?.serviceCancelledAt,
+    activeSession?.paymentAuthorisationRevokedAt,
+  ]);
 
   if (!activeCommitment || !activePlaybook || !activeSession) {
     return null;
@@ -87,15 +130,64 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
       return;
     }
     setFormError(null);
-    await onAddEvidence(activeSession.id, {
-      evidenceType,
-      referenceNumber: referenceNumber.trim(),
-      description: description.trim(),
-      evidenceDate,
-    });
-    setReferenceNumber('');
-    setDescription('');
-    setStatusMessage('Cancellation evidence logged and linked to Neo4j CancellationSession node.');
+    try {
+      await onAddEvidence(activeSession.id, {
+        evidenceType,
+        referenceNumber: referenceNumber.trim(),
+        description: description.trim(),
+        evidenceDate: evidenceDate.trim() || null,
+        effectiveDate: evidenceEffectiveDate.trim() || null,
+      });
+      setReferenceNumber('');
+      setDescription('');
+      setEvidenceDate('');
+      setEvidenceEffectiveDate('');
+      setStatusMessage(
+        'Cancellation evidence reference saved to canonical store (with separate evidence record date and effective completion date).'
+      );
+    } catch (err: any) {
+      setFormError(err?.message || 'Failed to save cancellation evidence.');
+    }
+  };
+
+  const handleSaveLayerA = async () => {
+    if (!onUpdateServiceStatus) return;
+    setFormError(null);
+    try {
+      await onUpdateServiceStatus(activeCommitment.id, layerAStatusDraft, {
+        effectiveDate: layerAEffectiveDateDraft.trim() || null,
+        referenceNumber: layerARefDraft.trim() || undefined,
+      });
+      setStatusMessage(
+        `Saved Layer A Service Status (${layerAStatusDraft})${
+          layerAEffectiveDateDraft.trim()
+            ? ` with effective date ${layerAEffectiveDateDraft.trim()}`
+            : ' (effective date not set — post-cancellation monitoring awaits effective date)'
+        }.`
+      );
+    } catch (err: any) {
+      setFormError(err?.message || 'Could not update Layer A Service Lifecycle Status.');
+    }
+  };
+
+  const handleSaveLayerB = async () => {
+    if (!onUpdateMandateStatus) return;
+    setFormError(null);
+    try {
+      await onUpdateMandateStatus(activeCommitment.id, layerBStatusDraft, {
+        revocationDate: layerBRevocationDateDraft.trim() || null,
+        referenceNumber: layerBRefDraft.trim() || undefined,
+      });
+      setStatusMessage(
+        `Saved Layer B Mandate Status (${layerBStatusDraft})${
+          layerBRevocationDateDraft.trim()
+            ? ` with revocation date ${layerBRevocationDateDraft.trim()}`
+            : ' (revocation date not set — post-revocation monitoring awaits effective date)'
+        }.`
+      );
+    } catch (err: any) {
+      setFormError(err?.message || 'Could not update Layer B Mandate Lifecycle Status.');
+    }
   };
 
   return (
@@ -150,6 +242,12 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
         </div>
       )}
 
+      {formError && (
+        <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-300 text-xs font-medium text-rose-900">
+          {formError}
+        </div>
+      )}
+
       {/* Contractual Obligation Warning (Loan EMI / Insurance / Utility) */}
       {activePlaybook.contractualWarning && (
         <div className="p-5 rounded-xl bg-amber-50 border border-amber-300 space-y-2">
@@ -173,39 +271,36 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
             </span>
           </div>
           <p className="text-xs text-rose-900 leading-relaxed">
-            A debit occurred AFTER your recorded cancellation date ({activeSession.serviceCancelledAt}). DebitLens flags this as a "Possible post-cancellation charge — review" rather than automatically declaring fraud, because trailing billing cycles can occur. Use your saved confirmation reference ({activeSession.evidence[0]?.referenceNumber || 'logged below'}) to dispute the debit with your bank or payment provider.
+            A debit occurred AFTER your recorded cancellation/revocation date (Layer A service cancelled: {activeSession.serviceCancelledAt || 'not set'}; Layer B mandate revoked: {activeSession.paymentAuthorisationRevokedAt || 'not set'}). DebitLens flags this as a &ldquo;Possible post-cancellation charge — review&rdquo; rather than automatically declaring fraud, because trailing billing cycles can occur. Use your saved confirmation reference ({activeSession.evidence[0]?.referenceNumber || 'logged below'}) to dispute the debit with your bank or payment provider.
           </p>
         </div>
       )}
 
       {/* Workflow State Machine Status Strip with Independent Layer A & Layer B Lifecycle Controls */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-        <div className="p-4 rounded-xl bg-white border border-slate-200">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-1.5">
           <div className="text-xs text-slate-500">Current State Machine Status</div>
           <div className="text-sm font-mono font-bold text-slate-900 mt-1">
             {activeSession.status}
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">
-            Honest Status: User-Reported vs Evidence Attached
+          <div className="text-[11px] text-slate-500">
+            Layer A Effective: <span className="font-mono text-slate-800">{activeSession.serviceCancelledAt || 'Unavailable (null)'}</span>
+          </div>
+          <div className="text-[11px] text-slate-500">
+            Layer B Revoked: <span className="font-mono text-slate-800">{activeSession.paymentAuthorisationRevokedAt || 'Unavailable (null)'}</span>
           </div>
         </div>
-        <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-1.5">
-          <div className="text-xs text-slate-500">Layer A (Service Lifecycle)</div>
+
+        {/* Layer A Control Card */}
+        <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-2">
+          <div className="text-xs font-semibold text-teal-900">
+            Layer A — Service Cancellation Lifecycle
+          </div>
           <select
             aria-label="Update Layer A Service Lifecycle Status"
-            value={activeCommitment.serviceLifecycleStatus}
-            onChange={async (e) => {
-              if (onUpdateServiceStatus) {
-                await onUpdateServiceStatus(
-                  activeCommitment.id,
-                  e.target.value as ServiceLifecycleStatus
-                );
-                setStatusMessage(
-                  `Updated Layer A Service Lifecycle Status to ${e.target.value}.`
-                );
-              }
-            }}
-            className="w-full px-2 py-1 text-xs font-mono bg-slate-50 border border-slate-300 rounded text-slate-900"
+            value={layerAStatusDraft}
+            onChange={(e) => setLayerAStatusDraft(e.target.value as ServiceLifecycleStatus)}
+            className="w-full px-2 py-1.5 text-xs font-mono bg-slate-50 border border-slate-300 rounded text-slate-900"
           >
             <option value="ACTIVE">ACTIVE</option>
             <option value="CANCELLATION_REQUESTED">CANCELLATION_REQUESTED</option>
@@ -213,27 +308,61 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
             <option value="CANCELLATION_EVIDENCE_ATTACHED">CANCELLATION_EVIDENCE_ATTACHED</option>
             <option value="MERCHANT_UNRESPONSIVE">MERCHANT_UNRESPONSIVE</option>
           </select>
-          <div className="text-[11px] text-slate-500">
-            Merchant: {activeCommitment.merchantName}
+          <div>
+            <label
+              htmlFor="layer-a-effective-date"
+              className="block text-[10px] font-medium text-slate-600 mb-0.5"
+            >
+              Service Cancellation Effective Date (Optional YYYY-MM-DD)
+            </label>
+            <input
+              id="layer-a-effective-date"
+              type="date"
+              value={layerAEffectiveDateDraft}
+              onChange={(e) => setLayerAEffectiveDateDraft(e.target.value)}
+              className="w-full px-2 py-1 text-xs font-mono bg-slate-50 border border-slate-300 rounded text-slate-900"
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="layer-a-ref"
+              className="block text-[10px] font-medium text-slate-600 mb-0.5"
+            >
+              Confirmation Reference (Required if Evidence Attached)
+            </label>
+            <input
+              id="layer-a-ref"
+              type="text"
+              placeholder="e.g. TKT-SRV-2026-101"
+              value={layerARefDraft}
+              onChange={(e) => setLayerARefDraft(e.target.value)}
+              className="w-full px-2 py-1 text-xs font-mono bg-slate-50 border border-slate-300 rounded text-slate-900"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={handleSaveLayerA}
+            className="w-full py-1.5 px-2.5 text-xs font-semibold text-white bg-teal-800 hover:bg-teal-900 rounded transition-colors cursor-pointer"
+          >
+            Save Layer A Status &amp; Date
+          </button>
+          <div className="text-[10px] text-slate-500">
+            {activeSession.serviceCancelledAt
+              ? `Monitoring active from ${activeSession.serviceCancelledAt}`
+              : 'Effective date not set — post-cancellation monitoring awaits date'}
           </div>
         </div>
-        <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-1.5">
-          <div className="text-xs text-slate-500">Layer B (Mandate Lifecycle)</div>
+
+        {/* Layer B Control Card */}
+        <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-2">
+          <div className="text-xs font-semibold text-sky-900">
+            Layer B — Mandate Revocation Lifecycle
+          </div>
           <select
             aria-label="Update Layer B Mandate Lifecycle Status"
-            value={activeCommitment.mandateLifecycleStatus}
-            onChange={async (e) => {
-              if (onUpdateMandateStatus) {
-                await onUpdateMandateStatus(
-                  activeCommitment.id,
-                  e.target.value as MandateLifecycleStatus
-                );
-                setStatusMessage(
-                  `Updated Layer B Mandate Lifecycle Status to ${e.target.value}.`
-                );
-              }
-            }}
-            className="w-full px-2 py-1 text-xs font-mono bg-slate-50 border border-slate-300 rounded text-slate-900"
+            value={layerBStatusDraft}
+            onChange={(e) => setLayerBStatusDraft(e.target.value as MandateLifecycleStatus)}
+            className="w-full px-2 py-1.5 text-xs font-mono bg-slate-50 border border-slate-300 rounded text-slate-900"
           >
             <option value="ACTIVE">ACTIVE</option>
             <option value="PAUSED_REPORTED_BY_USER">PAUSED_REPORTED_BY_USER</option>
@@ -243,10 +372,51 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
               MANDATE_NOT_VISIBLE_IN_IMPORTED_DATA
             </option>
           </select>
-          <div className="text-[11px] text-slate-500">
-            Rail: {activeCommitment.paymentRail.replace(/_/g, ' ')}
+          <div>
+            <label
+              htmlFor="layer-b-revocation-date"
+              className="block text-[10px] font-medium text-slate-600 mb-0.5"
+            >
+              Mandate Revocation Effective Date (Optional YYYY-MM-DD)
+            </label>
+            <input
+              id="layer-b-revocation-date"
+              type="date"
+              value={layerBRevocationDateDraft}
+              onChange={(e) => setLayerBRevocationDateDraft(e.target.value)}
+              className="w-full px-2 py-1 text-xs font-mono bg-slate-50 border border-slate-300 rounded text-slate-900"
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="layer-b-ref"
+              className="block text-[10px] font-medium text-slate-600 mb-0.5"
+            >
+              Revocation Reference (Required if Evidence Attached)
+            </label>
+            <input
+              id="layer-b-ref"
+              type="text"
+              placeholder="e.g. UMN-REV-884120"
+              value={layerBRefDraft}
+              onChange={(e) => setLayerBRefDraft(e.target.value)}
+              className="w-full px-2 py-1 text-xs font-mono bg-slate-50 border border-slate-300 rounded text-slate-900"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={handleSaveLayerB}
+            className="w-full py-1.5 px-2.5 text-xs font-semibold text-white bg-sky-800 hover:bg-sky-900 rounded transition-colors cursor-pointer"
+          >
+            Save Layer B Status &amp; Date
+          </button>
+          <div className="text-[10px] text-slate-500">
+            {activeSession.paymentAuthorisationRevokedAt
+              ? `Monitoring active from ${activeSession.paymentAuthorisationRevokedAt}`
+              : 'Revocation date not set — post-revocation monitoring awaits date'}
           </div>
         </div>
+
         <div className="p-4 rounded-xl bg-white border border-slate-200">
           <div className="text-xs text-slate-500">Annual Savings Impact</div>
           <div className="text-sm font-mono font-bold text-teal-800 mt-1 tabular-nums">
@@ -255,7 +425,7 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
               : `${formatINR(activeCommitment.annualisedAmount, activeCommitment.currency)}/yr`}
           </div>
           <div className="text-[11px] text-slate-500 mt-1">
-            Last verified: {activePlaybook.lastVerifiedDate}
+            Playbook status: {activePlaybook.lastVerifiedDate}
           </div>
         </div>
       </div>
@@ -418,7 +588,7 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label htmlFor="evid-type" className="block text-xs font-medium text-slate-700 mb-1">
                 Evidence Type
@@ -438,13 +608,26 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
 
             <div>
               <label htmlFor="evid-date" className="block text-xs font-medium text-slate-700 mb-1">
-                Completion Date
+                Evidence Record Date (Optional)
               </label>
               <input
                 id="evid-date"
                 type="date"
                 value={evidenceDate}
                 onChange={(e) => setEvidenceDate(e.target.value)}
+                className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-300 rounded-lg text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="evid-effective-date" className="block text-xs font-medium text-slate-700 mb-1">
+                Effective Completion Date (Optional)
+              </label>
+              <input
+                id="evid-effective-date"
+                type="date"
+                value={evidenceEffectiveDate}
+                onChange={(e) => setEvidenceEffectiveDate(e.target.value)}
                 className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-300 rounded-lg text-slate-900"
               />
             </div>
@@ -510,10 +693,12 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
                   key={ev.id}
                   className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-1 text-xs"
                 >
-                  <div className="flex items-center justify-between font-mono text-slate-700">
+                  <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-slate-700">
                     <span className="font-semibold text-slate-900">{ev.referenceNumber}</span>
                     <span>
-                      {ev.evidenceType.replace(/_/g, ' ')} · {ev.evidenceDate || 'Date not specified'}
+                      {ev.evidenceType.replace(/_/g, ' ')} · Evidence Date:{' '}
+                      {ev.evidenceDate || 'Not specified'}
+                      {ev.effectiveDate ? ` · Effective Date: ${ev.effectiveDate}` : ''}
                     </span>
                   </div>
                   <p className="text-slate-600">{ev.description}</p>

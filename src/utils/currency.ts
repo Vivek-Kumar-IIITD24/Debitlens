@@ -58,6 +58,17 @@ export function normalizeCurrencyCode(
   return fallback && isValidCurrencyCode(fallback) ? fallback.trim().toUpperCase() : '';
 }
 
+export function getCurrencyDecimalsOrNull(currency?: string | null): number | null {
+  if (currency === null || currency === undefined || typeof currency !== 'string') {
+    return null;
+  }
+  const trimmed = currency.trim().toUpperCase();
+  if (!trimmed || !(trimmed in SUPPORTED_CURRENCY_DECIMALS)) {
+    return null;
+  }
+  return SUPPORTED_CURRENCY_DECIMALS[trimmed];
+}
+
 export function getCurrencyDecimals(currency: string = 'INR'): number {
   const code = normalizeCurrencyCode(currency, 'INR');
   return SUPPORTED_CURRENCY_DECIMALS[code] ?? 2;
@@ -88,6 +99,35 @@ export function toMinorUnits(
   return Math.round(amountMajor * factor);
 }
 
+/**
+ * Strict nullable minor-unit converter:
+ * - Never conflates missing amount (null/undefined/NaN) with zero (returns null).
+ * - When currency is explicitly supplied, requires a supported ISO-4217 currency code
+ *   (returns null for missing or unsupported currency instead of assuming 2 decimals / INR).
+ */
+export function toMinorUnitsStrict(
+  amountMajor: number | null | undefined,
+  currency?: string | null
+): number | null {
+  if (
+    amountMajor === null ||
+    amountMajor === undefined ||
+    typeof amountMajor !== 'number' ||
+    Number.isNaN(amountMajor) ||
+    !Number.isFinite(amountMajor)
+  ) {
+    return null;
+  }
+  if (currency !== undefined) {
+    const decimals = getCurrencyDecimalsOrNull(currency);
+    if (decimals === null) return null;
+    return Math.round(amountMajor * Math.pow(10, decimals));
+  }
+  return toMinorUnits(amountMajor, 'INR');
+}
+
+export const toMinorUnitsOrNull = toMinorUnitsStrict;
+
 export function fromMinorUnits(
   amountMinor: number | null | undefined,
   currency: string = 'INR'
@@ -99,9 +139,33 @@ export function fromMinorUnits(
   return Math.round(amountMinor) / factor;
 }
 
+export function fromMinorUnitsStrict(
+  amountMinor: number | null | undefined,
+  currency?: string | null
+): number | null {
+  if (
+    amountMinor === null ||
+    amountMinor === undefined ||
+    typeof amountMinor !== 'number' ||
+    Number.isNaN(amountMinor) ||
+    !Number.isFinite(amountMinor)
+  ) {
+    return null;
+  }
+  if (currency !== undefined) {
+    const decimals = getCurrencyDecimalsOrNull(currency);
+    if (decimals === null) return null;
+    const factor = Math.pow(10, decimals);
+    return Math.round(amountMinor) / factor;
+  }
+  return fromMinorUnits(amountMinor, 'INR');
+}
+
+export const fromMinorUnitsOrNull = fromMinorUnitsStrict;
+
 export function formatMinorCurrency(
   amountMinor: number | null | undefined,
-  currency: string | null | undefined = 'INR'
+  currency?: string | null
 ): string {
   if (
     amountMinor === null ||
@@ -112,7 +176,7 @@ export function formatMinorCurrency(
   ) {
     return 'Amount unavailable';
   }
-  if (currency === null) {
+  if (currency === null || currency === undefined) {
     return `${(amountMinor / 100).toFixed(2)} (Currency unavailable)`;
   }
   if (typeof currency === 'string') {
@@ -139,7 +203,7 @@ export function formatMinorCurrency(
 
 export function formatCurrency(
   amount: number | null | undefined,
-  currency: string | null | undefined = 'INR'
+  currency?: string | null
 ): string {
   if (
     amount === null ||
@@ -150,7 +214,7 @@ export function formatCurrency(
   ) {
     return 'Amount unavailable';
   }
-  if (currency === null) {
+  if (currency === null || currency === undefined) {
     return `${amount.toFixed(2)} (Currency unavailable)`;
   }
   if (typeof currency === 'string') {

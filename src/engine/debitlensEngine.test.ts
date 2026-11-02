@@ -11,6 +11,7 @@ import {
   buildCommitmentGraphResponse,
   redactTransactionForSarvam,
   buildGroundedMerchantExplanation,
+  buildGroundedAlertExplanation,
   buildGroundedCancellationExplanation,
   evaluateDetectionMetricsAgainstGroundTruth,
   buildInitialSeedMandates,
@@ -41,9 +42,13 @@ import {
   computeCanonicalCsvRowFingerprint,
   buildPlaybookAndSessionForCommitment,
 } from './debitlensEngine';
+import { buildInitialSeedGuardrails } from './reconciliationEngine';
 import {
   toMinorUnits,
   fromMinorUnits,
+  toMinorUnitsStrict,
+  fromMinorUnitsStrict,
+  getCurrencyDecimalsOrNull,
   formatMinorINR,
   formatCurrency,
   formatMinorCurrency,
@@ -53,7 +58,7 @@ import {
 } from '../utils/currency';
 import os from 'node:os';
 import http from 'node:http';
-import { normalizeDateString, isValidCalendarDate } from '../utils/dateUtils';
+import { normalizeDateString, isValidCalendarDate, isStrictValidIsoDate, getRuntimeDateISO } from '../utils/dateUtils';
 import { isPlaceholderEnvValue } from '../services/neo4jPersistenceService';
 import { MERCHANT_CATALOGUE } from './referenceData';
 
@@ -3168,6 +3173,61 @@ test('Gates A, B, D, E Server Integration: Authoritative merchant confirmation, 
     const octUsd = trendUsd.body.find((p: any) => p.month === '2026-10');
     assert.equal(octUsd.currency, 'USD');
     assert.equal(octUsd.subscriptions, 19.99);
+
+    // 7. Evidence-attached status validation & separate Layer A/B monitoring + guardrail currency check
+    const srvEvidMissing = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/service-status', {
+      serviceLifecycleStatus: 'CANCELLATION_EVIDENCE_ATTACHED',
+    });
+    assert.equal(
+      srvEvidMissing.status,
+      400,
+      'CANCELLATION_EVIDENCE_ATTACHED without SERVICE_CONFIRMATION evidence must return 400'
+    );
+
+    const mndEvidMissing = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/mandate-status', {
+      mandateLifecycleStatus: 'REVOCATION_EVIDENCE_ATTACHED',
+    });
+    assert.equal(
+      mndEvidMissing.status,
+      400,
+      'REVOCATION_EVIDENCE_ATTACHED without MANDATE_REVOCATION evidence must return 400'
+    );
+
+    const srvEvidValid = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/service-status', {
+      serviceLifecycleStatus: 'CANCELLATION_EVIDENCE_ATTACHED',
+      referenceNumber: 'TKT-SB-2026-1001',
+      effectiveDate: '2026-10-10',
+    });
+    assert.equal(srvEvidValid.status, 200);
+    assert.equal(srvEvidValid.body.session.serviceCancelledAt, '2026-10-10');
+
+    const monAfterLayerA = await api('GET', '/api/cancellations/CMT-STREAMBOX/monitoring');
+    assert.equal(monAfterLayerA.status, 200);
+    assert.equal(monAfterLayerA.body.serviceMonitoringEligible, true);
+    assert.equal(monAfterLayerA.body.mandateMonitoringEligible, false);
+    assert.equal(
+      monAfterLayerA.body.monitoringStatus,
+      'SERVICE_MONITORING_ONLY_MANDATE_DATE_UNAVAILABLE'
+    );
+
+    const badGuardrailCurr = await api('PATCH', '/api/guardrails/CMT-STREAMBOX', {
+      currency: 'EUR',
+      maxExpectedAmountMinor: 49900,
+    });
+    assert.equal(
+      badGuardrailCurr.status,
+      400,
+      'Cross-currency guardrail update on an INR commitment must return 400'
+    );
+
+    const validGuardrailCurr = await api('PATCH', '/api/guardrails/CMT-STREAMBOX', {
+      currency: 'INR',
+      maxExpectedAmountMinor: 55000,
+      preDebitReminderDays: 5,
+    });
+    assert.equal(validGuardrailCurr.status, 200);
+    assert.equal(validGuardrailCurr.body.currency, 'INR');
+    assert.equal(validGuardrailCurr.body.provenance, 'USER_CONFIGURED');
   } finally {
     server.closeAllConnections?.();
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -3318,4 +3378,595 @@ test('Gate B Regression: Null/undefined monetary amounts never render as ₹0.00
   );
   assert.ok(unsupportedMajor.includes('XYZ'));
   assert.ok(unsupportedMajor.includes('Unsupported currency'));
+
+  // 4. Omitted/undefined currency on formatCurrency / formatMinorCurrency returns explicit unavailable marker, never silently assuming INR
+  assert.equal(formatCurrency(499), '499.00 (Currency unavailable)');
+  assert.equal(formatCurrency(499, undefined), '499.00 (Currency unavailable)');
+  assert.equal(formatCurrency(499, null), '499.00 (Currency unavailable)');
+  assert.equal(formatMinorCurrency(49900), '499.00 (Currency unavailable)');
+  assert.equal(formatMinorCurrency(49900, undefined), '499.00 (Currency unavailable)');
+  assert.equal(formatMinorCurrency(49900, null), '499.00 (Currency unavailable)');
 });
+
+test('Section 2 Currency Integrity: Multi-currency USD/EUR preservation across Alerts, Casebook, Graph, Bhasha & Investigation', () => {
+  const usdRows: RawCsvRow[] = [
+    {
+      transaction_id: 'TXN-USD-1',
+      transaction_date: '2026-08-10',
+      raw_description: 'RZP*STREAMBOX',
+      amount: '$19.99',
+      currency: 'USD',
+      direction: 'DEBIT',
+      payment_rail: 'CARD_EMANDATE',
+      account_alias: 'AMEX-XX9001',
+      external_reference: 'REF-USD-1',
+    },
+    {
+      transaction_id: 'TXN-USD-2',
+      transaction_date: '2026-09-10',
+      raw_description: 'RZP*STREAMBOX',
+      amount: '$19.99',
+      currency: 'USD',
+      direction: 'DEBIT',
+      payment_rail: 'CARD_EMANDATE',
+      account_alias: 'AMEX-XX9001',
+      external_reference: 'REF-USD-2',
+    },
+    {
+      transaction_id: 'TXN-USD-3',
+      transaction_date: '2026-10-10',
+      raw_description: 'RZP*STREAMBOX',
+      amount: '$24.99',
+      currency: 'USD',
+      direction: 'DEBIT',
+      payment_rail: 'CARD_EMANDATE',
+      account_alias: 'AMEX-XX9001',
+      external_reference: 'REF-USD-3',
+    },
+    {
+      transaction_id: 'TXN-USD-UNREC',
+      transaction_date: '2026-10-12',
+      raw_description: 'STRIPE*UNKNOWN-SAAS-9912',
+      amount: '€49.00',
+      currency: 'EUR',
+      direction: 'DEBIT',
+      payment_rail: 'CARD_EMANDATE',
+      account_alias: 'AMEX-XX9001',
+      external_reference: 'REF-EUR-1',
+    },
+  ];
+
+  const { transactions } = parseAndNormaliseTransactions(usdRows);
+  assert.equal(transactions.length, 4);
+  assert.equal(transactions[0].currency, 'USD');
+  assert.equal(transactions[0].amount, 19.99);
+  assert.equal(transactions[3].currency, 'EUR');
+  assert.equal(transactions[3].amount, 49);
+
+  const { commitments, alerts, playbooks, sessions } = detectCommitmentsAndAlerts(
+    transactions,
+    [],
+    {},
+    '2026-10-30'
+  );
+  const usdCommitment = commitments.find((c) => c.currency === 'USD');
+  assert.ok(usdCommitment, 'Must detect USD recurring commitment');
+  assert.equal(usdCommitment.currency, 'USD');
+
+  // Verify alerts preserve USD currency and never contain ₹
+  const usdAlerts = alerts.filter((a) => a.commitmentId === usdCommitment.id);
+  assert.ok(usdAlerts.length > 0, 'Must emit alerts for USD commitment');
+  for (const alert of usdAlerts) {
+    assert.equal(alert.currency, 'USD');
+    assert.equal(alert.title.includes('₹'), false, `Alert title must not contain ₹ for USD: ${alert.title}`);
+    assert.equal(alert.description.includes('₹'), false, `Alert description must not contain ₹ for USD: ${alert.description}`);
+    assert.equal(alert.detectedValue.includes('₹'), false);
+    const bhashaAlert = buildGroundedAlertExplanation(alert, 'hi-IN');
+    assert.equal(
+      bhashaAlert.localizedExplanation.includes('₹'),
+      false,
+      'Multilingual alert explanation must not contain ₹ for USD'
+    );
+  }
+
+  // Verify Evidence Casebook preserves USD across CB-MND-*, CB-DOC-*, and CB-TXN-*
+  const usdMandate = {
+    id: 'MND-USD-1',
+    mandateReference: 'AMEX-MANDATE-USD-1',
+    commitmentId: usdCommitment.id,
+    merchantId: usdCommitment.merchantId,
+    merchantName: usdCommitment.merchantName,
+    paymentRail: usdCommitment.paymentRail,
+    currency: 'USD',
+    maxAmountMinor: 3000,
+    maxAmount: 30,
+    frequency: 'MONTHLY' as const,
+    startDate: '2026-01-01',
+    endDate: '2027-01-01',
+    mandateStatus: 'ACTIVE' as const,
+    sourceType: 'USER_IMPORTED' as const,
+    updatedAt: '2026-08-01T00:00:00Z',
+  };
+  const usdTerms = extractServiceTermsFromText({
+    commitmentId: usdCommitment.id,
+    merchantName: usdCommitment.merchantName,
+    serviceName: usdCommitment.serviceName,
+    documentSource: 'PASTED_INVOICE_TEXT',
+    rawText: 'Subscription Invoice #USD-101. Billing Cycle: Monthly. Plan Price: $19.99 USD.',
+    currency: 'USD',
+  });
+  usdTerms.expectedAmount = 19.99;
+  usdTerms.expectedAmountMinor = 1999;
+  usdTerms.currency = 'USD';
+
+  const casebook = buildCommitmentEvidenceCasebook({
+    commitment: usdCommitment,
+    transactions,
+    mandate: usdMandate,
+    serviceTerms: usdTerms,
+    reconciliation: null,
+    alerts: usdAlerts,
+    session: null,
+  });
+  const mndEntry = casebook.entries.find((e) => e.id.startsWith('CB-MND-'));
+  const docEntry = casebook.entries.find((e) => e.id.startsWith('CB-DOC-'));
+  const txnEntry = casebook.entries.find((e) => e.id.startsWith('CB-TXN-'));
+  assert.ok(mndEntry && docEntry && txnEntry);
+  assert.equal(mndEntry.currency, 'USD');
+  assert.equal(docEntry.currency, 'USD');
+  assert.equal(txnEntry.currency, 'USD');
+  assert.equal(mndEntry.description.includes('₹'), false, `CB-MND description must not use ₹: ${mndEntry.description}`);
+  assert.equal(docEntry.description.includes('₹'), false, `CB-DOC description must not use ₹: ${docEntry.description}`);
+  assert.equal(txnEntry.description.includes('₹'), false, `CB-TXN description must not use ₹: ${txnEntry.description}`);
+  assert.ok(mndEntry.description.includes('$30'));
+  assert.ok(docEntry.description.includes('$19.99'));
+
+  // Verify Commitment Graph nodes and supportingTransactionRecords preserve USD
+  const graph = buildCommitmentGraphResponse({
+    focusCommitmentId: usdCommitment.id,
+    commitments,
+    transactions,
+    notifications: [],
+    alerts: usdAlerts,
+    playbooks,
+    sessions,
+    mandates: [usdMandate],
+    serviceTerms: [usdTerms],
+    reconciliationFindings: [],
+  });
+  for (const rec of graph.pathExplanation.supportingTransactionRecords) {
+    assert.equal(rec.currency, 'USD');
+  }
+  const cmtNode = graph.nodes.find((n) => n.id === usdCommitment.id);
+  assert.ok(cmtNode);
+  assert.equal(cmtNode.subtitle.includes('₹'), false, `Commitment node subtitle must not use ₹ for USD: ${cmtNode.subtitle}`);
+
+  // Verify Bhasha merchant explanation and Unrecognized Debit investigation checklist preserve USD / EUR
+  const usdBhasha = buildGroundedMerchantExplanation(
+    transactions[0],
+    'hi-IN',
+    undefined,
+    'LOCAL_FALLBACK',
+    'LOCAL_FALLBACK',
+    undefined,
+    usdCommitment
+  );
+  assert.equal(
+    usdBhasha.localizedExplanation.whatIsIdentified.includes('₹'),
+    false,
+    `Bhasha whatIsIdentified must not use ₹ for USD: ${usdBhasha.localizedExplanation.whatIsIdentified}`
+  );
+  assert.equal(usdBhasha.englishSource.whatIsIdentified.includes('₹'), false);
+
+  const eurCase = buildUnrecognizedDebitCase({
+    transaction: transactions[3],
+    allTransactions: transactions,
+  });
+  for (const item of eurCase.guidanceChecklist) {
+    assert.equal(item.includes('₹'), false, `Investigation checklist must not use ₹ for EUR: ${item}`);
+    assert.ok(item.includes('€49') || !item.includes('49'));
+  }
+});
+
+test('Section 3 & 4 Regression: Runtime date provider, honest playbook verification status, and engine-level strict calendar validation', () => {
+  // 1. Runtime date helper returns valid strict YYYY-MM-DD
+  const runtimeToday = getRuntimeDateISO();
+  assert.equal(isStrictValidIsoDate(runtimeToday), true);
+
+  // 2. Impossible calendar dates are rejected by isStrictValidIsoDate and inside buildPlaybookAndSessionForCommitment
+  for (const invalidDate of ['2026-02-31', '2026-04-31', '2026-13-01', '2026-00-10', '2026-01-00']) {
+    assert.equal(isStrictValidIsoDate(invalidDate), false, `${invalidDate} must be rejected by isStrictValidIsoDate`);
+  }
+
+  const { transactions } = parseAndNormaliseTransactions(SAMPLE_ROWS);
+  const { commitments } = detectCommitmentsAndAlerts(transactions, SAMPLE_NOTIFICATIONS, {}, '2026-10-30');
+  const streambox = commitments.find((c) => c.id === 'CMT-STREAMBOX')!;
+  const merchant = MERCHANT_CATALOGUE.find((m) => m.id === streambox.merchantId)!;
+
+  const { playbook, session } = buildPlaybookAndSessionForCommitment({
+    commitmentId: streambox.id,
+    sessionId: `SESS-${streambox.id}`,
+    merchant,
+    paymentRail: streambox.paymentRail,
+    override: {
+      serviceLifecycleStatus: 'CANCELLATION_REPORTED_BY_USER',
+      serviceCancelledAtOverride: '2026-02-31', // Impossible date must be rejected by engine
+      mandateLifecycleStatus: 'REVOCATION_REPORTED_BY_USER',
+      mandateRevokedAtOverride: '2026-04-31', // Impossible date must be rejected by engine
+    },
+    sortedTransactions: transactions.filter((t) => t.merchantId === streambox.merchantId),
+  });
+
+  assert.equal(
+    playbook.lastVerifiedDate,
+    'Reference catalogue (Not independently verified)',
+    'Playbook must state honest reference catalogue status instead of hardcoded 2026-10-31'
+  );
+  assert.equal(
+    session.serviceCancelledAt,
+    null,
+    'Impossible calendar date 2026-02-31 must be rejected inside buildPlaybookAndSessionForCommitment'
+  );
+  assert.equal(
+    session.paymentAuthorisationRevokedAt,
+    null,
+    'Impossible calendar date 2026-04-31 must be rejected inside buildPlaybookAndSessionForCommitment'
+  );
+  assert.equal(
+    session.lastReviewedAt,
+    null,
+    'Unreviewed session must have lastReviewedAt === null rather than fabricated 2026-10-31'
+  );
+});
+
+test('Section 5.5 Lifecycle Matrix: Request vs completion dates, evidenceDate non-aliasing, refund exclusion, and idempotency', () => {
+  const rows: RawCsvRow[] = [
+    {
+      transaction_id: 'TXN-LC-1',
+      transaction_date: '2026-08-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'REF-LC-1',
+    },
+    {
+      transaction_id: 'TXN-LC-2',
+      transaction_date: '2026-09-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'REF-LC-2',
+    },
+    {
+      transaction_id: 'TXN-LC-3',
+      transaction_date: '2026-10-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'REF-LC-3',
+    },
+    {
+      transaction_id: 'TXN-LC-REFUND',
+      transaction_date: '2026-10-12',
+      raw_description: 'RZP*STREAMBOX REFUND',
+      amount: 499,
+      currency: 'INR',
+      direction: 'CREDIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'REF-LC-4',
+    },
+    {
+      transaction_id: 'TXN-LC-POST-DEBIT',
+      transaction_date: '2026-11-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'REF-LC-5',
+    },
+  ];
+
+  const { transactions } = parseAndNormaliseTransactions(rows);
+  const { commitments } = detectCommitmentsAndAlerts(transactions.slice(0, 3), [], {}, '2026-10-30');
+  const cmt = commitments[0];
+  const merchant = MERCHANT_CATALOGUE.find((m) => m.id === cmt.merchantId)!;
+
+  // Case 1 & 2: CANCELLATION_REQUESTED or evidenceDate alone must NOT set serviceCancelledAt or paymentAuthorisationRevokedAt
+  const requestedOnly = buildPlaybookAndSessionForCommitment({
+    commitmentId: cmt.id,
+    sessionId: `SESS-${cmt.id}`,
+    merchant,
+    paymentRail: cmt.paymentRail,
+    override: {
+      serviceLifecycleStatus: 'CANCELLATION_REQUESTED',
+      mandateLifecycleStatus: 'REVOCATION_REQUESTED',
+      evidenceRecords: [
+        {
+          id: 'EV-REQ-1',
+          cancellationSessionId: `SESS-${cmt.id}`,
+          evidenceType: 'SERVICE_CONFIRMATION',
+          referenceNumber: 'TICKET-REQ-001',
+          evidenceDate: '2026-10-06',
+          effectiveDate: null,
+          description: 'Submitted cancellation request ticket',
+          verificationStatus: 'EVIDENCE_ATTACHED',
+          createdAt: '2026-10-06T10:00:00Z',
+        },
+        {
+          id: 'EV-REQ-2',
+          cancellationSessionId: `SESS-${cmt.id}`,
+          evidenceType: 'MANDATE_REVOCATION',
+          referenceNumber: 'UMN-REQ-001',
+          evidenceDate: '2026-10-06',
+          effectiveDate: null,
+          description: 'Submitted revocation request',
+          verificationStatus: 'EVIDENCE_ATTACHED',
+          createdAt: '2026-10-06T10:00:00Z',
+        },
+      ],
+    },
+    sortedTransactions: transactions,
+  });
+
+  assert.equal(
+    requestedOnly.session.serviceCancelledAt,
+    null,
+    'CANCELLATION_REQUESTED or evidenceDate alone must NEVER set serviceCancelledAt'
+  );
+  assert.equal(
+    requestedOnly.session.paymentAuthorisationRevokedAt,
+    null,
+    'REVOCATION_REQUESTED or evidenceDate alone must NEVER set paymentAuthorisationRevokedAt'
+  );
+  assert.equal(
+    requestedOnly.session.postCancellationTransactionIds.length,
+    0,
+    'Without an effective cancellation/revocation date, no post-cancellation debits may be flagged'
+  );
+
+  // Case 3, 4 & 5: Completion status with effective cancellation date on 2026-10-10:
+  // - TXN-LC-REFUND (CREDIT on 2026-10-12) must NOT be flagged in postCancellationTransactionIds
+  // - TXN-LC-POST-DEBIT (DEBIT on 2026-11-05) MUST be flagged in postCancellationTransactionIds
+  const completedCancel = buildPlaybookAndSessionForCommitment({
+    commitmentId: cmt.id,
+    sessionId: `SESS-${cmt.id}`,
+    merchant,
+    paymentRail: cmt.paymentRail,
+    override: {
+      serviceLifecycleStatus: 'CANCELLATION_REPORTED_BY_USER',
+      serviceCancelledAtOverride: '2026-10-10',
+      mandateLifecycleStatus: 'REVOCATION_REPORTED_BY_USER',
+      mandateRevokedAtOverride: '2026-10-10',
+    },
+    sortedTransactions: transactions,
+  });
+
+  assert.equal(completedCancel.session.serviceCancelledAt, '2026-10-10');
+  assert.equal(completedCancel.session.paymentAuthorisationRevokedAt, '2026-10-10');
+  assert.equal(
+    completedCancel.session.postCancellationTransactionIds.includes('TXN-LC-REFUND'),
+    false,
+    'CREDIT (refund/reversal) transaction after cancellation must NEVER be flagged as a post-cancellation debit'
+  );
+  assert.deepEqual(
+    completedCancel.session.postCancellationTransactionIds,
+    ['TXN-LC-POST-DEBIT'],
+    'Subsequent DEBIT transaction after cancellation must be flagged in postCancellationTransactionIds'
+  );
+});
+
+test('Quality-Closure Gate: strict nullable minor-unit helpers, negative credit parsing, non-INR reconciliation pool/mandates, multi-currency guardrails, and separate Layer A/B monitoring', async () => {
+  // 1. Strict nullable minor-unit helpers never conflate missing amount or unsupported currency with zero/INR
+  assert.equal(getCurrencyDecimalsOrNull('INR'), 2);
+  assert.equal(getCurrencyDecimalsOrNull('JPY'), 0);
+  assert.equal(getCurrencyDecimalsOrNull('KWD'), 3);
+  assert.equal(getCurrencyDecimalsOrNull('XYZ'), null);
+  assert.equal(getCurrencyDecimalsOrNull(null), null);
+  assert.equal(toMinorUnitsStrict(null, 'INR'), null);
+  assert.equal(toMinorUnitsStrict(undefined, 'USD'), null);
+  assert.equal(toMinorUnitsStrict(100, 'XYZ'), null);
+  assert.equal(toMinorUnitsStrict(1500, 'JPY'), 1500);
+  assert.equal(fromMinorUnitsStrict(null, 'INR'), null);
+  assert.equal(fromMinorUnitsStrict(1000, 'XYZ'), null);
+  assert.equal(fromMinorUnitsStrict(1500, 'JPY'), 1500);
+
+  // 2. parseAndNormaliseTransactions converts negative amounts (-499 or (499.00)) to CREDIT and rejects impossible rollover dates (2026-02-31)
+  const parsedBatch = parseAndNormaliseTransactions([
+    {
+      transaction_id: 'TXN-NEG-01',
+      transaction_date: '2026-08-15',
+      raw_description: 'RZP*STREAMBOX',
+      amount: '-499.00',
+      currency: 'USD',
+      direction: 'DEBIT',
+      payment_rail: 'CARD_EMANDATE',
+      account_alias: 'USD-CARD-01',
+      external_reference: 'REF-NEG-01',
+    },
+    {
+      transaction_id: 'TXN-BAD-DATE',
+      transaction_date: '2026-02-31',
+      raw_description: 'RZP*STREAMBOX',
+      amount: '499.00',
+      currency: 'USD',
+      direction: 'DEBIT',
+      payment_rail: 'CARD_EMANDATE',
+      account_alias: 'USD-CARD-01',
+      external_reference: 'REF-BAD-DATE',
+    },
+  ]);
+  assert.equal(parsedBatch.transactions.length, 1);
+  assert.equal(parsedBatch.transactions[0].id, 'TXN-NEG-01');
+  assert.equal(parsedBatch.transactions[0].amount, 499);
+  assert.equal(parsedBatch.transactions[0].direction, 'CREDIT');
+  assert.equal(parsedBatch.transactions[0].currency, 'USD');
+  assert.equal(parsedBatch.invalidRows.length, 1);
+  assert.equal(parsedBatch.invalidRows[0].rowNumber, 2);
+
+  // 3. Non-INR MANDATE_WITHOUT_RECENT_TRANSACTION and REC-UNRESOLVED-POOL preserve their actual currency
+  const { transactions: jpyUnresTxns } = parseAndNormaliseTransactions([
+    {
+      transaction_id: 'TXN-JPY-UNRES',
+      transaction_date: '2026-09-10',
+      raw_description: 'RAZORPAY*998877-TOKYO',
+      amount: 1500,
+      currency: 'JPY',
+      direction: 'DEBIT',
+      payment_rail: 'CARD_ONE_TIME',
+      account_alias: 'JPY-CARD',
+      external_reference: 'REF-JPY-01',
+    },
+  ]);
+  const usdDormantMandate = {
+    id: 'MND-USD-DORMANT',
+    mandateReference: 'SI-USD-DORMANT-01',
+    commitmentId: null,
+    merchantId: null,
+    merchantName: 'CloudSaaS Global Inc.',
+    paymentRail: 'CARD_EMANDATE' as const,
+    maxAmountMinor: 2999,
+    maxAmount: 29.99,
+    currency: 'USD',
+    frequency: 'MONTHLY' as const,
+    startDate: '2026-01-01',
+    endDate: null,
+    mandateStatus: 'ACTIVE' as const,
+    sourceType: 'USER_IMPORTED' as const,
+    updatedAt: '2026-10-01T00:00:00Z',
+  };
+  const findings = runFullReconciliation({
+    commitments: [],
+    transactions: jpyUnresTxns,
+    mandates: [usdDormantMandate],
+    serviceTerms: [],
+    sessions: [],
+  });
+  const mndFinding = findings.find((f) => f.id === 'REC-MND-USD-DORMANT');
+  assert.ok(mndFinding, 'Expected dormant USD mandate finding');
+  assert.equal(mndFinding.currency, 'USD');
+  assert.equal(mndFinding.explanation.includes('₹'), false, 'USD mandate explanation must not use ₹');
+  assert.ok(mndFinding.explanation.includes('$29.99'), 'USD mandate explanation must format $29.99');
+
+  const unresFinding = findings.find((f) => f.id === 'REC-UNRESOLVED-POOL');
+  assert.ok(unresFinding, 'Expected unresolved pool finding');
+  assert.equal(unresFinding.currency, 'JPY');
+  assert.equal(unresFinding.actualTransactionAmountMinor, 1500, 'JPY has 0 minor decimals so 1500 JPY = 1500 minor units');
+
+  // 4. Multi-currency guardrails preserve commitment currency and minor-unit precision
+  const { transactions: usdStreamTxns } = parseAndNormaliseTransactions([
+    {
+      transaction_id: 'TXN-USD-S1',
+      transaction_date: '2026-08-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 19.99,
+      currency: 'USD',
+      direction: 'DEBIT',
+      payment_rail: 'CARD_EMANDATE',
+      account_alias: 'USD-CARD',
+      external_reference: 'REF-USD-S1',
+    },
+    {
+      transaction_id: 'TXN-USD-S2',
+      transaction_date: '2026-09-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 19.99,
+      currency: 'USD',
+      direction: 'DEBIT',
+      payment_rail: 'CARD_EMANDATE',
+      account_alias: 'USD-CARD',
+      external_reference: 'REF-USD-S2',
+    },
+  ]);
+  const { commitments: usdCommitments } = detectCommitmentsAndAlerts(usdStreamTxns, [], {}, '2026-10-30');
+  const seedGr = buildInitialSeedGuardrails(usdCommitments);
+  assert.equal(seedGr.length, 1);
+  assert.equal(seedGr[0].currency, 'USD');
+  assert.equal(seedGr[0].maxExpectedAmountMinor, 1999);
+  assert.equal(seedGr[0].provenance, 'SYSTEM_DERIVED');
+
+  // 5. Separate Layer A (serviceCancelledAt) and Layer B (paymentAuthorisationRevokedAt) monitoring
+  const { transactions: splitCancelTxns } = parseAndNormaliseTransactions([
+    {
+      transaction_id: 'TXN-SC-1',
+      transaction_date: '2026-08-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'REF-SC-1',
+    },
+    {
+      transaction_id: 'TXN-SC-2',
+      transaction_date: '2026-09-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'REF-SC-2',
+    },
+    {
+      transaction_id: 'TXN-SC-BETWEEN',
+      transaction_date: '2026-10-12',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'REF-SC-BETWEEN',
+    },
+    {
+      transaction_id: 'TXN-SC-AFTER-BOTH',
+      transaction_date: '2026-10-25',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'REF-SC-AFTER-BOTH',
+    },
+  ]);
+  const streamMerchant = MERCHANT_CATALOGUE[0];
+  const splitSession = buildPlaybookAndSessionForCommitment({
+    commitmentId: 'CMT-STREAMBOX',
+    sessionId: 'SESS-CMT-STREAMBOX',
+    merchant: streamMerchant,
+    paymentRail: 'UPI_AUTOPAY',
+    override: {
+      serviceLifecycleStatus: 'CANCELLATION_REPORTED_BY_USER',
+      serviceCancelledAtOverride: '2026-10-10',
+      mandateLifecycleStatus: 'REVOCATION_REPORTED_BY_USER',
+      mandateRevokedAtOverride: '2026-10-20',
+    },
+    sortedTransactions: splitCancelTxns,
+  });
+  assert.equal(splitSession.session.serviceMonitoringEligible, true);
+  assert.equal(splitSession.session.mandateMonitoringEligible, true);
+  assert.deepEqual(splitSession.session.postServiceCancellationTransactionIds, [
+    'TXN-SC-BETWEEN',
+    'TXN-SC-AFTER-BOTH',
+  ]);
+  assert.deepEqual(splitSession.session.postMandateRevocationTransactionIds, [
+    'TXN-SC-AFTER-BOTH',
+  ]);
+});
+
+
+

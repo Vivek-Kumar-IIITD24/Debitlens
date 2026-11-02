@@ -40,12 +40,19 @@ import {
   normalizeCurrencyCode,
 } from '../utils/currency';
 import {
+  isStrictValidIsoDate,
+  getRuntimeDateISO,
+  isValidCalendarDate,
+  normalizeDateString,
+} from '../utils/dateUtils';
+import {
   buildInitialSeedMandates,
   buildInitialSeedServiceTerms,
   reconcileCommitment,
   deriveIndependentLifecycleStatuses,
 } from './reconciliationEngine';
 
+export { isStrictValidIsoDate, getRuntimeDateISO, isValidCalendarDate };
 export * from './reconciliationEngine';
 export * from './investigationEngine';
 
@@ -405,8 +412,11 @@ export function parseStrictSignedAmount(value: unknown): { amount: number; isNeg
     str = str.slice(1, -1).trim();
   }
 
-  // Clean currency symbols e.g. "₹499.00", "Rs. 1,299", "INR 799"
-  str = str.replace(/^(?:INR|RS\.?|₹)\s*/i, '').replace(/,/g, '').trim();
+  // Clean currency symbols e.g. "₹499.00", "Rs. 1,299", "INR 799", "$19.99", "USD 20", "EUR 15", "€15"
+  str = str
+    .replace(/^(?:INR|RS\.?|₹|USD|US\$|\$|EUR|€|GBP|£|JPY|¥|CAD|AUD|SGD|AED|CHF|KWD|BHD|OMR)\s*/i, '')
+    .replace(/,/g, '')
+    .trim();
 
   // Handle minus after currency symbol e.g. ₹-499 or after removing parens
   if (str.startsWith('-')) {
@@ -436,7 +446,8 @@ export function parseAndNormaliseTransactions(
   rows: RawCsvRow[],
   importBatchId = 'BATCH-SEED-01',
   sourceType: TransactionRecord['sourceType'] = 'DEMO_SEED',
-  userConfirmedOverrides?: Record<string, string>
+  userConfirmedOverrides?: Record<string, string>,
+  defaultCurrency?: string
 ): {
   transactions: TransactionRecord[];
   invalidRows: { rowNumber: number; raw: unknown; reason: string }[];
@@ -450,11 +461,11 @@ export function parseAndNormaliseTransactions(
   rows.forEach((row, index) => {
     const rowNum = index + 1;
     const txnId = (row.transaction_id || '').trim();
-    const dateStr = (row.transaction_date || '').trim();
+    const rawDateStr = (row.transaction_date || '').trim();
     const rawDesc = (row.raw_description || '').trim();
     let direction = (row.direction || 'DEBIT').trim().toUpperCase();
 
-    if (!txnId || !dateStr || !rawDesc) {
+    if (!txnId || !rawDateStr || !rawDesc) {
       invalidRows.push({
         rowNumber: rowNum,
         raw: row,
@@ -463,8 +474,8 @@ export function parseAndNormaliseTransactions(
       return;
     }
 
-    const parsedAmt = parseStrictAmount(row.amount);
-    if (parsedAmt === null) {
+    const parsedSigned = parseStrictSignedAmount(row.amount);
+    if (parsedSigned === null) {
       invalidRows.push({
         rowNumber: rowNum,
         raw: row,
@@ -473,7 +484,7 @@ export function parseAndNormaliseTransactions(
       return;
     }
 
-    if (parsedAmt === 0) {
+    if (parsedSigned.amount === 0) {
       invalidRows.push({
         rowNumber: rowNum,
         raw: row,
@@ -482,22 +493,23 @@ export function parseAndNormaliseTransactions(
       return;
     }
 
-    const rawAmt = parsedAmt;
+    const rawAmt = parsedSigned.isNegative ? -parsedSigned.amount : parsedSigned.amount;
     // Support negative numbers by converting negative DEBIT to CREDIT/reversal or normalising magnitude
     const amt = Math.abs(rawAmt);
     if (rawAmt < 0 && (!row.direction || direction === 'DEBIT')) {
       direction = 'CREDIT';
     }
 
-    const parsedMs = Date.parse(dateStr);
-    if (Number.isNaN(parsedMs) || dateStr.length < 8) {
+    const normalizedDate = normalizeDateString(rawDateStr);
+    if (!normalizedDate) {
       invalidRows.push({
         rowNumber: rowNum,
         raw: row,
-        reason: `Invalid ISO date format: "${dateStr}". Must be a valid date.`,
+        reason: `Invalid calendar date format: "${rawDateStr}". Must be a valid real calendar date (impossible rollover dates like Feb 31 are rejected).`,
       });
       return;
     }
+    const dateStr = normalizedDate;
 
     if (seenIds.has(txnId)) {
       duplicateRows.push({ rowNumber: rowNum, transactionId: txnId });
@@ -505,16 +517,22 @@ export function parseAndNormaliseTransactions(
     }
     seenIds.add(txnId);
 
-    const rawCurrency = row.currency ? String(row.currency).trim().toUpperCase() : 'INR';
-    if (!isValidCurrencyCode(rawCurrency)) {
+    const rawCurrencyField =
+      row.currency !== undefined && row.currency !== null ? String(row.currency).trim().toUpperCase() : '';
+    const fallbackCurr =
+      defaultCurrency !== undefined
+        ? defaultCurrency.trim().toUpperCase()
+        : 'INR';
+    const rawCurrency = rawCurrencyField || fallbackCurr;
+    if (!rawCurrency || !isValidCurrencyCode(rawCurrency)) {
       invalidRows.push({
         rowNumber: rowNum,
         raw: row,
-        reason: `Unsupported or invalid ISO 4217 currency code: "${row.currency}".`,
+        reason: `Unsupported or missing ISO 4217 currency code: "${row.currency ?? ''}".`,
       });
       return;
     }
-    const validCurrency = normalizeCurrencyCode(rawCurrency, 'INR');
+    const validCurrency = normalizeCurrencyCode(rawCurrency);
 
     const explicitRail = (row.payment_rail as PaymentRailType) || 'UNKNOWN';
     const resolved = resolveTransactionDescriptor(
@@ -697,7 +715,7 @@ export function detectCommitmentsAndAlerts(
   transactions: TransactionRecord[],
   notifications: NotificationInput[],
   userStateOverrides: Record<string, UserCommitmentStateOverride> = {},
-  referenceToday = '2026-10-30'
+  referenceToday: string = getRuntimeDateISO()
 ): {
   commitments: CommitmentRecord[];
   alerts: DetectionAlertRecord[];
@@ -741,6 +759,10 @@ export function detectCommitmentsAndAlerts(
     'CMT-DESIGNVAULT': {
       lastUsedDate: '2026-08-20',
       cancelledAtOverride: '2026-09-10',
+      serviceCancelledAtOverride: '2026-09-10',
+      mandateRevokedAtOverride: '2026-09-10',
+      serviceLifecycleStatus: 'CANCELLATION_EVIDENCE_ATTACHED',
+      mandateLifecycleStatus: 'REVOCATION_EVIDENCE_ATTACHED',
       completedStepIds: [
         'STEP-CMT-DESIGNVAULT-A1',
         'STEP-CMT-DESIGNVAULT-A2',
@@ -1116,6 +1138,7 @@ export function detectCommitmentsAndAlerts(
         previousValue: formatCurrency(typicalAmount, groupCurrency),
         percentageChange: priceChangePercent,
         annualImpact: annualPriceIncreaseImpact,
+        currency: groupCurrency,
         evidenceReference: `Transactions ${sorted.slice(-2).map((t) => t.id).join(' vs ')}`,
         suggestedAction: merchant.isFinancialObligation
           ? `Review ${merchant.canonicalName} policy endorsement/GST notice before modifying NACH mandate.`
@@ -1138,6 +1161,7 @@ export function detectCommitmentsAndAlerts(
         previousValue: `${formatCurrency(0, groupCurrency)} (14-Day Free Trial)`,
         percentageChange: null,
         annualImpact: latestAmount * 12,
+        currency: groupCurrency,
         evidenceReference: `Notification ${trialNotif.id} + Debit ${latestTxn.id}`,
         suggestedAction: `Verify whether you intend to keep ${merchant.serviceName} at ${formatCurrency(latestAmount * 12, groupCurrency)}/year or cancel service + UPI AutoPay mandate.`,
         createdAt: latestTxn.transactionDate,
@@ -1158,6 +1182,7 @@ export function detectCommitmentsAndAlerts(
         previousValue: 'Paused Jun–Jul 2026',
         percentageChange: null,
         annualImpact: latestAmount * 12,
+        currency: groupCurrency,
         evidenceReference: `Graph cross-descriptor history: ${sorted.map((t) => t.id).join(', ')}`,
         suggestedAction: 'Review whether subscription pause expired automatically or was re-activated.',
         createdAt: latestTxn.transactionDate,
@@ -1178,6 +1203,7 @@ export function detectCommitmentsAndAlerts(
         previousValue: `${formatCurrency(typicalAmount, groupCurrency)}/year`,
         percentageChange: 0,
         annualImpact: latestAmount,
+        currency: groupCurrency,
         evidenceReference: `Supporting annual debits: ${sorted.map((t) => t.id).join(', ')}`,
         suggestedAction: 'Remember that uninstalling the Android app does NOT cancel a Google Play subscription.',
         createdAt: latestTxn.transactionDate,
@@ -1198,6 +1224,7 @@ export function detectCommitmentsAndAlerts(
         previousValue: `Last used ${lastUsedDate}`,
         percentageChange: null,
         annualImpact: annualisedAmount,
+        currency: groupCurrency,
         evidenceReference: `User-reported usage signal (${lastUsedDate}) + Debit ${latestTxn.id}`,
         suggestedAction: `Evaluate cancelling ${merchant.serviceName} to save up to ${formatCurrency(annualisedAmount, groupCurrency)}/year.`,
         createdAt: referenceToday,
@@ -1222,6 +1249,7 @@ export function detectCommitmentsAndAlerts(
         previousValue: `Cancelled on ${effectiveCancelDate}`,
         percentageChange: null,
         annualImpact: annualisedAmount,
+        currency: groupCurrency,
         evidenceReference: `Cancellation Ref ${session.evidence[0]?.referenceNumber || 'N/A'} vs Debit ${postTxn.id}`,
         suggestedAction: 'Inspect whether charge reflects a trailing billing cycle or unrevoked card standing instruction; use saved confirmation reference for bank dispute if needed.',
         createdAt: postTxn.transactionDate,
@@ -1252,6 +1280,7 @@ export function detectCommitmentsAndAlerts(
       previousValue: null,
       percentageChange: null,
       annualImpact: null,
+      currency: uCurr,
       evidenceReference: `Transaction ${uTxn.id}${uTxn.processorName ? ` via ${uTxn.processorName}` : ''}`,
       suggestedAction: 'Inspect UPI/bank statement reference or manually assign the merchant if recognised.',
       createdAt: uTxn.transactionDate,
@@ -1405,14 +1434,11 @@ export function buildPlaybookAndSessionForCommitment(params: {
   }
 
   const completedSet = new Set(override.completedStepIds || []);
-  const isValidIsoDateString = (d: string | null | undefined): d is string =>
-    typeof d === 'string' && d.trim().length > 0 && !Number.isNaN(Date.parse(d.trim()));
 
   const steps: CancellationPlaybookStep[] = [...layerASteps, ...layerBSteps].map((s) => {
     const isCompleted = completedSet.has(s.id);
-    const explicitStepDate =
-      override.stepCompletedAt?.[s.id] ??
-      (isValidIsoDateString(override.cancelledAtOverride) ? override.cancelledAtOverride.trim() : null);
+    const rawStepDate = override.stepCompletedAt?.[s.id] ?? override.cancelledAtOverride ?? null;
+    const explicitStepDate = isStrictValidIsoDate(rawStepDate) ? rawStepDate.trim() : null;
     return {
       ...s,
       completed: isCompleted,
@@ -1425,46 +1451,61 @@ export function buildPlaybookAndSessionForCommitment(params: {
   const evidence = override.evidenceRecords ? [...override.evidenceRecords] : [];
   const hasUnresponsiveNote = evidence.some((e) => e.evidenceType === 'MERCHANT_UNRESPONSIVE');
 
-  const serviceEvidenceWithDate = evidence.find(
-    (e) => e.evidenceType === 'SERVICE_CONFIRMATION' && isValidIsoDateString(e.evidenceDate)
+  const isServiceCompletionStatus =
+    override.serviceLifecycleStatus === undefined ||
+    override.serviceLifecycleStatus === 'CANCELLATION_REPORTED_BY_USER' ||
+    override.serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED' ||
+    override.serviceLifecycleStatus === 'CANCELLED';
+
+  const isMandateCompletionStatus =
+    override.mandateLifecycleStatus === undefined ||
+    override.mandateLifecycleStatus === 'REVOCATION_REPORTED_BY_USER' ||
+    override.mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED' ||
+    override.mandateLifecycleStatus === 'REVOKED';
+
+  const serviceEvidenceWithEffectiveDate = evidence.find(
+    (e) => e.evidenceType === 'SERVICE_CONFIRMATION' && isStrictValidIsoDate(e.effectiveDate)
   );
-  const mandateEvidenceWithDate = evidence.find(
-    (e) => e.evidenceType === 'MANDATE_REVOCATION' && isValidIsoDateString(e.evidenceDate)
+  const mandateEvidenceWithEffectiveDate = evidence.find(
+    (e) => e.evidenceType === 'MANDATE_REVOCATION' && isStrictValidIsoDate(e.effectiveDate)
   );
 
-  const rawServiceCancelledAt =
-    override.serviceCancelledAtOverride !== undefined
+  // Never copy evidenceDate into serviceCancelledAt or paymentAuthorisationRevokedAt!
+  const rawServiceCancelledAt = isServiceCompletionStatus
+    ? override.serviceCancelledAtOverride !== undefined
       ? override.serviceCancelledAtOverride
       : override.cancelledAtOverride !== undefined
       ? override.cancelledAtOverride
-      : serviceEvidenceWithDate?.evidenceDate ?? null;
-  const serviceCancelledAt = isValidIsoDateString(rawServiceCancelledAt)
+      : serviceEvidenceWithEffectiveDate?.effectiveDate ?? null
+    : null;
+  const serviceCancelledAt = isStrictValidIsoDate(rawServiceCancelledAt)
     ? rawServiceCancelledAt.trim()
     : null;
 
-  const rawMandateRevokedAt =
-    override.mandateRevokedAtOverride !== undefined
+  const rawMandateRevokedAt = isMandateCompletionStatus
+    ? override.mandateRevokedAtOverride !== undefined
       ? override.mandateRevokedAtOverride
       : override.cancelledAtOverride !== undefined
       ? override.cancelledAtOverride
-      : mandateEvidenceWithDate?.evidenceDate ?? null;
-  const paymentAuthorisationRevokedAt = isValidIsoDateString(rawMandateRevokedAt)
+      : mandateEvidenceWithEffectiveDate?.effectiveDate ?? null
+    : null;
+  const paymentAuthorisationRevokedAt = isStrictValidIsoDate(rawMandateRevokedAt)
     ? rawMandateRevokedAt.trim()
     : null;
 
   const hasExternalServiceCancel =
     Boolean(serviceCancelledAt) ||
-    evidence.some((e) => e.evidenceType === 'SERVICE_CONFIRMATION') ||
     override.serviceLifecycleStatus === 'CANCELLATION_REPORTED_BY_USER' ||
     override.serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED' ||
-    override.serviceLifecycleStatus === 'CANCELLED';
+    override.serviceLifecycleStatus === 'CANCELLED' ||
+    (isServiceCompletionStatus && evidence.some((e) => e.evidenceType === 'SERVICE_CONFIRMATION'));
 
   const hasExternalMandateRevoke =
     Boolean(paymentAuthorisationRevokedAt) ||
-    evidence.some((e) => e.evidenceType === 'MANDATE_REVOCATION') ||
     override.mandateLifecycleStatus === 'REVOCATION_REPORTED_BY_USER' ||
     override.mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED' ||
-    override.mandateLifecycleStatus === 'REVOKED';
+    override.mandateLifecycleStatus === 'REVOKED' ||
+    (isMandateCompletionStatus && evidence.some((e) => e.evidenceType === 'MANDATE_REVOCATION'));
 
   let status: CancellationWorkflowState = 'NOT_STARTED';
   if (hasUnresponsiveNote || override.serviceLifecycleStatus === 'MERCHANT_UNRESPONSIVE') {
@@ -1478,23 +1519,48 @@ export function buildPlaybookAndSessionForCommitment(params: {
   } else if (
     anyDone ||
     override.serviceLifecycleStatus === 'CANCELLATION_REQUESTED' ||
-    override.mandateLifecycleStatus === 'REVOCATION_REQUESTED'
+    override.mandateLifecycleStatus === 'REVOCATION_REQUESTED' ||
+    override.mandateLifecycleStatus === 'PAUSED_REPORTED_BY_USER'
   ) {
     status = 'SERVICE_CANCELLATION_PENDING';
   }
 
-  const effectiveCancelAnchor = serviceCancelledAt || paymentAuthorisationRevokedAt;
-  const postCancellationTransactionIds: string[] = [];
-  if (effectiveCancelAnchor) {
+  const postServiceCancellationTransactionIds: string[] = [];
+  if (serviceCancelledAt && isStrictValidIsoDate(serviceCancelledAt)) {
     for (const txn of sortedTransactions) {
-      if (Date.parse(txn.transactionDate) > Date.parse(effectiveCancelAnchor)) {
-        postCancellationTransactionIds.push(txn.id);
+      if (
+        txn.direction === 'DEBIT' &&
+        isStrictValidIsoDate(txn.transactionDate) &&
+        txn.transactionDate.trim() > serviceCancelledAt
+      ) {
+        postServiceCancellationTransactionIds.push(txn.id);
       }
     }
   }
 
+  const postMandateRevocationTransactionIds: string[] = [];
+  if (paymentAuthorisationRevokedAt && isStrictValidIsoDate(paymentAuthorisationRevokedAt)) {
+    for (const txn of sortedTransactions) {
+      if (
+        txn.direction === 'DEBIT' &&
+        isStrictValidIsoDate(txn.transactionDate) &&
+        txn.transactionDate.trim() > paymentAuthorisationRevokedAt
+      ) {
+        postMandateRevocationTransactionIds.push(txn.id);
+      }
+    }
+  }
+
+  const postCancelSet = new Set<string>([
+    ...postServiceCancellationTransactionIds,
+    ...postMandateRevocationTransactionIds,
+  ]);
+  const postCancellationTransactionIds = sortedTransactions
+    .filter((t) => postCancelSet.has(t.id))
+    .map((t) => t.id);
+
   const earliestEvidenceDate =
-    evidence.find((e) => isValidIsoDateString(e.evidenceDate))?.evidenceDate?.trim() || null;
+    evidence.find((e) => isStrictValidIsoDate(e.evidenceDate))?.evidenceDate?.trim() || null;
   const initiatedAt =
     serviceCancelledAt || paymentAuthorisationRevokedAt || earliestEvidenceDate || null;
 
@@ -1511,7 +1577,7 @@ export function buildPlaybookAndSessionForCommitment(params: {
     mandateRevocationSummary: `Layer B revokes the recurring ${paymentRail.replace(/_/g, ' ')} collection authority with your payment provider so future auto-debits cannot execute.`,
     officialServiceUrl: merchant.officialCancellationUrl,
     officialRailSupportUrl: railInfo.url,
-    lastVerifiedDate: '2026-10-31',
+    lastVerifiedDate: 'Reference catalogue (Not independently verified)',
     escalationGuidance: [
       `Check ${merchant.canonicalName}'s stated cancellation cut-off and renewal terms. If the merchant does not respond according to its stated policy, revoke the ${paymentRail.replace(/_/g, ' ')} mandate via your bank/UPI app and retain your timestamped cancellation request.`,
       `If a debit occurs after both Layer A and Layer B are completed, raise a dispute with your bank/UPI app citing the Mandate Revocation Reference and Service Cancellation Confirmation.`,
@@ -1535,10 +1601,14 @@ export function buildPlaybookAndSessionForCommitment(params: {
     initiatedAt,
     serviceCancelledAt,
     paymentAuthorisationRevokedAt,
-    lastReviewedAt: initiatedAt || '2026-10-31',
+    lastReviewedAt: initiatedAt || null,
     steps,
     evidence,
     postCancellationTransactionIds,
+    postServiceCancellationTransactionIds,
+    postMandateRevocationTransactionIds,
+    serviceMonitoringEligible: Boolean(serviceCancelledAt),
+    mandateMonitoringEligible: Boolean(paymentAuthorisationRevokedAt),
   };
 
   return { playbook, session };
@@ -1582,7 +1652,7 @@ export function buildCommitmentGraphResponse(params: {
   const nodes: GraphNodeData[] = [];
   const edges: GraphEdgeData[] = [];
   const addedNodes = new Set<string>();
-  const nowIso = '2026-10-31T00:00:00Z';
+  const nowIso = new Date().toISOString();
 
   function addNode(node: GraphNodeData) {
     if (!addedNodes.has(node.id)) {
@@ -1662,12 +1732,13 @@ export function buildCommitmentGraphResponse(params: {
       },
     });
 
+    const cmtCcy = targetCommitment.currency || 'INR';
     const serviceNodeId = `SRV-${targetCommitment.id}`;
     addNode({
       id: serviceNodeId,
       label: 'Service',
       title: targetCommitment.serviceName,
-      subtitle: `₹${targetCommitment.latestAmount} · ${targetCommitment.recurrenceType}`,
+      subtitle: `${formatCurrency(targetCommitment.latestAmount, cmtCcy)} · ${targetCommitment.recurrenceType}`,
       status: 'CONFIRMED',
       confidence: targetCommitment.confidenceScore,
       isCoreCommitmentPath: true,
@@ -1676,6 +1747,7 @@ export function buildCommitmentGraphResponse(params: {
         serviceName: targetCommitment.serviceName,
         typicalAmount: targetCommitment.typicalAmount,
         latestAmount: targetCommitment.latestAmount,
+        currency: cmtCcy,
       },
     });
 
@@ -1698,7 +1770,7 @@ export function buildCommitmentGraphResponse(params: {
       id: targetCommitment.id,
       label: 'Commitment',
       title: `${targetCommitment.serviceName} Commitment`,
-      subtitle: `₹${targetCommitment.annualisedAmount.toLocaleString('en-IN')}/yr · ${targetCommitment.confidenceScore}% conf`,
+      subtitle: `${formatCurrency(targetCommitment.annualisedAmount, cmtCcy)}/yr · ${targetCommitment.confidenceScore}% conf`,
       status: targetCommitment.relationshipStatus,
       confidence: targetCommitment.confidenceScore,
       isCoreCommitmentPath: true,
@@ -1708,6 +1780,7 @@ export function buildCommitmentGraphResponse(params: {
         recurrenceType: targetCommitment.recurrenceType,
         annualisedAmount: targetCommitment.annualisedAmount,
         monthlyEquivalent: targetCommitment.monthlyEquivalent,
+        currency: cmtCcy,
         nextExpectedDate: targetCommitment.nextExpectedDate,
         status: targetCommitment.status,
       },
@@ -1922,10 +1995,11 @@ export function buildCommitmentGraphResponse(params: {
 
     cmtTxns.forEach((txn, idx) => {
       const isCoreTxn = idx === 0 || idx === cmtTxns.length - 1 || Boolean(txn.isPostCancellationDebit);
+      const txnCcy = txn.currency || targetCommitment.currency || 'INR';
       addNode({
         id: txn.id,
         label: 'Transaction',
-        title: `${txn.id} · ₹${txn.amount}`,
+        title: `${txn.id} · ${formatCurrency(txn.amount, txnCcy)}`,
         subtitle: `${txn.transactionDate} · ${txn.rawDescription}`,
         status: txn.isPostCancellationDebit ? 'UNRESOLVED' : txn.resolutionStatus,
         confidence: txn.confidenceScore,
@@ -1935,6 +2009,7 @@ export function buildCommitmentGraphResponse(params: {
           date: txn.transactionDate,
           transactionDate: txn.transactionDate,
           amount: txn.amount,
+          currency: txnCcy,
           rawDescription: txn.rawDescription,
           accountAlias: txn.accountAlias,
           isPostCancellationDebit: Boolean(txn.isPostCancellationDebit),
@@ -2071,11 +2146,12 @@ export function buildCommitmentGraphResponse(params: {
 
     const cmtNotifs = notifications.filter((n) => n.relatedCommitmentId === targetCommitment.id);
     for (const notif of cmtNotifs) {
+      const notifCcy = notif.currency || targetCommitment.currency || 'INR';
       addNode({
         id: notif.id,
         label: 'NotificationEvent',
         title: `${notif.eventType.replace(/_/g, ' ')}`,
-        subtitle: `${notif.eventDate} · ₹${notif.expectedAmount}`,
+        subtitle: `${notif.eventDate} · ${formatCurrency(notif.expectedAmount, notifCcy)}`,
         status: 'CONFIRMED',
         confidence: 96,
         isCoreCommitmentPath: true,
@@ -2083,6 +2159,7 @@ export function buildCommitmentGraphResponse(params: {
           notificationId: notif.id,
           eventType: notif.eventType,
           eventDate: notif.eventDate,
+          currency: notifCcy,
           description: notif.description,
         },
       });
@@ -2154,11 +2231,16 @@ export function buildCommitmentGraphResponse(params: {
     // Attach Service Terms Document & Three-Way ReconciliationFinding nodes (Section 4.1 & 4.2)
     const matchedDoc = serviceTerms.find((d) => d.commitmentId === targetCommitment.id) || null;
     if (matchedDoc) {
+      const docCcy = matchedDoc.currency || targetCommitment.currency || 'INR';
+      const docExpectedFormatted =
+        matchedDoc.expectedAmount !== null
+          ? formatCurrency(matchedDoc.expectedAmount, docCcy)
+          : 'Amount unavailable';
       addNode({
         id: matchedDoc.id,
         label: 'Document',
         title: `Doc: ${matchedDoc.serviceName}`,
-        subtitle: `Expected ₹${matchedDoc.expectedAmount} (${matchedDoc.billingFrequency})`,
+        subtitle: `Expected ${docExpectedFormatted} (${matchedDoc.billingFrequency})`,
         status: matchedDoc.userVerified ? 'USER_CONFIRMED' : 'CONFIRMED',
         confidence: matchedDoc.extractionConfidence,
         isCoreCommitmentPath: true,
@@ -2166,6 +2248,7 @@ export function buildCommitmentGraphResponse(params: {
           documentId: matchedDoc.id,
           expectedAmountMinor: matchedDoc.expectedAmountMinor,
           expectedAmount: matchedDoc.expectedAmount,
+          currency: docCcy,
           billingFrequency: matchedDoc.billingFrequency,
           documentSource: matchedDoc.documentSource,
         },
@@ -2181,7 +2264,7 @@ export function buildCommitmentGraphResponse(params: {
         evidenceType: 'SERVICE_INVOICE_TERMS',
         sourceReference: matchedDoc.id,
         createdAt: matchedDoc.createdAt,
-        evidenceSummary: `Documented expected billing ₹${matchedDoc.expectedAmount}/${matchedDoc.billingFrequency.toLowerCase()}.`,
+        evidenceSummary: `Documented expected billing ${docExpectedFormatted}/${matchedDoc.billingFrequency.toLowerCase()}.`,
         isCoreCommitmentPath: true,
       });
     }
@@ -2203,12 +2286,24 @@ export function buildCommitmentGraphResponse(params: {
       });
 
     if (recFinding) {
+      const actualCcy =
+        recFinding.actualTransactionCurrency ||
+        recFinding.currency ||
+        targetCommitment.currency ||
+        'INR';
+      const expectedCcy =
+        recFinding.expectedServiceCurrency ||
+        recFinding.currency ||
+        targetCommitment.currency ||
+        'INR';
       addNode({
         id: recFinding.id,
         label: 'ReconciliationFinding',
         title: `Reconciliation: ${recFinding.status.replace(/_/g, ' ')}`,
-        subtitle: `Actual ₹${recFinding.actualTransactionAmount} vs Doc ${
-          recFinding.expectedServiceAmount !== null ? `₹${recFinding.expectedServiceAmount}` : 'N/A'
+        subtitle: `Actual ${formatCurrency(recFinding.actualTransactionAmount, actualCcy)} vs Doc ${
+          recFinding.expectedServiceAmount !== null
+            ? formatCurrency(recFinding.expectedServiceAmount, expectedCcy)
+            : 'N/A'
         }`,
         status:
           recFinding.status === 'MATCHED'
@@ -2221,6 +2316,7 @@ export function buildCommitmentGraphResponse(params: {
         properties: {
           reconciliationId: recFinding.id,
           status: recFinding.status,
+          currency: actualCcy,
           expectedServiceAmountMinor: recFinding.expectedServiceAmountMinor,
           actualTransactionAmountMinor: recFinding.actualTransactionAmountMinor,
           mandateMaxAmountMinor: recFinding.mandateMaxAmountMinor,
@@ -2251,6 +2347,7 @@ export function buildCommitmentGraphResponse(params: {
         (t.processorName?.includes('Razorpay') || t.processorId === 'PROC-RAZORPAY')
     );
     for (const uTxn of unresolvedOnSameProcessor.slice(0, 1)) {
+      const uTxnCcy = uTxn.currency || 'INR';
       addNode({
         id: 'PROC-RAZORPAY',
         label: 'PaymentProcessor',
@@ -2264,7 +2361,7 @@ export function buildCommitmentGraphResponse(params: {
       addNode({
         id: uTxn.id,
         label: 'Transaction',
-        title: `${uTxn.id} · ₹${uTxn.amount} (UNRESOLVED)`,
+        title: `${uTxn.id} · ${formatCurrency(uTxn.amount, uTxnCcy)} (UNRESOLVED)`,
         subtitle: `${uTxn.transactionDate} · ${uTxn.rawDescription}`,
         status: 'UNRESOLVED',
         confidence: uTxn.confidenceScore,
@@ -2274,6 +2371,7 @@ export function buildCommitmentGraphResponse(params: {
           date: uTxn.transactionDate,
           transactionDate: uTxn.transactionDate,
           amount: uTxn.amount,
+          currency: uTxnCcy,
           rawDescription: uTxn.rawDescription,
           unmergedReason: 'Shared processor (Razorpay) only — no verified merchant alias.',
         },
@@ -2479,6 +2577,7 @@ ORDER BY t.transactionDate DESC`,
         date: t.transactionDate,
         rawDescriptor: t.rawDescription,
         amount: t.amount,
+        currency: t.currency || targetCommitment?.currency || 'INR',
         accountAlias: t.accountAlias,
       })),
     },
@@ -2538,14 +2637,14 @@ export function redactTransactionForSarvam(
 const STATIC_MERCHANT_TRANSLATIONS: Record<
   string,
   {
-    resolvedTemplate: (m: string, s: string, p: string, amt: number, desc: string, freq: string) => {
+    resolvedTemplate: (m: string, s: string, p: string, amtStr: string, desc: string, freq: string) => {
       whyConfusing: string;
       whatIsIdentified: string;
       whatRemainsUncertain: string;
       recommendedAction: string;
       fullSummary: string;
     };
-    unresolvedTemplate: (p: string, amt: number, desc: string) => {
+    unresolvedTemplate: (p: string, amtStr: string, desc: string) => {
       whyConfusing: string;
       whatIsIdentified: string;
       whatRemainsUncertain: string;
@@ -2555,66 +2654,66 @@ const STATIC_MERCHANT_TRANSLATIONS: Record<
   }
 > = {
   'en-IN': {
-    resolvedTemplate: (m, s, p, amt, desc, freq) => ({
+    resolvedTemplate: (m, s, p, amtStr, desc, freq) => ({
       whyConfusing: `Bank statements show the abbreviated gateway code "${desc}", which prefixes the payment processor (${p}) before the merchant token.`,
-      whatIsIdentified: `DebitLens verified that this ₹${amt} (${freq}) payment belongs to ${s} (operated by ${m}), processed via ${p}.`,
+      whatIsIdentified: `DebitLens verified that this ${amtStr} (${freq}) payment belongs to ${s} (operated by ${m}), processed via ${p}.`,
       whatRemainsUncertain: `Exact user profile tier or family member usage inside ${s} cannot be inferred from bank statements alone.`,
-      recommendedAction: `If you wish to stop this ₹${amt} recurring debit, use the Two-Layer Cancellation Assistant to cancel ${s} with ${m} AND revoke the payment mandate.`,
-      fullSummary: `This payment of ₹${amt} (${freq}) is linked to a subscription for ${s} (${m}). The statement description "${desc}" includes ${p}, which acts as the payment processor.`,
+      recommendedAction: `If you wish to stop this ${amtStr} recurring debit, use the Two-Layer Cancellation Assistant to cancel ${s} with ${m} AND revoke the payment mandate.`,
+      fullSummary: `This payment of ${amtStr} (${freq}) is linked to a subscription for ${s} (${m}). The statement description "${desc}" includes ${p}, which acts as the payment processor.`,
     }),
-    unresolvedTemplate: (p, amt, desc) => ({
+    unresolvedTemplate: (p, amtStr, desc) => ({
       whyConfusing: `The statement text "${desc}" contains only a payment processor or rail code (${p}) without a recognisable brand name.`,
-      whatIsIdentified: `The payment processor (${p}) is recognised for this ₹${amt} debit, but the underlying merchant could not be confirmed.`,
+      whatIsIdentified: `The payment processor (${p}) is recognised for this ${amtStr} debit, but the underlying merchant could not be confirmed.`,
       whatRemainsUncertain: `The actual underlying merchant or service has NOT been confirmed. DebitLens refuses to guess or merge this transaction with other ${p} subscriptions.`,
-      recommendedAction: `Check your email/SMS receipt for ₹${amt} on this date or inspect the UPI transaction ID in your payment app to confirm the merchant manually.`,
-      fullSummary: `The payment processor (${p}) is recognised in "${desc}" for ₹${amt}, but the underlying merchant could not be confirmed. Manual review is required.`,
+      recommendedAction: `Check your email/SMS receipt for ${amtStr} on this date or inspect the UPI transaction ID in your payment app to confirm the merchant manually.`,
+      fullSummary: `The payment processor (${p}) is recognised in "${desc}" for ${amtStr}, but the underlying merchant could not be confirmed. Manual review is required.`,
     }),
   },
   'hi-IN': {
-    resolvedTemplate: (m, s, p, amt, desc, freq) => ({
+    resolvedTemplate: (m, s, p, amtStr, desc, freq) => ({
       whyConfusing: `बैंक स्टेटमेंट में संक्षिप्त कोड "${desc}" दिखता है, जिसमें असली मर्चेंट से पहले पेमेंट गेटवे (${p}) का नाम जुड़ा होता है।`,
-      whatIsIdentified: `यह ₹${amt} (${freq}) का भुगतान ${s} (${m}) की सदस्यता से जुड़ा हुआ है। भुगतान विवरण में ${p} का नाम दिखाई देता है, जो भुगतान प्रोसेसर के रूप में कार्य करता है।`,
+      whatIsIdentified: `यह ${amtStr} (${freq}) का भुगतान ${s} (${m}) की सदस्यता से जुड़ा हुआ है। भुगतान विवरण में ${p} का नाम दिखाई देता है, जो भुगतान प्रोसेसर के रूप में कार्य करता है।`,
       whatRemainsUncertain: `केवल बैंक स्टेटमेंट से यह पता नहीं लगाया जा सकता कि आपने इस महीने ${s} ऐप का वास्तव में कितना उपयोग किया है।`,
-      recommendedAction: `यदि आप ₹${amt} के इस आवर्ती भुगतान को रोकना चाहते हैं, तो पहले ${m} पर सेवा रद्द करें (Layer A) और फिर अपने भुगतान ऐप में मैंडेट रद्द करें (Layer B)।`,
+      recommendedAction: `यदि आप ${amtStr} के इस आवर्ती भुगतान को रोकना चाहते हैं, तो पहले ${m} पर सेवा रद्द करें (Layer A) और फिर अपने भुगतान ऐप में मैंडेट रद्द करें (Layer B)।`,
       fullSummary: `यह भुगतान ${s} की सदस्यता से जुड़ा हुआ है। भुगतान विवरण में ${p} का नाम दिखाई देता है, जो भुगतान प्रोसेसर के रूप में कार्य करता है।`,
     }),
-    unresolvedTemplate: (p, amt, desc) => ({
+    unresolvedTemplate: (p, amtStr, desc) => ({
       whyConfusing: `बैंक विवरण "${desc}" में केवल पेमेंट प्रोसेसर (${p}) और एक अस्पष्ट कोड दिखाई देता है, किसी सेवा या ब्रांड का स्पष्ट नाम नहीं है।`,
-      whatIsIdentified: `विवरण से केवल यह पुष्टि होती है कि ₹${amt} के इस भुगतान में ${p} एक संभावित भुगतान प्रोसेसर है।`,
+      whatIsIdentified: `विवरण से केवल यह पुष्टि होती है कि ${amtStr} के इस भुगतान में ${p} एक संभावित भुगतान प्रोसेसर है।`,
       whatRemainsUncertain: `भुगतान प्रोसेसर पहचाना गया है, लेकिन असली मर्चेंट या सेवा की पुष्टि नहीं हुई है। सुरक्षा नियमों के तहत DebitLens बिना प्रमाण के किसी मर्चेंट का अनुमान नहीं लगाता।`,
-      recommendedAction: `कृपया अपने ईमेल/SMS रसीद या UPI ऐप में इस ₹${amt} के लेनदेन की जांच करें और मर्चेंट की मैन्युअल रूप से समीक्षा करें।`,
+      recommendedAction: `कृपया अपने ईमेल/SMS रसीद या UPI ऐप में इस ${amtStr} के लेनदेन की जांच करें और मर्चेंट की मैन्युअल रूप से समीक्षा करें।`,
       fullSummary: `विवरण "${desc}" में ${p} को एक संभावित भुगतान प्रोसेसर के रूप में पहचाना गया है, लेकिन वास्तविक मर्चेंट की पुष्टि नहीं हुई है। कृपया मैन्युअल समीक्षा करें।`,
     }),
   },
   'ta-IN': {
-    resolvedTemplate: (m, s, p, amt, desc, freq) => ({
+    resolvedTemplate: (m, s, p, amtStr, desc, freq) => ({
       whyConfusing: `வங்கி அறிக்கையில் "${desc}" என்ற சுருக்கமான குறியீடு உள்ளது. இதில் சேவை பெயருக்கு முன்பாக கட்டணச் செயலி (${p}) பெயர் இடம்பெற்றுள்ளது.`,
-      whatIsIdentified: `இந்த ₹${amt} (${freq}) கட்டணம் ${s} (${m}) சந்தாவுடன் தொடர்புடையது. பரிவர்த்தனை விவரத்தில் உள்ள ${p} கட்டணச் செயலியாக (Payment Processor) செயல்படுகிறது.`,
+      whatIsIdentified: `இந்த ${amtStr} (${freq}) கட்டணம் ${s} (${m}) சந்தாவுடன் தொடர்புடையது. பரிவர்த்தனை விவரத்தில் உள்ள ${p} கட்டணச் செயலியாக (Payment Processor) செயல்படுகிறது.`,
       whatRemainsUncertain: `வங்கி அறிக்கையை மட்டும் வைத்து நீங்கள் ${s} சேவையை பயன்படுத்துகிறீர்களா என்பதை தீர்மானிக்க முடியாது.`,
-      recommendedAction: `இந்த ₹${amt} தொடர் கட்டணத்தை நிறுத்த விரும்பினால், முதலில் ${m} தளத்தில் சேவையை ரத்து செய்து, பின்னர் UPI/வங்கி ஆப்பில் ஆட்டோபே ஆணையை (Mandate) ரத்து செய்யவும்.`,
-      fullSummary: `இந்த ₹${amt} கட்டணம் ${s} சந்தாவுடன் இணைக்கப்பட்டுள்ளது. விவரத்தில் காணப்படும் ${p} கட்டணச் செயலியாக செயல்படுகிறது.`,
+      recommendedAction: `இந்த ${amtStr} தொடர் கட்டணத்தை நிறுத்த விரும்பினால், முதலில் ${m} தளத்தில் சேவையை ரத்து செய்து, பின்னர் UPI/வங்கி ஆப்பில் ஆட்டோபே ஆணையை (Mandate) ரத்து செய்யவும்.`,
+      fullSummary: `இந்த ${amtStr} கட்டணம் ${s} சந்தாவுடன் இணைக்கப்பட்டுள்ளது. விவரத்தில் காணப்படும் ${p} கட்டணச் செயலியாக செயல்படுகிறது.`,
     }),
-    unresolvedTemplate: (p, amt, desc) => ({
+    unresolvedTemplate: (p, amtStr, desc) => ({
       whyConfusing: `"${desc}" என்ற விவரத்தில் கட்டணச் செயலி (${p}) பெயர் மட்டுமே உள்ளது; உண்மையான வணிகர் பெயர் இல்லை.`,
-      whatIsIdentified: `₹${amt} கட்டணத்தில் ${p} ஒரு கட்டணச் செயலியாக அடையாளம் காணப்பட்டுள்ளது.`,
+      whatIsIdentified: `${amtStr} கட்டணத்தில் ${p} ஒரு கட்டணச் செயலியாக அடையாளம் காணப்பட்டுள்ளது.`,
       whatRemainsUncertain: `கட்டணச் செயலி அடையாளம் காணப்பட்டது, ஆனால் உண்மையான வணிகர் அல்லது சேவை இன்னும் உறுதிப்படுத்தப்படவில்லை. DebitLens ஆதாரமின்றி வணிகரை ஊகிக்காது.`,
-      recommendedAction: `உங்கள் SMS/மின்னஞ்சல் ரசீதை சரிபார்த்து இந்த ₹${amt} பரிவர்த்தனையை கைமுறையாக ஆய்வு செய்யவும்.`,
+      recommendedAction: `உங்கள் SMS/மின்னஞ்சல் ரசீதை சரிபார்த்து இந்த ${amtStr} பரிவர்த்தனையை கைமுறையாக ஆய்வு செய்யவும்.`,
       fullSummary: `விவரம் "${desc}" இல் ${p} கட்டணச் செயலியாகத் தெரிகிறது, ஆனால் உண்மையான வணிகர் உறுதிப்படுத்தப்படவில்லை.`,
     }),
   },
   'bn-IN': {
-    resolvedTemplate: (m, s, p, amt, desc, freq) => ({
+    resolvedTemplate: (m, s, p, amtStr, desc, freq) => ({
       whyConfusing: `ব্যাংক স্টেটমেন্টে "${desc}" সংক্ষিপ্ত কোডটি দেখা যাচ্ছে, যেখানে আসল পরিষেবার নামের আগে পেমেন্ট প্রসেসর (${p})-এর নাম যুক্ত থাকে।`,
-      whatIsIdentified: `এই ₹${amt} (${freq}) পেমেন্টটি ${s} (${m})-এর সাবস্ক্রিপশনের সাথে যুক্ত। বিবরণে থাকা ${p} পেমেন্ট প্রসেসর হিসেবে কাজ করছে।`,
+      whatIsIdentified: `এই ${amtStr} (${freq}) পেমেন্টটি ${s} (${m})-এর সাবস্ক্রিপশনের সাথে যুক্ত। বিবরণে থাকা ${p} পেমেন্ট প্রসেসর হিসেবে কাজ করছে।`,
       whatRemainsUncertain: `শুধুমাত্র ব্যাংক স্টেটমেন্ট দেখে ${s} পরিষেবাটি বর্তমানে ব্যবহৃত হচ্ছে কি না তা নিশ্চিত করা যায় না।`,
-      recommendedAction: `এই ₹${amt} অটো-ডেবিট বন্ধ করতে চাইলে প্রথমে ${m}-এ পরিষেবাটি বাতিল করুন এবং তারপর আপনার পেমেন্ট অ্যাপে ম্যান্ডেট প্রত্যাহার করুন।`,
-      fullSummary: `এই ₹${amt} পেমেন্টটি ${s}-এর সাবস্ক্রিপশনের সাথে যুক্ত। পেমেন্ট বিবরণে ${p}-এর নাম দেখা যাচ্ছে, যা পেমেন্ট প্রসেসর হিসেবে কাজ করে।`,
+      recommendedAction: `এই ${amtStr} অটো-ডেবিট বন্ধ করতে চাইলে প্রথমে ${m}-এ পরিষেবাটি বাতিল করুন এবং তারপর আপনার পেমেন্ট অ্যাপে ম্যান্ডেট প্রত্যাহার করুন।`,
+      fullSummary: `এই ${amtStr} পেমেন্টটি ${s}-এর সাবস্ক্রিপশনের সাথে যুক্ত। পেমেন্ট বিবরণে ${p}-এর নাম দেখা যাচ্ছে, যা পেমেন্ট প্রসেসর হিসেবে কাজ করে।`,
     }),
-    unresolvedTemplate: (p, amt, desc) => ({
+    unresolvedTemplate: (p, amtStr, desc) => ({
       whyConfusing: `"${desc}" বিবরণে শুধুমাত্র পেমেন্ট প্রসেসর (${p}) এবং একটি সাংকেতিক কোড রয়েছে, কোনো পরিচিত ব্র্যান্ডের নাম নেই।`,
-      whatIsIdentified: `বিবরণটি ₹${amt} লেনদেনের জন্য ${p}-কে সম্ভাব্য পেমেন্ট প্রসেসর হিসেবে চিহ্নিত করে।`,
+      whatIsIdentified: `বিবরণটি ${amtStr} লেনদেনের জন্য ${p}-কে সম্ভাব্য পেমেন্ট প্রসেসর হিসেবে চিহ্নিত করে।`,
       whatRemainsUncertain: `পেমেন্ট প্রসেসর চিহ্নিত হয়েছে, কিন্তু প্রকৃত মার্চেন্ট বা পরিষেবা নিশ্চিত করা যায়নি। DebitLens অনুমানের ভিত্তিতে কোনো মার্চেন্ট নির্ধারণ করে না।`,
-      recommendedAction: `অনুগ্রহ করে আপনার SMS/ইমেল রসিদ বা UPI অ্যাপে এই ₹${amt} লেনদেনটি ম্যানুয়ালি যাচাই করুন।`,
+      recommendedAction: `অনুগ্রহ করে আপনার SMS/ইমেল রসিদ বা UPI অ্যাপে এই ${amtStr} লেনদেনটি ম্যানুয়ালি যাচাই করুন।`,
       fullSummary: `"${desc}" বিবরণে ${p}-কে পেমেন্ট প্রসেসর হিসেবে দেখা গেলেও আসল মার্চেন্ট নিশ্চিত হয়নি। ম্যানুয়াল রিভিউ প্রয়োজন।`,
     }),
   },
@@ -2635,6 +2734,7 @@ export function buildGroundedMerchantExplanation(
   const isResolved = Boolean(txn.merchantId && txn.merchantName && txn.serviceName);
   const procName = txn.processorName || txn.paymentMechanism.replace(/_/g, ' ');
   const freq = commitment?.recurrenceType || 'RECURRING';
+  const formattedAmt = formatCurrency(txn.amount, txn.currency || commitment?.currency || 'INR');
 
   const enBuilder = STATIC_MERCHANT_TRANSLATIONS['en-IN'];
   const targetBuilder = STATIC_MERCHANT_TRANSLATIONS[language] || enBuilder;
@@ -2644,22 +2744,22 @@ export function buildGroundedMerchantExplanation(
         txn.merchantName!,
         txn.serviceName!,
         procName,
-        txn.amount,
+        formattedAmt,
         txn.rawDescription,
         freq
       )
-    : enBuilder.unresolvedTemplate(procName, txn.amount, txn.rawDescription);
+    : enBuilder.unresolvedTemplate(procName, formattedAmt, txn.rawDescription);
 
   const defaultLocalized = isResolved
     ? targetBuilder.resolvedTemplate(
         txn.merchantName!,
         txn.serviceName!,
         procName,
-        txn.amount,
+        formattedAmt,
         txn.rawDescription,
         freq
       )
-    : targetBuilder.unresolvedTemplate(procName, txn.amount, txn.rawDescription);
+    : targetBuilder.unresolvedTemplate(procName, formattedAmt, txn.rawDescription);
 
   return {
     transactionId: txn.id,
@@ -2999,8 +3099,9 @@ export function buildGroundedAlertExplanation(
 
   if (language === 'hi-IN') {
     if (alert.alertType === 'PRICE_INCREASE') {
+      const formattedAnnualImpact = formatCurrency(alert.annualImpact || 0, alert.currency || 'INR');
       localizedTitle = `शुल्क वृद्धि की पहचान: ${alert.title}`;
-      localizedExplanation = `इस प्रतिबद्धता की नवीनतम डेबिट राशि ${alert.detectedValue} है, जो पिछले मानक शुल्क ${alert.previousValue} से अधिक है (+${alert.percentageChange}% वृद्धि, वार्षिक प्रभाव ₹${alert.annualImpact || 0})। विवरण: ${alert.evidenceReference}।`;
+      localizedExplanation = `इस प्रतिबद्धता की नवीनतम डेबिट राशि ${alert.detectedValue} है, जो पिछले मानक शुल्क ${alert.previousValue} से अधिक है (+${alert.percentageChange}% वृद्धि, वार्षिक प्रभाव ${formattedAnnualImpact})। विवरण: ${alert.evidenceReference}।`;
       localizedAction = `सत्यापित करें कि क्या आपने प्लान अपग्रेड किया है या मूल्य वृद्धि अनचाही है; आवश्यकता होने पर दो-स्तरीय रद्दीकरण (Two-Layer Cancellation) का उपयोग करें।`;
     } else if (alert.alertType === 'TRIAL_CONVERSION') {
       localizedTitle = `फ़्री ट्रायल अब सशुल्क ऑटो-डेबिट में बदल गया है (${alert.detectedValue})`;
