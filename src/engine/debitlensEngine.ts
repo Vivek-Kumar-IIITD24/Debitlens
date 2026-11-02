@@ -32,7 +32,12 @@ import {
   RAIL_SUPPORT_URLS,
   SUPPORTED_LANGUAGES,
 } from './referenceData';
-import { toMinorUnits, fromMinorUnits } from '../utils/currency';
+import {
+  toMinorUnits,
+  fromMinorUnits,
+  isValidCurrencyCode,
+  normalizeCurrencyCode,
+} from '../utils/currency';
 import {
   buildInitialSeedMandates,
   buildInitialSeedServiceTerms,
@@ -189,7 +194,8 @@ export function inferPaymentMechanismFromDescriptor(
 export function resolveTransactionDescriptor(
   rawDescription: string,
   userConfirmedOverrides?: Record<string, string>,
-  explicitRail?: PaymentRailType
+  explicitRail?: PaymentRailType,
+  transactionId?: string
 ): {
   normalisedDescription: string;
   merchantId: string | null;
@@ -207,11 +213,11 @@ export function resolveTransactionDescriptor(
   const processor = detectProcessor(rawDescription);
   const paymentMechanism = inferPaymentMechanismFromDescriptor(rawDescription, explicitRail);
 
-  // User-confirmed manual override (stored separately from automated inference)
-  if (userConfirmedOverrides && userConfirmedOverrides[rawDescription]) {
-    const targetMerchant = MERCHANT_CATALOGUE.find(
-      (m) => m.id === userConfirmedOverrides[rawDescription]
-    );
+  // Gate A: User-confirmed manual override is strictly scoped to exact transactionId (never global rawDescription)
+  const confirmedMerchantId =
+    transactionId && userConfirmedOverrides ? userConfirmedOverrides[transactionId] : undefined;
+  if (confirmedMerchantId) {
+    const targetMerchant = MERCHANT_CATALOGUE.find((m) => m.id === confirmedMerchantId);
     if (targetMerchant) {
       return {
         normalisedDescription,
@@ -224,7 +230,7 @@ export function resolveTransactionDescriptor(
         resolutionStatus: 'USER_CONFIRMED',
         matchingMethod: 'USER_CONFIRMED_MATCH',
         confidenceScore: 100,
-        resolutionExplanation: `User explicitly confirmed that descriptor "${rawDescription}" belongs to ${targetMerchant.canonicalName} (${targetMerchant.serviceName}).`,
+        resolutionExplanation: `User explicitly confirmed that transaction ${transactionId} ("${rawDescription}") belongs to ${targetMerchant.canonicalName} (${targetMerchant.serviceName}).`,
       };
     }
   }
@@ -498,8 +504,24 @@ export function parseAndNormaliseTransactions(
     }
     seenIds.add(txnId);
 
+    const rawCurrency = row.currency ? String(row.currency).trim().toUpperCase() : 'INR';
+    if (!isValidCurrencyCode(rawCurrency)) {
+      invalidRows.push({
+        rowNumber: rowNum,
+        raw: row,
+        reason: `Unsupported or invalid ISO 4217 currency code: "${row.currency}".`,
+      });
+      return;
+    }
+    const validCurrency = normalizeCurrencyCode(rawCurrency, 'INR');
+
     const explicitRail = (row.payment_rail as PaymentRailType) || 'UNKNOWN';
-    const resolved = resolveTransactionDescriptor(rawDesc, userConfirmedOverrides, explicitRail);
+    const resolved = resolveTransactionDescriptor(
+      rawDesc,
+      userConfirmedOverrides,
+      explicitRail,
+      txnId
+    );
 
     transactions.push({
       id: txnId,
@@ -508,8 +530,8 @@ export function parseAndNormaliseTransactions(
       rawDescription: rawDesc,
       normalisedDescription: resolved.normalisedDescription,
       amount: amt,
-      amountMinor: toMinorUnits(amt),
-      currency: (row.currency || 'INR').trim().toUpperCase(),
+      amountMinor: toMinorUnits(amt, validCurrency),
+      currency: validCurrency,
       direction: direction === 'CREDIT' ? 'CREDIT' : 'DEBIT',
       paymentRail: resolved.paymentMechanism,
       accountAlias: (row.account_alias || 'PRIMARY-ACCT').trim(),
@@ -682,12 +704,15 @@ export function detectCommitmentsAndAlerts(
     (t) => t.direction === 'DEBIT' && t.merchantId !== null
   );
 
+  // Gate C: Group recurring transactions by (merchantId, currency) so incompatible currencies are never combined
   const groupedByMerchant = new Map<string, TransactionRecord[]>();
   for (const txn of debitTxns) {
     const mId = txn.merchantId!;
-    const list = groupedByMerchant.get(mId) || [];
+    const curr = normalizeCurrencyCode(txn.currency, 'INR');
+    const groupKey = `${mId}::${curr}`;
+    const list = groupedByMerchant.get(groupKey) || [];
     list.push(txn);
-    groupedByMerchant.set(mId, list);
+    groupedByMerchant.set(groupKey, list);
   }
 
   const commitments: CommitmentRecord[] = [];
@@ -749,7 +774,9 @@ export function detectCommitmentsAndAlerts(
     },
   };
 
-  for (const [merchantId, txns] of groupedByMerchant.entries()) {
+  for (const [groupKey, txns] of groupedByMerchant.entries()) {
+    const [merchantId, groupCurrencyRaw] = groupKey.split('::');
+    const groupCurrency = normalizeCurrencyCode(groupCurrencyRaw, 'INR');
     const merchant = MERCHANT_CATALOGUE.find((m) => m.id === merchantId);
     if (!merchant) continue;
 
@@ -757,8 +784,10 @@ export function detectCommitmentsAndAlerts(
       (a, b) => Date.parse(a.transactionDate) - Date.parse(b.transactionDate)
     );
 
-    const commitmentId =
+    const baseCommitmentId =
       commitmentIdMap[merchantId] || `CMT-${merchant.canonicalName.toUpperCase().replace(/\s+/g, '')}`;
+    const commitmentId =
+      groupCurrency === 'INR' ? baseCommitmentId : `${baseCommitmentId}-${groupCurrency}`;
     const override = {
       ...(defaultOverrides[commitmentId] || {}),
       ...(userStateOverrides[commitmentId] || {}),
@@ -1029,9 +1058,9 @@ export function detectCommitmentsAndAlerts(
       expectedAmountMinor:
         override.expectedAmountMinorOverride !== undefined
           ? override.expectedAmountMinorOverride
-          : toMinorUnits(effectiveTypicalAmount),
-      latestAmountMinor: toMinorUnits(latestAmount),
-      currency: 'INR',
+          : toMinorUnits(effectiveTypicalAmount, groupCurrency),
+      latestAmountMinor: toMinorUnits(latestAmount, groupCurrency),
+      currency: groupCurrency,
       annualisedAmount,
       monthlyEquivalent,
       totalHistoricalSpend,

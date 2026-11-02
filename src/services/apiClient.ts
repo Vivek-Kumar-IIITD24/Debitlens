@@ -124,12 +124,17 @@ export const apiClient = {
     }),
   getMerchantsCatalogue: () =>
     fetchJson<{ merchants: MerchantRecord[]; processors: PaymentProcessorRecord[] }>('/api/merchants'),
-  confirmMerchantDescriptor: (merchantId: string, rawDescription: string) =>
+  confirmMerchantDescriptor: (
+    merchantId: string,
+    rawDescription: string,
+    transactionId?: string,
+    investigationId?: string
+  ) =>
     fetchJson<{ message: string; transactions: TransactionRecord[]; commitments: CommitmentRecord[] }>(
       `/api/merchants/${merchantId}/confirm`,
       {
         method: 'POST',
-        body: JSON.stringify({ rawDescription }),
+        body: JSON.stringify({ merchantId, rawDescription, transactionId, investigationId }),
       }
     ),
   updateCommitmentUsage: (commitmentId: string, lastUsedDate: string | null) =>
@@ -395,7 +400,7 @@ export const apiClient = {
     }),
   confirmInvestigationMerchant: (
     caseId: string,
-    payload: { merchantId: string; rawDescription: string }
+    payload: { merchantId: string; transactionId?: string; rawDescription: string }
   ) =>
     fetchJson<{
       case: UnrecognizedDebitCase;

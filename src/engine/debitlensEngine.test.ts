@@ -40,7 +40,18 @@ import {
   parseAllMappedCsvRows,
   computeCanonicalCsvRowFingerprint,
 } from './debitlensEngine';
-import { toMinorUnits, fromMinorUnits, formatMinorINR } from '../utils/currency';
+import {
+  toMinorUnits,
+  fromMinorUnits,
+  formatMinorINR,
+  formatCurrency,
+  formatMinorCurrency,
+  getCurrencyDecimals,
+  isValidCurrencyCode,
+  normalizeCurrencyCode,
+} from '../utils/currency';
+import os from 'node:os';
+import http from 'node:http';
 import { normalizeDateString, isValidCalendarDate } from '../utils/dateUtils';
 import { isPlaceholderEnvValue } from '../services/neo4jPersistenceService';
 import { MERCHANT_CATALOGUE } from './referenceData';
@@ -2512,5 +2523,488 @@ test('CSV Import At Scale (55 Rows): Preserves distinct bank references, account
   assert.ok(emptyRefRow);
   assert.equal(emptyRefRow.external_reference, '', 'Missing external reference must remain empty string, never fabricated MAP-...');
 });
+
+test('Gate A (Merchant Identity & Confirmation Security): Confirmations are strictly transaction-scoped and never contaminate unrelated transactions sharing the same rawDescription', () => {
+  const twoSharedDescriptorRows: RawCsvRow[] = [
+    {
+      transaction_id: 'TXN-SHARED-A',
+      transaction_date: '2026-10-05',
+      raw_description: 'PAYU*UNRESOLVED*9901',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_ONE_TIME',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'UTR-SHARED-A',
+    },
+    {
+      transaction_id: 'TXN-SHARED-B',
+      transaction_date: '2026-10-06',
+      raw_description: 'PAYU*UNRESOLVED*9901',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_ONE_TIME',
+      account_alias: 'ICICI-XX1904',
+      external_reference: 'UTR-SHARED-B',
+    },
+  ];
+
+  // Confirm only TXN-SHARED-A; also verify a legacy descriptor-keyed entry is ignored
+  const overrides: Record<string, string> = {
+    'TXN-SHARED-A': 'MERCH-STREAMBOX',
+    'PAYU*UNRESOLVED*9901': 'MERCH-STREAMBOX', // Legacy descriptor key must NOT affect TXN-SHARED-B
+  };
+
+  const parsed = parseAndNormaliseTransactions(twoSharedDescriptorRows, 'BATCH-TEST-1', 'DEMO_SEED', overrides);
+  const txnA = parsed.transactions.find((t) => t.id === 'TXN-SHARED-A')!;
+  const txnB = parsed.transactions.find((t) => t.id === 'TXN-SHARED-B')!;
+
+  assert.equal(txnA.resolutionStatus, 'USER_CONFIRMED');
+  assert.equal(txnA.merchantId, 'MERCH-STREAMBOX');
+  assert.equal(txnA.matchingMethod, 'USER_CONFIRMED_MATCH');
+
+  assert.equal(
+    txnB.resolutionStatus,
+    'UNRESOLVED',
+    'Unrelated transaction TXN-SHARED-B with identical rawDescription must remain UNRESOLVED'
+  );
+  assert.equal(txnB.merchantId, null);
+});
+
+test('Gate C (Currency & Minor-Unit Precision): Multi-currency minor units, formatting, commitment grouping, and cross-currency reconciliation mismatch', () => {
+  // 1. Minor unit precision across 0-decimal (JPY), 2-decimal (INR, USD, EUR), and 3-decimal (KWD) currencies
+  assert.equal(getCurrencyDecimals('INR'), 2);
+  assert.equal(getCurrencyDecimals('USD'), 2);
+  assert.equal(getCurrencyDecimals('EUR'), 2);
+  assert.equal(getCurrencyDecimals('JPY'), 0);
+  assert.equal(getCurrencyDecimals('KWD'), 3);
+  assert.equal(isValidCurrencyCode('INR'), true);
+  assert.equal(isValidCurrencyCode('JPY'), true);
+  assert.equal(isValidCurrencyCode('KWD'), true);
+  assert.equal(isValidCurrencyCode('FAKE'), false);
+  assert.equal(normalizeCurrencyCode('usd'), 'USD');
+
+  assert.equal(toMinorUnits(499.5, 'INR'), 49950);
+  assert.equal(fromMinorUnits(49950, 'INR'), 499.5);
+  assert.equal(toMinorUnits(1500, 'JPY'), 1500);
+  assert.equal(fromMinorUnits(1500, 'JPY'), 1500);
+  assert.equal(toMinorUnits(12.345, 'KWD'), 12345);
+  assert.equal(fromMinorUnits(12345, 'KWD'), 12.345);
+
+  assert.ok(formatCurrency(1500, 'JPY').includes('1,500'));
+  assert.ok(formatMinorCurrency(1500, 'JPY').includes('1,500'));
+  assert.ok(formatCurrency(19.99, 'USD').includes('19.99'));
+
+  // 2. Multi-currency recurring transactions for the same merchant are grouped into separate commitments per (merchantId, currency)
+  const multiCurrencyRows: RawCsvRow[] = [
+    {
+      transaction_id: 'TXN-MC-INR-1',
+      transaction_date: '2026-08-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'UTR-MC-INR-1',
+    },
+    {
+      transaction_id: 'TXN-MC-INR-2',
+      transaction_date: '2026-09-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 499,
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'HDFC-XX4821',
+      external_reference: 'UTR-MC-INR-2',
+    },
+    {
+      transaction_id: 'TXN-MC-USD-1',
+      transaction_date: '2026-08-10',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 9.99,
+      currency: 'USD',
+      direction: 'DEBIT',
+      payment_rail: 'CARD_EMANDATE',
+      account_alias: 'HDFC-INTL-CC',
+      external_reference: 'UTR-MC-USD-1',
+    },
+    {
+      transaction_id: 'TXN-MC-USD-2',
+      transaction_date: '2026-09-10',
+      raw_description: 'RZP*STREAMBOX',
+      amount: 9.99,
+      currency: 'USD',
+      direction: 'DEBIT',
+      payment_rail: 'CARD_EMANDATE',
+      account_alias: 'HDFC-INTL-CC',
+      external_reference: 'UTR-MC-USD-2',
+    },
+  ];
+
+  const txns = parseAndNormaliseTransactions(multiCurrencyRows).transactions;
+  const { commitments } = detectCommitmentsAndAlerts(txns, []);
+  const inrCmt = commitments.find((c) => c.currency === 'INR');
+  const usdCmt = commitments.find((c) => c.currency === 'USD');
+  assert.ok(inrCmt, 'Must create separate INR commitment');
+  assert.ok(usdCmt, 'Must create separate USD commitment');
+  assert.notEqual(inrCmt.id, usdCmt.id);
+  assert.equal(inrCmt.typicalAmount, 499);
+  assert.equal(usdCmt.typicalAmount, 9.99);
+
+  // 3. Cross-currency three-way reconciliation mismatch (INR transaction vs USD mandate/terms -> CONFLICTING_EVIDENCE / CURRENCY_MISMATCH)
+  const usdMandate: any = {
+    id: 'MND-USD-TEST',
+    mandateReference: 'UMN-USD-01',
+    commitmentId: inrCmt.id,
+    merchantId: inrCmt.merchantId,
+    merchantName: inrCmt.merchantName,
+    paymentRail: 'UPI_AUTOPAY',
+    maxAmountMinor: 49900,
+    maxAmount: 499,
+    currency: 'USD', // Mismatched currency against INR transaction!
+    frequency: 'MONTHLY',
+    startDate: '2026-01-01',
+    endDate: '2027-01-01',
+    mandateStatus: 'ACTIVE',
+    sourceType: 'USER_IMPORTED',
+    updatedAt: '2026-09-01T00:00:00Z',
+  };
+
+  const mismatchFinding = reconcileCommitment({
+    commitment: inrCmt,
+    transactions: txns.filter((t) => t.commitmentId === inrCmt.id),
+    mandate: usdMandate,
+    serviceTerms: null,
+    cancellationSession: null,
+  });
+
+  assert.equal(mismatchFinding.status, 'CONFLICTING_EVIDENCE');
+  assert.equal(mismatchFinding.discrepancyReason, 'CURRENCY_MISMATCH');
+  assert.equal(mismatchFinding.withinMandateLimit, null);
+  assert.ok(mismatchFinding.explanation.includes('Currency mismatch detected'));
+});
+
+test('Gate F (Explicit Source Provenance): Mandate and ServiceTerms with -01 or DOC-SEED- IDs use explicit sourceType and default unknown legacy records to UNKNOWN', () => {
+  const baseCmt: any = {
+    id: 'CMT-PROV-TEST',
+    serviceName: 'CloudVault Pro',
+    merchantName: 'CloudVault Inc',
+    merchantId: 'M-CLOUDVAULT',
+    confidenceScore: 90,
+    confidenceLabel: 'HIGH',
+    connectedDescriptors: ['CLOUDVAULT*PRO'],
+    processorName: null,
+    recurrenceType: 'MONTHLY',
+    typicalAmount: 599,
+    latestAmount: 599,
+    annualisedAmount: 7188,
+    monthlyEquivalent: 599,
+    totalHistoricalSpend: 599,
+    lastPaymentDate: '2026-10-01',
+    nextExpectedDate: '2026-11-01',
+    status: 'ACTIVE',
+    relationshipStatus: 'CONFIRMED',
+    verificationStatus: 'CONFIRMED',
+    category: 'CLOUD_PRODUCTIVITY',
+    paymentRail: 'UPI_AUTOPAY',
+    supportingTransactionIds: [],
+    serviceLifecycleStatus: 'ACTIVE',
+    mandateLifecycleStatus: 'ACTIVE',
+  };
+
+  // User-imported mandate whose ID ends in -01 must NOT be misclassified as DEMO_SEED
+  const userMandateEndingIn01: any = {
+    id: 'MND-USER-CUSTOM-01',
+    mandateReference: 'UMN-USER-01',
+    commitmentId: 'CMT-PROV-TEST',
+    merchantId: 'M-CLOUDVAULT',
+    merchantName: 'CloudVault Inc',
+    paymentRail: 'UPI_AUTOPAY',
+    maxAmountMinor: 59900,
+    maxAmount: 599,
+    currency: 'INR',
+    frequency: 'MONTHLY',
+    startDate: '2026-01-01',
+    endDate: '2027-01-01',
+    mandateStatus: 'ACTIVE',
+    sourceType: 'USER_IMPORTED',
+    updatedAt: '2026-10-01T00:00:00Z',
+  };
+
+  // User-entered service terms whose ID starts with DOC-SEED- must NOT be misclassified as DEMO_SEED
+  const userTermsStartingWithDocSeed: any = {
+    id: 'DOC-SEED-USER-CUSTOM-01',
+    commitmentId: 'CMT-PROV-TEST',
+    merchantId: 'M-CLOUDVAULT',
+    merchantName: 'CloudVault Inc',
+    serviceName: 'CloudVault Pro',
+    documentType: 'MANUAL_TERMS',
+    documentLabel: 'User Entered Terms',
+    expectedAmountMinor: 59900,
+    expectedAmount: 599,
+    currency: 'INR',
+    billingFrequency: 'MONTHLY',
+    effectiveDate: '2026-01-01',
+    rawSourceText: 'Rs. 599 monthly',
+    extractedNotes: '',
+    extractionConfidence: 'EXACT',
+    userVerified: true,
+    verificationStatus: 'USER_VERIFIED',
+    sourceType: 'USER_ENTERED',
+    createdAt: '2026-10-01T00:00:00Z',
+  };
+
+  const passportUser = generateCommitmentPassport({
+    commitment: baseCmt,
+    transactions: [],
+    mandate: userMandateEndingIn01,
+    serviceTerms: userTermsStartingWithDocSeed,
+    reconciliation: null,
+    alerts: [],
+    casebookEntries: [],
+    auditEvents: [],
+  });
+
+  assert.equal(passportUser.sectionB_Mandate.sourceProvenance, 'USER_IMPORTED');
+  assert.equal(passportUser.sectionC_Terms.sourceProvenance, 'USER_ENTERED');
+
+  // Legacy records missing sourceType must default to UNKNOWN, never USER_IMPORTED or DEMO_SEED
+  const legacyMandateNoSource: any = { ...userMandateEndingIn01, sourceType: undefined };
+  const legacyTermsNoSource: any = { ...userTermsStartingWithDocSeed, sourceType: undefined };
+
+  const passportLegacy = generateCommitmentPassport({
+    commitment: baseCmt,
+    transactions: [],
+    mandate: legacyMandateNoSource,
+    serviceTerms: legacyTermsNoSource,
+    reconciliation: null,
+    alerts: [],
+    casebookEntries: [],
+    auditEvents: [],
+  });
+
+  assert.equal(passportLegacy.sectionB_Mandate.sourceProvenance, 'UNKNOWN');
+  assert.equal(passportLegacy.sectionC_Terms.sourceProvenance, 'UNKNOWN');
+});
+
+test('Gates A, B, D, E Server Integration: Authoritative merchant confirmation, rollback-safe serialized persistence, null evidence dates, and review queue / investigation state machines', async () => {
+  const tmpStorePath = path.join(os.tmpdir(), `debitlens-test-store-${Date.now()}.json`);
+  process.env.DEBITLENS_SKIP_LISTEN = '1';
+  process.env.DEBITLENS_STORE_PATH = tmpStorePath;
+
+  const serverMod = await import('../../server');
+  const {
+    app,
+    loadSeedData,
+    setSimulatePersistenceFailureForTesting,
+    setSimulateGraphSyncFailureForTesting,
+    getGraphSyncMetadata,
+  } = serverMod;
+
+  loadSeedData();
+
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const addr = server.address() as { port: number };
+  const baseUrl = `http://127.0.0.1:${addr.port}`;
+
+  async function api(method: string, route: string, body?: any) {
+    const res = await fetch(`${baseUrl}${route}`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    const json = await res.json();
+    return { status: res.status, body: json };
+  }
+
+  try {
+    // 1. Gate A: Legacy route parity & authoritative merchant confirmation validation
+    // Reject descriptor-only confirmation lacking transactionId/investigationId
+    const missingCtx = await api('POST', '/api/merchants/MERCH-STREAMBOX/confirm', {
+      rawDescription: 'PAYU*UNKNOWN*9912',
+    });
+    assert.equal(missingCtx.status, 400);
+    assert.ok(String(missingCtx.body.error).includes('scoped to a specific transactionId or investigationId'));
+
+    // Fetch investigations to find an open investigation case
+    const invListRes = await api('GET', '/api/investigations');
+    assert.equal(invListRes.status, 200);
+    const openInv = invListRes.body.find((i: any) => i.status !== 'CLOSED' && i.candidateMerchants.length > 0);
+    assert.ok(openInv, 'Expected at least one open investigation case in seed dataset');
+
+    // Reject arbitrary catalogue merchant not in candidateMerchants
+    const nonCandidateMerch = MERCHANT_CATALOGUE.find(
+      (m) =>
+        !openInv.candidateMerchants.some(
+          (c: any) => (c.merchantId || c.candidateMerchantId) === m.id
+        )
+    )!;
+    assert.ok(nonCandidateMerch, 'Expected a catalogue merchant not in candidateMerchants');
+    const invalidCandidate = await api('POST', `/api/investigations/${openInv.id}/confirm-merchant`, {
+      transactionId: openInv.transactionId,
+      merchantId: nonCandidateMerch.id,
+    });
+    assert.equal(invalidCandidate.status, 400);
+    assert.ok(String(invalidCandidate.body.error).includes('not an eligible candidate'));
+
+    // Reject processor-only candidate if present
+    const procCandidate = openInv.candidateMerchants.find(
+      (c: any) => c.candidateType === 'PROCESSOR_RELATIONSHIP' || c.isProcessorOnly === true
+    );
+    if (procCandidate) {
+      const procRes = await api('POST', `/api/investigations/${openInv.id}/confirm-merchant`, {
+        transactionId: openInv.transactionId,
+        merchantId: procCandidate.candidateMerchantId,
+      });
+      assert.equal(procRes.status, 400);
+      assert.ok(String(procRes.body.error).includes('Processor-only'));
+    }
+
+    // 2. Gate B: Simulated persistence failure rolls back nested state and audit events completely
+    const stateBeforeFail = await api('GET', '/api/state');
+    const auditCountBefore = stateBeforeFail.body.auditEvents.length;
+
+    setSimulatePersistenceFailureForTesting(true);
+    const failedAction = await api('POST', `/api/investigations/${openInv.id}/action`, {
+      actionType: 'MARKED_UNDER_REVIEW',
+      notes: 'Should roll back on disk write failure',
+    });
+    setSimulatePersistenceFailureForTesting(false);
+
+    assert.equal(failedAction.status, 500);
+    assert.ok(String(failedAction.body.error).includes('Failed to persist application state'));
+
+    const stateAfterFail = await api('GET', '/api/state');
+    assert.equal(
+      stateAfterFail.body.auditEvents.length,
+      auditCountBefore,
+      'Audit events must be rolled back completely when disk write fails'
+    );
+    const invAfterFail = (await api('GET', '/api/investigations')).body.find((i: any) => i.id === openInv.id);
+    assert.equal(
+      invAfterFail.status,
+      openInv.status,
+      'Nested investigation status must be rolled back completely when disk write fails'
+    );
+
+    // 3. Gate B: Simulated Neo4j graph sync failure preserves canonical JSON state while marking graph sync FAILED
+    const underReviewRes = await api('POST', `/api/investigations/${openInv.id}/action`, {
+      actionType: 'MARKED_UNDER_REVIEW',
+      notes: 'Testing investigation state update',
+    });
+    assert.equal(underReviewRes.status, 200);
+    assert.equal(underReviewRes.body.status, 'UNDER_REVIEW');
+
+    // Trigger a graph-syncing mutation (commitment confirmation) with simulated graph sync failure
+    setSimulateGraphSyncFailureForTesting(true);
+    const confirmCmtRes = await api('POST', '/api/commitments/CMT-READCLOUD/confirm', {});
+    setSimulateGraphSyncFailureForTesting(false);
+
+    assert.equal(confirmCmtRes.status, 200);
+    assert.equal(confirmCmtRes.body.verificationStatus, 'USER_CONFIRMED');
+    const graphMeta = getGraphSyncMetadata();
+    assert.equal(graphMeta.status, 'FAILED');
+    assert.ok(graphMeta.lastError?.includes('Simulated Neo4j graph projection failure'));
+
+    const rqList = await api('GET', '/api/review-queue');
+    const openRq = rqList.body.find((i: any) => i.status === 'OPEN');
+    assert.ok(openRq, 'Expected an OPEN review queue item');
+
+    const toInReview = await api('POST', `/api/review-queue/${openRq.id}/status`, {
+      status: 'IN_REVIEW',
+    });
+    assert.equal(toInReview.status, 200);
+
+    // 4. Gate E: Review Queue 404 for unknown ID & strict state transition matrix
+    const unknownRq = await api('POST', '/api/review-queue/RQ-NON-EXISTENT-9999/status', {
+      status: 'IN_REVIEW',
+    });
+    assert.equal(unknownRq.status, 404);
+    assert.ok(String(unknownRq.body.error).includes('not found'));
+
+    // Reject RESOLVED without resolutionReason
+    const resolveNoReason = await api('POST', `/api/review-queue/${openRq.id}/status`, {
+      status: 'RESOLVED',
+    });
+    assert.equal(resolveNoReason.status, 400);
+    assert.ok(String(resolveNoReason.body.error).includes('resolutionReason'));
+
+    // Valid transition IN_REVIEW -> RESOLVED with reason
+    const toResolved = await api('POST', `/api/review-queue/${openRq.id}/status`, {
+      status: 'RESOLVED',
+      resolutionReason: 'Verified with invoice and bank statement',
+    });
+    assert.equal(toResolved.status, 200);
+
+    // Reject duplicate RESOLVED -> RESOLVED and invalid RESOLVED -> IN_REVIEW
+    const dupResolved = await api('POST', `/api/review-queue/${openRq.id}/status`, {
+      status: 'RESOLVED',
+      resolutionReason: 'Duplicate resolve attempt',
+    });
+    assert.equal(dupResolved.status, 400);
+    assert.ok(String(dupResolved.body.error).includes('Duplicate transition'));
+
+    const invalidJump = await api('POST', `/api/review-queue/${openRq.id}/status`, {
+      status: 'IN_REVIEW',
+    });
+    assert.equal(invalidJump.status, 400);
+    assert.ok(String(invalidJump.body.error).includes('Invalid state transition'));
+
+    // Valid reopen RESOLVED -> OPEN with resolutionReason
+    const reopenRq = await api('POST', `/api/review-queue/${openRq.id}/status`, {
+      status: 'OPEN',
+      resolutionReason: 'New billing cycle discrepancy observed',
+    });
+    assert.equal(reopenRq.status, 200);
+
+    // 5. Gate D: Cancellation evidence date validation & null fallback (never '2026-10-30') + lifecycle separation
+    const sessionId = 'SESS-CMT-FITCLUB';
+
+    // Reject invalid calendar date 31/02/2026
+    const badDateEv = await api('POST', `/api/cancellation/sessions/${sessionId}/evidence`, {
+      evidenceType: 'SERVICE_CONFIRMATION',
+      referenceNumber: 'TKT-BAD-DATE',
+      description: 'Test invalid date',
+      evidenceDate: '31/02/2026',
+    });
+    assert.equal(badDateEv.status, 400);
+    assert.ok(String(badDateEv.body.error).includes('Invalid evidenceDate'));
+
+    // Omitted evidenceDate persists null, never '2026-10-30'
+    const nullDateEv = await api('POST', `/api/cancellation/sessions/${sessionId}/evidence`, {
+      evidenceType: 'SERVICE_CONFIRMATION',
+      referenceNumber: 'TKT-FITCLUB-901',
+      description: 'Submitted cancellation ticket via web portal',
+    });
+    assert.equal(nullDateEv.status, 200);
+    assert.equal(nullDateEv.body.evidence.evidenceDate, null, 'Omitted evidenceDate must be null, never 2026-10-30');
+    assert.equal(
+      nullDateEv.body.evidence.evidenceRecordLifecycle,
+      'EVIDENCE_REFERENCE_RECORDED',
+      'Reference-only evidence must be EVIDENCE_REFERENCE_RECORDED, never DOCUMENT_UPLOADED'
+    );
+
+    // Verify Commitment Passport separates evidenceRecordLifecycle from serviceActionLifecycle
+    const passportRes = await api('GET', '/api/commitments/CMT-FITCLUB/passport');
+    assert.equal(passportRes.status, 200);
+    const fitclubPassport = passportRes.body;
+    assert.equal(
+      fitclubPassport.sectionF_Cancellation.evidenceRecordLifecycle,
+      'EVIDENCE_REFERENCE_RECORDED',
+      'Reference-only evidence must be EVIDENCE_REFERENCE_RECORDED, never DOCUMENT_UPLOADED'
+    );
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (fs.existsSync(tmpStorePath)) {
+      fs.unlinkSync(tmpStorePath);
+    }
+  }
+});
+
 
 

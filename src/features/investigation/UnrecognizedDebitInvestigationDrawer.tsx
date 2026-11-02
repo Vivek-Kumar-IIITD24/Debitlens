@@ -82,8 +82,10 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
     if (!targetId) return;
     try {
       setSubmittingAction(true);
+      setError(null);
       const result = await apiClient.confirmInvestigationMerchant(currentCase.id, {
         merchantId: targetId,
+        transactionId: transaction.id,
         rawDescription: transaction.rawDescription,
       });
       setCurrentCase(result.case);
@@ -184,7 +186,7 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
               <div>
                 <span className="text-xs text-slate-400 block">Amount</span>
                 <span className="text-lg font-bold text-slate-900">
-                  {formatINR(transaction.amount)}
+                  {formatINR(transaction.amount, transaction.currency)}
                 </span>
               </div>
               <div>

@@ -23,7 +23,7 @@ import {
   RecurrenceFrequency,
   PaymentRailType,
 } from '../../types/debitlens';
-import { formatINR, formatMinorINR } from '../../utils/currency';
+import { formatINR, formatMinorINR, getMinorUnitLabel } from '../../utils/currency';
 
 interface ReconciliationCentreViewProps {
   commitments: CommitmentRecord[];
@@ -368,7 +368,7 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                       <span className="text-slate-500 block text-[10px]">Expected Doc</span>
                       <span className="text-slate-200">
                         {f.expectedServiceAmountMinor !== null
-                          ? formatMinorINR(f.expectedServiceAmountMinor)
+                          ? formatMinorINR(f.expectedServiceAmountMinor, f.currency)
                           : 'No Doc'}
                       </span>
                     </div>
@@ -376,7 +376,7 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                       <span className="text-slate-500 block text-[10px]">Actual Debit</span>
                       <span className="text-white font-semibold">
                         {f.actualTransactionAmountMinor !== null && f.actualTransactionAmountMinor > 0
-                          ? formatMinorINR(f.actualTransactionAmountMinor)
+                          ? formatMinorINR(f.actualTransactionAmountMinor, f.currency)
                           : 'No Recent Debit'}
                       </span>
                     </div>
@@ -384,7 +384,7 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                       <span className="text-slate-500 block text-[10px]">Mandate Cap</span>
                       <span className="text-slate-200">
                         {f.mandateMaxAmountMinor !== null
-                          ? formatMinorINR(f.mandateMaxAmountMinor)
+                          ? formatMinorINR(f.mandateMaxAmountMinor, f.currency)
                           : 'Not Imported'}
                       </span>
                     </div>
@@ -434,12 +434,17 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                     className="text-lg font-bold font-mono text-white mt-2"
                   >
                     {activeFinding.expectedServiceAmountMinor !== null
-                      ? formatMinorINR(activeFinding.expectedServiceAmountMinor)
+                      ? formatMinorINR(
+                          activeFinding.expectedServiceAmountMinor,
+                          activeDoc?.currency || activeFinding.currency
+                        )
                       : 'Unavailable'}
                   </div>
                   <div className="text-[11px] font-mono text-slate-400 mt-0.5">
                     {activeFinding.expectedServiceAmountMinor !== null
-                      ? `${activeFinding.expectedServiceAmountMinor} paise · ${
+                      ? `${activeFinding.expectedServiceAmountMinor} ${getMinorUnitLabel(
+                          activeDoc?.currency || activeFinding.currency
+                        )} · ${
                           activeDoc?.billingFrequency && activeDoc.billingFrequency !== 'UNKNOWN'
                             ? activeDoc.billingFrequency
                             : 'Cadence Unavailable'
@@ -463,18 +468,26 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                   >
                     {activeFinding.actualTransactionAmountMinor !== null &&
                     activeFinding.actualTransactionAmountMinor > 0
-                      ? formatMinorINR(activeFinding.actualTransactionAmountMinor)
+                      ? formatMinorINR(
+                          activeFinding.actualTransactionAmountMinor,
+                          activeFinding.currency
+                        )
                       : 'No Recent Debit'}
                   </div>
                   <div className="text-[11px] font-mono text-slate-400 mt-0.5">
                     {activeFinding.actualTransactionAmountMinor !== null
-                      ? `${activeFinding.actualTransactionAmountMinor} paise`
+                      ? `${activeFinding.actualTransactionAmountMinor} ${getMinorUnitLabel(
+                          activeFinding.currency
+                        )}`
                       : 'No debit in statement period'}
                     {activeFinding.discrepancyAmountMinor !== null &&
                       activeFinding.discrepancyAmountMinor !== 0 && (
                         <span className="text-amber-400 ml-1">
                           ({activeFinding.discrepancyAmountMinor > 0 ? '+' : ''}
-                          {formatMinorINR(activeFinding.discrepancyAmountMinor)})
+                          {formatMinorINR(
+                            activeFinding.discrepancyAmountMinor,
+                            activeFinding.currency
+                          )})
                         </span>
                       )}
                   </div>
@@ -497,14 +510,17 @@ export const ReconciliationCentreView: React.FC<ReconciliationCentreViewProps> =
                     className="text-lg font-bold font-mono text-white mt-2"
                   >
                     {activeFinding.mandateMaxAmountMinor !== null
-                      ? formatMinorINR(activeFinding.mandateMaxAmountMinor)
+                      ? formatMinorINR(
+                          activeFinding.mandateMaxAmountMinor,
+                          activeMandate?.currency || activeFinding.currency
+                        )
                       : 'Not Visible'}
                   </div>
                   <div className="text-[11px] font-mono text-slate-400 mt-0.5">
                     {activeFinding.mandateMaxAmountMinor !== null
-                      ? `${activeFinding.mandateMaxAmountMinor} paise · Within limit: ${
-                          activeFinding.withinMandateLimit ? 'YES' : 'NO'
-                        }`
+                      ? `${activeFinding.mandateMaxAmountMinor} ${getMinorUnitLabel(
+                          activeMandate?.currency || activeFinding.currency
+                        )} · Within limit: ${activeFinding.withinMandateLimit ? 'YES' : 'NO'}`
                       : 'No matching mandate imported'}
                   </div>
                   <div className="text-[11px] text-slate-400 mt-2 pt-2 border-t border-slate-800/80 truncate">

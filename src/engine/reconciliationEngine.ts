@@ -18,8 +18,16 @@ import {
   MandateLifecycleStatus,
   PaymentRailType,
   RecurrenceFrequency,
+  RecordSourceProvenance,
 } from '../types/debitlens';
-import { toMinorUnits, fromMinorUnits, formatMinorINR } from '../utils/currency';
+import {
+  toMinorUnits,
+  fromMinorUnits,
+  formatMinorINR,
+  formatMinorCurrency,
+  normalizeCurrencyCode,
+  getMinorUnitLabel,
+} from '../utils/currency';
 import { SUPPORTED_LANGUAGES } from './referenceData';
 
 // ============================================================================
@@ -236,6 +244,7 @@ export function buildInitialSeedServiceTerms(): ServiceTermsRecord[] {
       renewalDate: '2026-11-10',
       cancellationNoticeDays: 2,
       documentSource: 'PASTED_INVOICE_TEXT',
+      sourceType: 'DEMO_SEED',
       rawDocumentText:
         'INVOICE #SB-2026-0891 | StreamBox Media Pvt Ltd | Plan: StreamBox Ultra HD Monthly | Expected Cycle Charge: INR 499.00 (incl. GST) | Billing Cycle: Monthly on the 10th | Cancellation policy: Cancel at least 2 days before next billing date.',
       extractionConfidence: 96,
@@ -278,6 +287,7 @@ export function buildInitialSeedServiceTerms(): ServiceTermsRecord[] {
       renewalDate: '2026-11-15',
       cancellationNoticeDays: 1,
       documentSource: 'PASTED_INVOICE_TEXT',
+      sourceType: 'DEMO_SEED',
       rawDocumentText:
         'MusicFlow India Subscription Receipt #MF-4410 | Plan: MusicFlow Family Monthly | Contracted Price: Rs. 199.00/month | Payment Rail: UPI AutoPay (Mandate limit Rs. 500.00) | Next renewal: 15-Nov-2026.',
       extractionConfidence: 95,
@@ -313,6 +323,7 @@ export function buildInitialSeedServiceTerms(): ServiceTermsRecord[] {
       renewalDate: '2027-10-15',
       cancellationNoticeDays: 7,
       documentSource: 'STRUCTURED_JSON',
+      sourceType: 'DEMO_SEED',
       rawDocumentText:
         'CloudNotes Pro Annual Renewal Receipt | Billed Yearly via Google Play: INR 1,499.00 | Next renewal date: 2027-10-15.',
       extractionConfidence: 98,
@@ -348,6 +359,7 @@ export function buildInitialSeedServiceTerms(): ServiceTermsRecord[] {
       renewalDate: '2026-11-20',
       cancellationNoticeDays: 15,
       documentSource: 'PASTED_INVOICE_TEXT',
+      sourceType: 'DEMO_SEED',
       rawDocumentText:
         'FitClub Pass Membership Agreement | Monthly Fee: INR 1,499.00 every month | Requires 15 days notice prior to renewal.',
       extractionConfidence: 93,
@@ -376,6 +388,7 @@ export function buildInitialSeedServiceTerms(): ServiceTermsRecord[] {
       renewalDate: '2027-01-14',
       cancellationNoticeDays: 30,
       documentSource: 'PASTED_INVOICE_TEXT',
+      sourceType: 'DEMO_SEED',
       rawDocumentText:
         'Max Life Term Shield Policy Schedule #ML-88912 | Documented Rider Schedule: INR 12,850.00 Quarterly | Collected via eNACH Mandate NACH-MAXL-772190.',
       extractionConfidence: 91,
@@ -411,6 +424,7 @@ export function buildInitialSeedServiceTerms(): ServiceTermsRecord[] {
       renewalDate: '2026-11-22',
       cancellationNoticeDays: 1,
       documentSource: 'PASTED_INVOICE_TEXT',
+      sourceType: 'DEMO_SEED',
       rawDocumentText:
         'LearnPro AI Pro Trial Confirmation | 14-Day Free Trial (2026-10-08 to 2026-10-22) | Auto-converts to INR 999.00/month on 2026-10-22 via UPI AutoPay unless cancelled before trial end.',
       extractionConfidence: 97,
@@ -446,6 +460,7 @@ export function buildInitialSeedServiceTerms(): ServiceTermsRecord[] {
       renewalDate: '2026-11-02',
       cancellationNoticeDays: 30,
       documentSource: 'STRUCTURED_JSON',
+      sourceType: 'DEMO_SEED',
       rawDocumentText:
         'Bajaj Finance Ltd Repayment Schedule | Fixed Monthly EMI: INR 8,450.00 on the 2nd of each month via NACH-BAJAJ-EMI-55012.',
       extractionConfidence: 99,
@@ -474,6 +489,7 @@ export function buildInitialSeedServiceTerms(): ServiceTermsRecord[] {
       renewalDate: null,
       cancellationNoticeDays: 1,
       documentSource: 'PASTED_INVOICE_TEXT',
+      sourceType: 'DEMO_SEED',
       rawDocumentText:
         'DesignVault Studio Cancellation Confirmation #DV-CANC-20260910-881 | Plan: DesignVault Pro (INR 649.00/month) | Cancellation Effective Date: 2026-09-10 | Future billing terminated.',
       extractionConfidence: 97,
@@ -510,30 +526,46 @@ export function extractServiceTermsFromText(params: {
   merchantName?: string;
   serviceName?: string;
   rawText: string;
+  currency?: string;
   documentSource?: ServiceTermsRecord['documentSource'];
+  sourceType?: RecordSourceProvenance;
   userVerified?: boolean;
 }): ServiceTermsRecord {
   const {
     commitmentId,
     rawText,
     documentSource = 'PASTED_INVOICE_TEXT',
+    sourceType = 'USER_ENTERED',
     userVerified = false,
   } = params;
   const text = rawText.trim();
   const isVerified = Boolean(userVerified);
 
-  // Extract amount in INR / Rs / ₹ — never invent a fallback price when missing
-  const amountRegex = /(?:INR|Rs\.?|₹)\s*([0-9,]+(?:\.[0-9]{1,2})?)/i;
+  // Extract currency token and amount — never invent a fallback price when missing
+  const amountRegex = /(INR|Rs\.?|₹|USD|\$|EUR|€|GBP|£|JPY|¥)\s*([0-9,]+(?:\.[0-9]{1,3})?)/i;
   const amountMatch = text.match(amountRegex);
+
+  let detectedCurrency = normalizeCurrencyCode(params.currency) || 'INR';
+  if (amountMatch) {
+    const token = amountMatch[1].toUpperCase();
+    if (token === 'USD' || token === '$') detectedCurrency = 'USD';
+    else if (token === 'EUR' || token === '€') detectedCurrency = 'EUR';
+    else if (token === 'GBP' || token === '£') detectedCurrency = 'GBP';
+    else if (token === 'JPY' || token === '¥') detectedCurrency = 'JPY';
+    else detectedCurrency = 'INR';
+  }
+
   const parsedAmount = amountMatch
-    ? parseFloat(amountMatch[1].replace(/,/g, ''))
+    ? parseFloat(amountMatch[2].replace(/,/g, ''))
     : null;
   const expectedAmountMinor =
     parsedAmount !== null && Number.isFinite(parsedAmount)
-      ? toMinorUnits(parsedAmount)
+      ? toMinorUnits(parsedAmount, detectedCurrency)
       : null;
   const expectedAmount =
-    expectedAmountMinor !== null ? fromMinorUnits(expectedAmountMinor) : null;
+    expectedAmountMinor !== null
+      ? fromMinorUnits(expectedAmountMinor, detectedCurrency)
+      : null;
 
   // Extract billing frequency — missing billing frequency must remain UNKNOWN (never default to MONTHLY)
   let billingFrequency: RecurrenceFrequency = 'UNKNOWN';
@@ -566,18 +598,19 @@ export function extractServiceTermsFromText(params: {
 
   const merchantName = params.merchantName || 'Extracted Merchant';
   const serviceName = params.serviceName || 'Documented Service Plan';
+  const minorLabel = getMinorUnitLabel(detectedCurrency);
 
   const extractedFields: ServiceTermsRecord['extractedFields'] = [
     {
       fieldName: 'expectedAmount',
       extractedValue:
         expectedAmountMinor !== null
-          ? `${formatMinorINR(expectedAmountMinor)} (${expectedAmountMinor} paise)`
+          ? `${formatMinorCurrency(expectedAmountMinor, detectedCurrency)} (${expectedAmountMinor} ${minorLabel})`
           : 'UNAVAILABLE (no currency token found in text)',
       confidence: expectedAmountMinor !== null ? 95 : 0,
       sourceSnippet: amountMatch
         ? amountMatch[0]
-        : 'No INR / Rs. / ₹ currency token found in pasted text',
+        : 'No currency token (INR / Rs. / ₹ / USD / EUR / GBP / JPY) found in pasted text',
       userVerified: isVerified,
     },
     {
@@ -621,12 +654,13 @@ export function extractServiceTermsFromText(params: {
     serviceName,
     expectedAmountMinor,
     expectedAmount,
-    currency: 'INR',
+    currency: detectedCurrency,
     billingFrequency,
     trialEndDate,
     renewalDate,
     cancellationNoticeDays,
     documentSource,
+    sourceType,
     rawDocumentText: text,
     extractionConfidence: expectedAmountMinor !== null ? 94 : 45,
     extractedFields,
@@ -748,16 +782,28 @@ export function reconcileCommitment(params: {
     )
     .sort((a, b) => Date.parse(a.transactionDate) - Date.parse(b.transactionDate));
 
+  const cmtCurrency = normalizeCurrencyCode(commitment.currency || 'INR');
+  const termsCurrency = serviceTerms
+    ? normalizeCurrencyCode(serviceTerms.currency === undefined ? 'INR' : serviceTerms.currency)
+    : null;
+  const mandateCurrency = mandate
+    ? normalizeCurrencyCode(mandate.currency === undefined ? 'INR' : mandate.currency)
+    : null;
+
   const expectedServiceAmountMinor =
     serviceTerms && serviceTerms.expectedAmountMinor !== null
       ? serviceTerms.expectedAmountMinor
       : null;
   const expectedServiceAmount =
-    expectedServiceAmountMinor !== null ? fromMinorUnits(expectedServiceAmountMinor) : null;
+    expectedServiceAmountMinor !== null
+      ? fromMinorUnits(expectedServiceAmountMinor, termsCurrency || 'INR')
+      : null;
 
   const mandateMaxAmountMinor = mandate ? mandate.maxAmountMinor : null;
   const mandateMaxAmount =
-    mandateMaxAmountMinor !== null ? fromMinorUnits(mandateMaxAmountMinor) : null;
+    mandateMaxAmountMinor !== null
+      ? fromMinorUnits(mandateMaxAmountMinor, mandateCurrency || 'INR')
+      : null;
 
   // Handle commitment with an active mandate but zero debit transactions in the imported statement period
   if (cmtTxns.length === 0) {
@@ -766,12 +812,17 @@ export function reconcileCommitment(params: {
       Boolean(mandate) && effectiveStatusForZeroTxns === 'ACTIVE_VALID';
 
     if (isMandateActiveWithNoTxns && mandate) {
+      const mCcy = mandateCurrency || cmtCurrency || 'INR';
       return {
         id: `REC-${commitment.id}`,
         commitmentId: commitment.id,
         merchantName: commitment.merchantName,
         serviceName: commitment.serviceName,
         status: 'MANDATE_WITHOUT_RECENT_TRANSACTION',
+        currency: mCcy,
+        expectedServiceCurrency: termsCurrency,
+        actualTransactionCurrency: null,
+        mandateCurrency,
         expectedServiceAmountMinor,
         expectedServiceAmount,
         actualTransactionAmountMinor: null,
@@ -788,7 +839,8 @@ export function reconcileCommitment(params: {
         explanation: `Active ${mandate.paymentRail.replace(/_/g, ' ')} mandate ${
           mandate.mandateReference
         } for ${commitment.serviceName} (ceiling ${formatMinorINR(
-          mandate.maxAmountMinor
+          mandate.maxAmountMinor,
+          mCcy
         )}/${mandate.frequency.toLowerCase()}) is linked to ${
           commitment.id
         }, but no matching debit transactions occurred in the imported statement period.`,
@@ -816,6 +868,10 @@ export function reconcileCommitment(params: {
       merchantName: commitment.merchantName,
       serviceName: commitment.serviceName,
       status: 'UNRESOLVED',
+      currency: cmtCurrency || 'INR',
+      expectedServiceCurrency: termsCurrency,
+      actualTransactionCurrency: null,
+      mandateCurrency,
       expectedServiceAmountMinor,
       expectedServiceAmount,
       actualTransactionAmountMinor: null,
@@ -847,24 +903,48 @@ export function reconcileCommitment(params: {
   }
 
   const latestTxn = cmtTxns[cmtTxns.length - 1];
-  const actualTransactionAmountMinor = toMinorUnits(latestTxn.amount);
-  const actualTransactionAmount = fromMinorUnits(actualTransactionAmountMinor);
+  const rawTxnCurrency = latestTxn.currency === undefined ? (commitment.currency || 'INR') : latestTxn.currency;
+  const txnCurrency = normalizeCurrencyCode(rawTxnCurrency);
+  const effectiveCurrency = txnCurrency || cmtCurrency || 'INR';
+
+  const actualTransactionAmountMinor =
+    latestTxn.amountMinor !== undefined && latestTxn.amountMinor !== null
+      ? latestTxn.amountMinor
+      : toMinorUnits(latestTxn.amount, effectiveCurrency);
+  const actualTransactionAmount = fromMinorUnits(actualTransactionAmountMinor, effectiveCurrency);
   const latestTxnDate = latestTxn.transactionDate || commitment.lastPaymentDate;
 
+  // Currency validation & cross-currency mismatch protection (Section 6.3):
+  // Never compare amounts in different currencies as equivalent or mark a cross-currency comparison as MATCHED.
+  const hasInvalidTxnCurrency = !txnCurrency;
+  const hasMandateCurrencyMismatch = Boolean(
+    mandate && (!mandateCurrency || (txnCurrency && mandateCurrency !== txnCurrency))
+  );
+  const hasTermsCurrencyMismatch = Boolean(
+    serviceTerms && (!termsCurrency || (txnCurrency && termsCurrency !== txnCurrency))
+  );
+  const hasCurrencyMismatch = hasMandateCurrencyMismatch || hasTermsCurrencyMismatch;
+
   const withinMandateLimit =
-    mandateMaxAmountMinor !== null
+    !hasCurrencyMismatch && !hasInvalidTxnCurrency && mandateMaxAmountMinor !== null
       ? actualTransactionAmountMinor <= mandateMaxAmountMinor
       : null;
 
   const discrepancyAmountMinor =
-    expectedServiceAmountMinor !== null
+    !hasCurrencyMismatch && !hasInvalidTxnCurrency && expectedServiceAmountMinor !== null
       ? actualTransactionAmountMinor - expectedServiceAmountMinor
       : null;
   const discrepancyAmount =
-    discrepancyAmountMinor !== null ? fromMinorUnits(discrepancyAmountMinor) : null;
+    discrepancyAmountMinor !== null
+      ? fromMinorUnits(discrepancyAmountMinor, effectiveCurrency)
+      : null;
 
   const discrepancyPercent =
-    expectedServiceAmountMinor && expectedServiceAmountMinor > 0 && discrepancyAmountMinor !== null
+    !hasCurrencyMismatch &&
+    !hasInvalidTxnCurrency &&
+    expectedServiceAmountMinor &&
+    expectedServiceAmountMinor > 0 &&
+    discrepancyAmountMinor !== null
       ? Number(((discrepancyAmountMinor / expectedServiceAmountMinor) * 100).toFixed(2))
       : null;
 
@@ -875,7 +955,7 @@ export function reconcileCommitment(params: {
     ...(cancellationSession?.evidence.map((e) => e.id) || []),
   ];
 
-  // Check for duplicate debits on the same date or within 2 days with identical amount,
+  // Check for duplicate debits on the same date or within 2 days with identical amount and currency,
   // excluding pairs that have a matching CREDIT reversal or refund within 7 days.
   let hasPossibleDuplicate = false;
   let duplicatePairIds: [string, string] | null = null;
@@ -884,8 +964,11 @@ export function reconcileCommitment(params: {
   for (let i = 1; i < cmtTxns.length; i++) {
     const prev = cmtTxns[i - 1];
     const curr = cmtTxns[i];
-    const prevMinor = toMinorUnits(prev.amount);
-    const currMinor = toMinorUnits(curr.amount);
+    const prevCcy = normalizeCurrencyCode(prev.currency || effectiveCurrency) || effectiveCurrency;
+    const currCcy = normalizeCurrencyCode(curr.currency || effectiveCurrency) || effectiveCurrency;
+    if (prevCcy !== currCcy) continue;
+    const prevMinor = toMinorUnits(prev.amount, prevCcy);
+    const currMinor = toMinorUnits(curr.amount, currCcy);
     const daysApart = Math.round(
       Math.abs(Date.parse(curr.transactionDate) - Date.parse(prev.transactionDate)) /
         (1000 * 60 * 60 * 24)
@@ -893,7 +976,9 @@ export function reconcileCommitment(params: {
     if (daysApart <= 2 && prevMinor === currMinor) {
       const matchingReversal = cmtCreditTxns.find((cred) => {
         if (consumedCreditIds.has(cred.id)) return false;
-        if (toMinorUnits(cred.amount) !== currMinor) return false;
+        const credCcy = normalizeCurrencyCode(cred.currency || currCcy) || currCcy;
+        if (credCcy !== currCcy) return false;
+        if (toMinorUnits(cred.amount, credCcy) !== currMinor) return false;
         const credTime = Date.parse(cred.transactionDate);
         const prevTime = Date.parse(prev.transactionDate);
         const daysSinceFirstDebit = (credTime - prevTime) / (1000 * 60 * 60 * 24);
@@ -915,7 +1000,6 @@ export function reconcileCommitment(params: {
   const effectiveMandateStatus = getEffectiveMandateStatus(mandate, evalDate);
   const missingMandateFields = getMissingMandateFields(mandate);
   const isMandateExpired = effectiveMandateStatus === 'EXPIRED';
-  const isMandateActive = effectiveMandateStatus === 'ACTIVE_VALID';
 
   // Check for Post-Cancellation Debit / Conflicting Evidence (Section 17.4)
   const hasPostCancelDebit =
@@ -927,8 +1011,56 @@ export function reconcileCommitment(params: {
   let epistemicCaveat =
     'Reconciliation compares imported statement transactions, available mandate records, and user-provided or seeded service terms.';
   let recommendedAction = 'No immediate intervention required; continue routine statement monitoring.';
+  let discrepancyReasonOverride: string | undefined;
 
-  if (hasPostCancelDebit) {
+  if (hasInvalidTxnCurrency) {
+    status = 'UNRESOLVED';
+    discrepancyReasonOverride = 'INVALID_CURRENCY';
+    explanation = `Cannot reconcile ${commitment.serviceName} because statement transaction ${latestTxn.id} has a missing or unsupported ISO 4217 currency code ("${rawTxnCurrency || 'UNSPECIFIED'}").`;
+    epistemicCaveat =
+      'Financial reconciliation requires a validated ISO 4217 currency code on all compared records.';
+    recommendedAction =
+      'Correct the currency code on the imported statement record before running three-way reconciliation.';
+  } else if (hasCurrencyMismatch) {
+    status = 'CONFLICTING_EVIDENCE';
+    discrepancyReasonOverride = 'CURRENCY_MISMATCH';
+    const mismatchParts: string[] = [];
+    if (hasMandateCurrencyMismatch && mandate) {
+      mismatchParts.push(
+        `statement debit ${latestTxn.id} is in ${txnCurrency} (${formatMinorINR(
+          actualTransactionAmountMinor,
+          txnCurrency
+        )}) whereas mandate ${mandate.mandateReference} is in ${
+          mandate.currency || 'UNKNOWN'
+        } (${
+          mandateCurrency && mandateMaxAmountMinor !== null
+            ? formatMinorINR(mandateMaxAmountMinor, mandateCurrency)
+            : `${mandate.maxAmount ?? 'Unavailable'} (${mandate.currency || 'Currency Unavailable'})`
+        })`
+      );
+    }
+    if (hasTermsCurrencyMismatch && serviceTerms) {
+      mismatchParts.push(
+        `statement debit ${latestTxn.id} is in ${txnCurrency} (${formatMinorINR(
+          actualTransactionAmountMinor,
+          txnCurrency
+        )}) whereas service terms ${serviceTerms.id} are in ${
+          serviceTerms.currency || 'UNKNOWN'
+        } (${
+          termsCurrency && expectedServiceAmountMinor !== null
+            ? formatMinorINR(expectedServiceAmountMinor, termsCurrency)
+            : `${serviceTerms.expectedAmount ?? 'Unavailable'} (${serviceTerms.currency || 'Currency Unavailable'})`
+        })`
+      );
+    }
+    explanation = `Currency mismatch detected for ${commitment.serviceName}: ${mismatchParts.join(
+      '; '
+    )}. DebitLens never compares numeric amounts across different currencies as equivalent and does not apply speculative exchange rates.`;
+    epistemicCaveat =
+      'Cross-currency comparison requires an authoritative FX settlement rate, timestamp, and bank conversion provenance; without these, records in different currencies cannot be marked MATCHED.';
+    recommendedAction =
+      'Verify the billing currency on your merchant invoice and bank mandate, or attach the matching currency terms document.';
+  } else if (hasPostCancelDebit) {
     status = 'CONFLICTING_EVIDENCE';
     const postTxnId =
       cancellationSession?.postCancellationTransactionIds[0] || latestTxn.id;
@@ -999,7 +1131,8 @@ export function reconcileCommitment(params: {
     }
 
     explanation = `Conflicting evidence detected: ${recordedLifecycleSummary}, but debit ${postTxnId} of ${formatMinorINR(
-      actualTransactionAmountMinor
+      actualTransactionAmountMinor,
+      effectiveCurrency
     )} occurred on ${latestTxnDate}.`;
     epistemicCaveat =
       'DebitLens does not declare this debit to be fraud. A post-cancellation debit may reflect a trailing billing period, delayed settlement, or an unrevoked standing instruction at the bank/card issuer.';
@@ -1017,7 +1150,8 @@ export function reconcileCommitment(params: {
   } else if (mandate && isMandateExpired) {
     status = 'CONFLICTING_EVIDENCE';
     explanation = `Conflicting evidence detected: Debit ${latestTxn.id} of ${formatMinorINR(
-      actualTransactionAmountMinor
+      actualTransactionAmountMinor,
+      effectiveCurrency
     )} occurred on ${latestTxnDate}, whereas linked mandate ${
       mandate.mandateReference
     } expired on ${mandate.endDate} prior to the debit date.`;
@@ -1035,7 +1169,8 @@ export function reconcileCommitment(params: {
   } else if (mandate && mandate.mandateStatus !== 'ACTIVE') {
     status = 'CONFLICTING_EVIDENCE';
     explanation = `Conflicting evidence detected: Debit ${latestTxn.id} of ${formatMinorINR(
-      actualTransactionAmountMinor
+      actualTransactionAmountMinor,
+      effectiveCurrency
     )} occurred on ${latestTxnDate}, whereas linked mandate ${
       mandate.mandateReference
     } has lifecycle status ${mandate.mandateStatus}.`;
@@ -1048,7 +1183,8 @@ export function reconcileCommitment(params: {
     explanation = `Detected two debits (${
       duplicatePairIds ? duplicatePairIds.join(' and ') : 'consecutive debits'
     }) of ${formatMinorINR(
-      actualTransactionAmountMinor
+      actualTransactionAmountMinor,
+      effectiveCurrency
     )} within 48 hours for ${commitment.serviceName} with no matching credit reversal in the imported statement.`;
     epistemicCaveat =
       'Could represent a retry after a failed settlement or an accidental double-billing event.';
@@ -1057,7 +1193,8 @@ export function reconcileCommitment(params: {
   } else if (!mandate) {
     status = 'TRANSACTION_WITHOUT_VISIBLE_MANDATE';
     explanation = `Recurring debits of ${formatMinorINR(
-      actualTransactionAmountMinor
+      actualTransactionAmountMinor,
+      effectiveCurrency
     )} (${commitment.recurrenceType.toLowerCase()}) are present in statement records, but no matching mandate was found in the available imported records.`;
     epistemicCaveat =
       'Absence of a mandate in DebitLens means no matching mandate record was imported—it does NOT prove that no bank/card authorisation exists.';
@@ -1071,9 +1208,11 @@ export function reconcileCommitment(params: {
       ? `attached service document ${serviceTerms.id} does not contain an extractable expected billing amount`
       : `attached service document ${serviceTerms.id} does not specify a documented billing frequency`;
     explanation = `Actual debit (${formatMinorINR(
-      actualTransactionAmountMinor
+      actualTransactionAmountMinor,
+      effectiveCurrency
     )}) is within active mandate ${mandate.mandateReference} ceiling (${formatMinorINR(
-      mandateMaxAmountMinor || 0
+      mandateMaxAmountMinor || 0,
+      effectiveCurrency
     )}), but ${missingReason}.`;
     epistemicCaveat =
       'Without a documented service price and verified billing frequency in the terms record, DebitLens can verify mandate ceiling compliance but cannot verify whether the billed amount and schedule match your contracted plan terms.';
@@ -1093,17 +1232,24 @@ export function reconcileCommitment(params: {
               /_/g,
               ' '
             )} mandate maximum limit of ${formatMinorINR(
-              mandateMaxAmountMinor
+              mandateMaxAmountMinor,
+              effectiveCurrency
             )} (${mandate.mandateReference}), which explains why the payment rail permitted collection.`
           : `The debit ALSO exceeds the imported mandate maximum limit of ${formatMinorINR(
-              mandateMaxAmountMinor
+              mandateMaxAmountMinor,
+              effectiveCurrency
             )} (${mandate.mandateReference}).`
         : '';
     explanation = `Documented service price in ${serviceTerms.id} is ${formatMinorINR(
-      expectedServiceAmountMinor
+      expectedServiceAmountMinor,
+      effectiveCurrency
     )}, whereas the latest actual debit (${latestTxn.id}) is ${formatMinorINR(
-      actualTransactionAmountMinor
-    )} — a difference of ${sign}${formatMinorINR(discrepancyAmountMinor)} (${sign}${discrepancyPercent}%). ${mandateClause}`;
+      actualTransactionAmountMinor,
+      effectiveCurrency
+    )} — a difference of ${sign}${formatMinorINR(
+      discrepancyAmountMinor,
+      effectiveCurrency
+    )} (${sign}${discrepancyPercent}%). ${mandateClause}`;
     epistemicCaveat =
       'DebitLens reports an amount discrepancy between your documented service price and actual statement debit. It does not claim fraud—this difference could reflect a tier upgrade, promotional discount expiry, tax adjustment, or unannounced price revision.';
     recommendedAction =
@@ -1118,9 +1264,11 @@ export function reconcileCommitment(params: {
   ) {
     status = 'FREQUENCY_DISCREPANCY';
     explanation = `Documented service schedule in ${serviceTerms.id} specifies ${serviceTerms.billingFrequency} billing (${formatMinorINR(
-      expectedServiceAmountMinor
+      expectedServiceAmountMinor,
+      effectiveCurrency
     )}), whereas observed statement debits follow an ${commitment.recurrenceType} cadence (latest debit ${formatMinorINR(
-      actualTransactionAmountMinor
+      actualTransactionAmountMinor,
+      effectiveCurrency
     )}).`;
     epistemicCaveat =
       'Observed debit intervals differ from the documented billing cadence, which may happen when riders, manual top-ups, or off-cycle NACH presentations occur.';
@@ -1138,7 +1286,8 @@ export function reconcileCommitment(params: {
   } else if (effectiveMandateStatus === 'EXPIRED') {
     status = 'CONFLICTING_EVIDENCE';
     explanation = `Actual debit of ${formatMinorINR(
-      actualTransactionAmountMinor
+      actualTransactionAmountMinor,
+      effectiveCurrency
     )} occurred on ${latestTxn.transactionDate}, but payment mandate ${
       mandate.mandateReference
     } expired on ${mandate.endDate}. Continued automated debit under an expired authorisation requires immediate review.`;
@@ -1156,12 +1305,17 @@ export function reconcileCommitment(params: {
   } else {
     status = 'MATCHED';
     explanation = `Three-way reconciliation matched: Actual debit of ${formatMinorINR(
-      actualTransactionAmountMinor
+      actualTransactionAmountMinor,
+      effectiveCurrency
     )} (${latestTxn.id}) matches documented service terms (${formatMinorINR(
-      expectedServiceAmountMinor
+      expectedServiceAmountMinor,
+      effectiveCurrency
     )} ${serviceTerms.billingFrequency.toLowerCase()}) and executes within active mandate ${
       mandate.mandateReference
-    } ceiling (${formatMinorINR(mandateMaxAmountMinor || actualTransactionAmountMinor)}).`;
+    } ceiling (${formatMinorINR(
+      mandateMaxAmountMinor || actualTransactionAmountMinor,
+      effectiveCurrency
+    )}).`;
     epistemicCaveat =
       'All three layers (statement transaction, active payment mandate ceiling, and documented service price) are aligned across available imported records.';
     recommendedAction = 'Commitment is reconciled across statement, mandate, and service terms.';
@@ -1173,6 +1327,11 @@ export function reconcileCommitment(params: {
     merchantName: commitment.merchantName,
     serviceName: commitment.serviceName,
     status,
+    currency: effectiveCurrency,
+    expectedServiceCurrency: termsCurrency,
+    actualTransactionCurrency: txnCurrency,
+    mandateCurrency,
+    discrepancyReason: discrepancyReasonOverride || (hasCurrencyMismatch ? 'CURRENCY_MISMATCH' : null),
     expectedServiceAmountMinor,
     expectedServiceAmount,
     actualTransactionAmountMinor,
@@ -1194,7 +1353,14 @@ export function reconcileCommitment(params: {
     discrepancyDetails: {
       missingMandateFields,
       missingTermsFields: !serviceTerms ? ['terms_document'] : expectedServiceAmountMinor === null ? ['expectedAmount'] : [],
-      discrepancyReason: explanation,
+      discrepancyReason: discrepancyReasonOverride || explanation,
+      ...(hasCurrencyMismatch
+        ? {
+            transactionCurrency: latestTxn.currency,
+            mandateCurrency: mandate?.currency ?? null,
+            serviceTermsCurrency: serviceTerms?.currency ?? null,
+          }
+        : {}),
     },
   };
 }

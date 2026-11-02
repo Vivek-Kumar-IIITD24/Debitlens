@@ -196,7 +196,6 @@ export default function App() {
     }
     return DEFAULT_DESCRIPTOR_SEARCH_HISTORY;
   });
-  const [assignMerchantSelect, setAssignMerchantSelect] = useState<Record<string, string>>({});
   const [investigationTransaction, setInvestigationTransaction] = useState<TransactionRecord | null>(null);
   const [isInvestigationDrawerOpen, setIsInvestigationDrawerOpen] = useState(false);
   const [passportCommitmentId, setPassportCommitmentId] = useState<string | null>(null);
@@ -1546,41 +1545,8 @@ export default function App() {
                                   <div className="font-mono text-[11px] font-semibold text-amber-800">
                                     UNRESOLVED — Not Merged
                                   </div>
-                                  <div className="flex items-center gap-1.5">
-                                    <select
-                                      aria-label={`Assign Merchant for ${t.rawDescription}`}
-                                      value={assignMerchantSelect[t.id] || ''}
-                                      onChange={(e) =>
-                                        setAssignMerchantSelect((prev) => ({
-                                          ...prev,
-                                          [t.id]: e.target.value,
-                                        }))
-                                      }
-                                      className="px-2 py-1 text-[11px] bg-white border border-slate-300 rounded text-slate-800"
-                                    >
-                                      <option value="">Assign Merchant...</option>
-                                      {merchantsCatalogue.map((m) => (
-                                        <option key={m.id} value={m.id}>
-                                          {m.canonicalName}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    {assignMerchantSelect[t.id] && (
-                                      <button
-                                        type="button"
-                                        onClick={async () => {
-                                          await apiClient.confirmMerchantDescriptor(
-                                            assignMerchantSelect[t.id],
-                                            t.rawDescription
-                                          );
-                                          sarvamService.clearCache();
-                                          await loadAllData();
-                                        }}
-                                        className="px-2 py-1 text-[11px] font-medium text-white bg-teal-700 hover:bg-teal-800 rounded"
-                                      >
-                                        Confirm
-                                      </button>
-                                    )}
+                                  <div className="text-[11px] text-slate-600">
+                                    Use <span className="font-semibold text-amber-900">Investigate</span> to review eligible candidate merchants for this transaction.
                                   </div>
                                 </div>
                               )}
@@ -1598,9 +1564,11 @@ export default function App() {
                                 }
                               >
                                 {t.direction === 'CREDIT' ? '+' : ''}
-                                {formatINR(t.amount)}
+                                {formatINR(t.amount, t.currency)}
                               </span>
-                              <div className="text-[10px] text-slate-500">{t.direction}</div>
+                              <div className="text-[10px] text-slate-500">
+                                {t.direction} · {t.currency}
+                              </div>
                             </td>
                             <td className="py-2.5 px-3 text-right whitespace-nowrap">
                               <div className="flex items-center justify-end gap-1.5">

@@ -308,7 +308,10 @@ export const CommitmentPassportModal: React.FC<CommitmentPassportModalProps> = (
                       <span className="text-slate-400 block">Max Debit Ceiling</span>
                       <span className="text-sm font-bold text-slate-900">
                         {passport.sectionB_Mandate.maxAmount !== null
-                          ? formatINR(passport.sectionB_Mandate.maxAmount)
+                          ? formatINR(
+                              passport.sectionB_Mandate.maxAmount,
+                              passport.sectionB_Mandate.currency
+                            )
                           : 'Ceiling not set'}
                       </span>
                     </div>
@@ -353,7 +356,10 @@ export const CommitmentPassportModal: React.FC<CommitmentPassportModalProps> = (
                       <span className="text-slate-400 block">Expected Billing</span>
                       <span className="text-sm font-bold text-emerald-700">
                         {passport.sectionC_Terms.expectedAmount !== null
-                          ? formatINR(passport.sectionC_Terms.expectedAmount)
+                          ? formatINR(
+                              passport.sectionC_Terms.expectedAmount,
+                              passport.sectionC_Terms.currency
+                            )
                           : 'Unavailable'}{' '}
                         / {passport.sectionC_Terms.billingFrequency}
                       </span>
@@ -404,7 +410,10 @@ export const CommitmentPassportModal: React.FC<CommitmentPassportModalProps> = (
                   <div>
                     <span className="text-slate-400 block">Total Spent to Date</span>
                     <span className="text-lg font-bold text-slate-900">
-                      {formatINR(passport.sectionD_History.totalSpent)}
+                      {formatINR(
+                        passport.sectionD_History.totalSpent,
+                        passport.sectionD_History.currency
+                      )}
                     </span>
                   </div>
                   <div>

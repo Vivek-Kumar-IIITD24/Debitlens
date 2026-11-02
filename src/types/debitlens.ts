@@ -34,6 +34,44 @@ export type RelationshipConfidenceStatus =
   | 'BANK_CONFIRMED'
   | 'UNKNOWN';
 
+export type RecordSourceProvenance =
+  | 'DEMO_SEED'
+  | 'USER_IMPORTED'
+  | 'USER_ENTERED'
+  | 'SYSTEM_GENERATED'
+  | 'UNKNOWN';
+
+export type EvidenceRecordLifecycleStatus =
+  | 'NO_EVIDENCE_RECORDED'
+  | 'USER_NOTE_RECORDED'
+  | 'EVIDENCE_REFERENCE_RECORDED'
+  | 'DOCUMENT_UPLOADED'
+  | 'AWAITING_REVIEW'
+  | 'REVIEWED';
+
+export type ActionLifecycleStatus =
+  | 'NOT_STARTED'
+  | 'USER_INTENDS_TO_ACT'
+  | 'USER_REPORTED_REQUEST'
+  | 'USER_REPORTED_ACKNOWLEDGEMENT'
+  | 'USER_REPORTED_COMPLETION'
+  | 'INDEPENDENTLY_VERIFIED';
+
+export interface MerchantConfirmationRecord {
+  eventId: string;
+  transactionId: string;
+  investigationId: string;
+  merchantId: string;
+  commitmentId: string | null;
+  actor: string;
+  timestamp?: string;
+  confirmedAt?: string;
+  previousResolutionStatus?: string;
+  newResolutionStatus?: string;
+  rawDescriptor?: string;
+  notes?: string;
+}
+
 export type PaymentRailType =
   | 'UPI_AUTOPAY'
   | 'CARD_EMANDATE'
@@ -351,7 +389,7 @@ export interface MandateRecord {
     | 'EXPIRED'
     | 'UNKNOWN'
     | 'PENDING_VERIFICATION';
-  sourceType: 'DEMO_SEED' | 'USER_IMPORTED';
+  sourceType: RecordSourceProvenance;
   updatedAt: string;
   isIncomplete?: boolean;
   missingFields?: string[];
@@ -370,6 +408,7 @@ export interface ServiceTermsRecord {
   renewalDate: string | null;
   cancellationNoticeDays: number | null;
   documentSource: 'PASTED_INVOICE_TEXT' | 'STRUCTURED_JSON' | 'MANUAL_ENTRY';
+  sourceType?: RecordSourceProvenance;
   rawDocumentText: string;
   extractionConfidence: number;
   extractedFields: {
@@ -389,6 +428,11 @@ export interface ReconciliationFindingRecord {
   merchantName: string;
   serviceName: string;
   status: ReconciliationOutcomeStatus;
+  currency?: string;
+  expectedServiceCurrency?: string | null;
+  actualTransactionCurrency?: string | null;
+  mandateCurrency?: string | null;
+  discrepancyReason?: string | null;
   expectedServiceAmountMinor: number | null;
   expectedServiceAmount: number | null;
   actualTransactionAmountMinor: number | null;
@@ -434,7 +478,11 @@ export interface EvidenceCasebookEntry {
   description: string;
   sourceReference: string;
   amountMinor: number | null;
+  currency?: string;
   verificationStatus: RelationshipConfidenceStatus;
+  evidenceRecordLifecycle?: EvidenceRecordLifecycleStatus;
+  actionLifecycle?: ActionLifecycleStatus;
+  sourceType?: RecordSourceProvenance;
   actor: string;
 }
 
@@ -523,8 +571,11 @@ export interface CancellationEvidenceRecord {
   evidenceType: 'SERVICE_CONFIRMATION' | 'MANDATE_REVOCATION' | 'SUPPORT_TICKET' | 'MERCHANT_UNRESPONSIVE';
   description: string;
   referenceNumber: string;
-  evidenceDate: string;
+  evidenceDate: string | null;
   verificationStatus?: 'USER_REPORTED' | 'EVIDENCE_ATTACHED';
+  evidenceRecordLifecycle?: EvidenceRecordLifecycleStatus;
+  actionLifecycle?: ActionLifecycleStatus;
+  sourceType?: RecordSourceProvenance;
   createdAt: string;
 }
 
@@ -918,6 +969,7 @@ export interface UnrecognizedDebitCase {
   updatedAt: string;
   resolutionSource: 'USER_CONFIRMED' | 'REJECTED_ALL' | 'KEPT_UNRESOLVED' | 'SYSTEM_DEFAULT' | null;
   resolvedMerchantId: string | null;
+  confirmedMerchantId?: string | null;
 }
 
 // ============================================================================
@@ -1013,23 +1065,28 @@ export interface CommitmentPassport {
     rail?: string;
     mandateReference?: string | null;
     maxAmount?: number | null;
+    currency?: string;
     mandateStatus?: string;
     frequency?: string;
     startDate?: string | null;
     endDate?: string | null;
+    sourceProvenance?: string;
   };
   sectionC_Terms: {
     termsPresent: boolean;
     serviceName?: string;
     expectedAmount?: number | null;
+    currency?: string;
     billingFrequency?: string;
     renewalDate?: string | null;
     userVerified?: boolean;
     sourceDocument?: string | null;
+    sourceProvenance?: string;
   };
   sectionD_History: {
     totalDebitsCount: number;
     totalSpent: number;
+    currency?: string;
     firstDebitDate?: string | null;
     latestDebitDate?: string | null;
     averageDebitAmount?: number | null;
@@ -1037,6 +1094,7 @@ export interface CommitmentPassport {
   };
   sectionE_Reconciliation: {
     reconciliationStatus: string;
+    currency?: string;
     amountComparison?: string;
     cadenceComparison?: string;
     lifecycleComparison?: string;
@@ -1053,6 +1111,9 @@ export interface CommitmentPassport {
   sectionF_Cancellation: {
     serviceLifecycleStatus?: string;
     mandateLifecycleStatus?: string;
+    serviceActionLifecycle?: ActionLifecycleStatus;
+    mandateActionLifecycle?: ActionLifecycleStatus;
+    evidenceRecordLifecycle?: EvidenceRecordLifecycleStatus;
     bothCancelled?: boolean;
     areBothStopped?: boolean;
     cancellationSummary?: string;
@@ -1100,8 +1161,10 @@ export interface CommitmentPassport {
   // Backwards compatibility sections
   sectionB_FinancialPattern?: any;
   sectionC_Authorisation?: any;
+  sectionC_Mandate?: any;
   sectionD_ServiceTerms?: any;
   sectionF_Lifecycle?: any;
+  sectionG_Cancellation?: any;
   sectionG_EvidenceTimeline?: any;
 }
 
@@ -1152,6 +1215,7 @@ export interface EvidencePackData {
     mandateReference: string | null;
     paymentRail: string;
     maxAuthorisedAmount: number | null;
+    currency?: string;
     effectiveStatus: string;
     startDate: string | null;
     expiryDate: string | null;
@@ -1161,6 +1225,7 @@ export interface EvidencePackData {
   reconciliation: {
     outcome: ReconciliationOutcomeStatus;
     explanation: string;
+    currency?: string;
     expectedServicePrice: number | null;
     actualDebitAmount: number | null;
     mandateCap: number | null;
@@ -1169,8 +1234,11 @@ export interface EvidencePackData {
     recommendedAction: string;
   };
   cancellationEvidence: {
-    serviceLifecycle: ServiceLifecycleStatus;
-    mandateLifecycle: MandateLifecycleStatus;
+    serviceLifecycle: ServiceLifecycleStatus | string;
+    mandateLifecycle: MandateLifecycleStatus | string;
+    serviceActionLifecycle?: ActionLifecycleStatus;
+    mandateActionLifecycle?: ActionLifecycleStatus;
+    evidenceRecordLifecycle?: EvidenceRecordLifecycleStatus;
     requestDates: { service?: string | null; mandate?: string | null };
     confirmationReferences: string[];
     evidenceSources: string[];

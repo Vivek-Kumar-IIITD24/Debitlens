@@ -8,7 +8,7 @@ npm test
 # Executes: tsx --test src/utils/searchHistory.test.ts src/engine/debitlensEngine.test.ts
 ```
 
-### Summary of Results: **56 / 56 Passing (0 Failures)**
+### Summary of Results: **60 / 60 Passing (0 Failures)**
 
 | Test # | Suite | Test Name | Status |
 |---|---|---|---|
@@ -62,12 +62,16 @@ npm test
 | 48 | `debitlensEngine.test.ts` | Provenance Isolation: Unrelated free-text audit summary and unrelated imported transactions do not contaminate commitment provenance or source notice | PASS |
 | 49 | `debitlensEngine.test.ts` | Calendar Date Validation: Rejects impossible dates (`31/02/2026`, `30/02/2026`, `29/02/2026`, `2026-02-31`, `31-04-2026`) and accepts valid leap-year date (`29/02/2024`) | PASS |
 | 50 | `debitlensEngine.test.ts` | Multi-Account & Multi-Currency CSV Mapping: Preserves distinct same-day bank references (`UTR-SAME-DAY-A` vs `UTR-SAME-DAY-B`), skips exact duplicates, and maintains preview/apply parity across 55 rows | PASS |
-| 51 | `searchHistory.test.ts` | `normalizeSearchQuery` trims leading/trailing whitespace and collapses internal spaces | PASS |
-| 52 | `searchHistory.test.ts` | `addSearchHistoryEntry` prepends new query and ignores blank queries | PASS |
-| 53 | `searchHistory.test.ts` | `addSearchHistoryEntry` deduplicates case-insensitively and moves item to top | PASS |
-| 54 | `searchHistory.test.ts` | `addSearchHistoryEntry` enforces `maxEntries` limit | PASS |
-| 55 | `searchHistory.test.ts` | `removeSearchHistoryEntry` and `clearSearchHistory` remove items properly | PASS |
-| 56 | `searchHistory.test.ts` | `filterTransactionsByQuery` and `countDescriptorMatches` match raw descriptors and respect status filter | PASS |
+| 51 | `debitlensEngine.test.ts` | Gate A (Merchant Identity & Confirmation Security): Confirmations are strictly transaction-scoped and never contaminate unrelated transactions sharing the same `rawDescription` | PASS |
+| 52 | `debitlensEngine.test.ts` | Gate C (Currency & Minor-Unit Precision): Multi-currency minor units, formatting, commitment grouping, and cross-currency reconciliation mismatch | PASS |
+| 53 | `debitlensEngine.test.ts` | Gate F (Explicit Source Provenance): Mandate and ServiceTerms with `-01` or `DOC-SEED-` IDs use explicit `sourceType` and default unknown legacy records to `UNKNOWN` | PASS |
+| 54 | `debitlensEngine.test.ts` | Gates A, B, D, E Server Integration: Authoritative merchant confirmation, rollback-safe serialized persistence, null evidence dates, and review queue / investigation state machines | PASS |
+| 55 | `searchHistory.test.ts` | `normalizeSearchQuery` trims leading/trailing whitespace and collapses internal spaces | PASS |
+| 56 | `searchHistory.test.ts` | `addSearchHistoryEntry` prepends new query and ignores blank queries | PASS |
+| 57 | `searchHistory.test.ts` | `addSearchHistoryEntry` deduplicates case-insensitively and moves item to top | PASS |
+| 58 | `searchHistory.test.ts` | `addSearchHistoryEntry` enforces `maxEntries` limit | PASS |
+| 59 | `searchHistory.test.ts` | `removeSearchHistoryEntry` and `clearSearchHistory` remove items properly | PASS |
+| 60 | `searchHistory.test.ts` | `filterTransactionsByQuery` and `countDescriptorMatches` match raw descriptors and respect status filter | PASS |
 
 ---
 
