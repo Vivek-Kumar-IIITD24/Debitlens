@@ -7,7 +7,7 @@ import {
   ServiceLifecycleStatus,
   MandateLifecycleStatus,
 } from '../../types/debitlens';
-import { formatINR } from '../../utils/currency';
+import { formatINR, formatMinorUnitsExact } from '../../utils/currency';
 import { CancellationExplanation } from '../language/CancellationExplanation';
 import {
   ShieldAlert,
@@ -278,7 +278,11 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
           >
             {commitments.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.merchantName} — {c.serviceName} ({formatINR(c.latestAmount, c.currency)} · {c.cancellationState.replace(/_/g, ' ')})
+                {c.merchantName} — {c.serviceName} (
+                  {c.latestAmountMinorExact !== null && c.latestAmountMinorExact !== undefined
+                    ? formatMinorUnitsExact(c.latestAmountMinorExact, c.currency)
+                    : formatINR(c.latestAmount, c.currency)}{' '}
+                  · {c.cancellationState.replace(/_/g, ' ')})
               </option>
             ))}
           </select>
@@ -491,6 +495,9 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
           <div className="text-sm font-mono font-bold text-teal-800 mt-1 tabular-nums">
             {activeCommitment.isFinancialObligation
               ? 'Contractual Obligation'
+              : activeCommitment.annualisedAmountExact !== null &&
+                activeCommitment.annualisedAmountExact !== undefined
+              ? `${formatMinorUnitsExact(activeCommitment.annualisedAmountExact, activeCommitment.currency)}/yr`
               : activeCommitment.annualisedAmount !== null
               ? `${formatINR(activeCommitment.annualisedAmount, activeCommitment.currency)}/yr`
               : 'Not a recurring projection'}

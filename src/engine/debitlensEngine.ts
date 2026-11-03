@@ -665,6 +665,50 @@ function addDaysToIso(dateStr: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+function addCalendarMonthsToIso(dateStr: string, months: number): string | null {
+  const parsed = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!parsed) return null;
+  const year = Number(parsed[1]);
+  const month = Number(parsed[2]);
+  const day = Number(parsed[3]);
+  const totalMonths = year * 12 + (month - 1) + months;
+  const targetYear = Math.floor(totalMonths / 12);
+  const targetMonth = (totalMonths % 12) + 1;
+  const lastDay = new Date(Date.UTC(targetYear, targetMonth, 0)).getUTCDate();
+  return `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(
+    Math.min(day, lastDay)
+  ).padStart(2, '0')}`;
+}
+
+function addCalendarYearsToIso(dateStr: string, years: number): string | null {
+  return addCalendarMonthsToIso(dateStr, years * 12);
+}
+
+function scheduleForRecurrence(
+  dateStr: string,
+  recurrenceType: RecurrenceFrequency
+): { intervalDays: number | null; nextExpectedDate: string | null } {
+  if (recurrenceType === 'WEEKLY') {
+    return { intervalDays: 7, nextExpectedDate: addDaysToIso(dateStr, 7) };
+  }
+  if (recurrenceType === 'FORTNIGHTLY') {
+    return { intervalDays: 14, nextExpectedDate: addDaysToIso(dateStr, 14) };
+  }
+  if (recurrenceType === 'MONTHLY' || recurrenceType === 'RESUMED' || recurrenceType === 'TRIAL_CONVERTED') {
+    return { intervalDays: 30, nextExpectedDate: addCalendarMonthsToIso(dateStr, 1) };
+  }
+  if (recurrenceType === 'QUARTERLY') {
+    return { intervalDays: 91, nextExpectedDate: addCalendarMonthsToIso(dateStr, 3) };
+  }
+  if (recurrenceType === 'HALF_YEARLY') {
+    return { intervalDays: 182, nextExpectedDate: addCalendarMonthsToIso(dateStr, 6) };
+  }
+  if (recurrenceType === 'YEARLY') {
+    return { intervalDays: 365, nextExpectedDate: addCalendarYearsToIso(dateStr, 1) };
+  }
+  return { intervalDays: null, nextExpectedDate: null };
+}
+
 function median(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -702,7 +746,7 @@ export function calculateExactProjection(params: {
           BigInt(eligibleHistoricalMinors.length)
         )
       : null;
-  const usesAverage = variableUtility && recurrenceType === 'MONTHLY';
+  const usesAverage = variableUtility;
   const baseMinor = usesAverage ? averageMinor : latestMinor;
   if (
     baseMinor === null ||
@@ -1167,11 +1211,6 @@ export function detectCommitmentsAndAlerts(
         : analysisAmounts.reduce((a, b) => a + b, 0) / minorFactor
       ).toFixed(2)
     );
-    const nextExpectedDate =
-      recurrenceType === 'IRREGULAR'
-        ? null
-        : addDaysToIso(latestTxn.transactionDate, recurrenceIntervalDays || 30);
-
     const descriptors = Array.from(new Set(sorted.map((t) => t.rawDescription)));
 
     const confidenceBreakdown = calculateConfidenceBreakdown({
@@ -1259,6 +1298,9 @@ export function detectCommitmentsAndAlerts(
     const effectiveRecurrence =
       override.recurrenceTypeOverride ||
       (trialNotif && sorted.length === 1 ? 'TRIAL_CONVERTED' : recurrenceType);
+    const schedule = scheduleForRecurrence(latestTxn.transactionDate, effectiveRecurrence);
+    const recurrenceIntervalDaysEffective = schedule.intervalDays;
+    const inferredNextExpectedDate = schedule.nextExpectedDate;
     const projection = calculateExactProjection({
       recurrenceType: effectiveRecurrence,
       latestMinor: latestExactMinor,
@@ -1311,7 +1353,7 @@ export function detectCommitmentsAndAlerts(
       mandateRef: latestTxn.externalReference || matchedMandate?.mandateReference || null,
       processorName: latestTxn.processorName,
       recurrenceType: effectiveRecurrence,
-      recurrenceIntervalDays,
+      recurrenceIntervalDays: recurrenceIntervalDaysEffective,
       typicalAmount: effectiveTypicalAmount,
       latestAmount,
       previousAmount,
@@ -1328,6 +1370,7 @@ export function detectCommitmentsAndAlerts(
       monthlyEquivalent,
       monthlyEquivalentExact: projection.monthlyEquivalentExact,
       averageDebitAmountExact: projection.averageDebitAmountExact,
+      projectionClassification: projection.classification,
       totalHistoricalSpend,
       totalHistoricalSpendExact: exactAnalysisAvailable
         ? exactMinorAmounts.reduce((sum, value) => sum + BigInt(value), 0n).toString()
@@ -1335,7 +1378,7 @@ export function detectCommitmentsAndAlerts(
       nextExpectedDate:
         override.nextExpectedDateOverride !== undefined
           ? override.nextExpectedDateOverride
-          : nextExpectedDate,
+          : inferredNextExpectedDate,
       lastPaymentDate: latestTxn.transactionDate,
       status: commitmentStatus,
       relationshipStatus:

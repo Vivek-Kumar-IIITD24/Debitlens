@@ -1135,7 +1135,10 @@ export default function App() {
                             </span>
                           </td>
                           <td className="py-3 px-3 font-mono tabular-nums text-right font-semibold text-slate-900">
-                            {formatINR(c.latestAmount, c.currency)}
+                            {c.latestAmountMinorExact !== null &&
+                            c.latestAmountMinorExact !== undefined
+                              ? formatMinorUnitsExact(c.latestAmountMinorExact, c.currency)
+                              : formatINR(c.latestAmount, c.currency)}
                             {c.priceChangeDetected && (
                               <div className="text-[10px] text-rose-700">
                                 +{c.priceChangePercent}% vs {formatINR(c.typicalAmount, c.currency)}
@@ -1143,9 +1146,13 @@ export default function App() {
                             )}
                           </td>
                           <td className="py-3 px-3 font-mono tabular-nums text-right font-semibold text-teal-800">
-                            {c.annualisedAmount !== null
+                            {c.annualisedAmountExact !== null &&
+                            c.annualisedAmountExact !== undefined
+                              ? `${formatMinorUnitsExact(c.annualisedAmountExact, c.currency)}/yr`
+                              : c.annualisedAmount !== null
                               ? `${formatINR(c.annualisedAmount, c.currency)}/yr`
                               : 'Not a recurring projection'}
+                            {c.projectionClassification === 'ESTIMATED' ? ' (estimated)' : ''}
                           </td>
                           <td className="py-3 px-3 font-mono text-[11px] text-slate-700 tabular-nums">
                             {c.confidenceScore}/100 ({c.confidenceLabel}) · {c.status.replace(/_/g, ' ')}
@@ -1418,12 +1425,21 @@ export default function App() {
                       <div className="flex flex-wrap items-center gap-4 shrink-0">
                         <div className="text-right font-mono tabular-nums">
                           <div className="text-base font-bold text-slate-900">
-                            {formatINR(cmt.latestAmount, cmt.currency)}
+                            {cmt.latestAmountMinorExact !== null &&
+                            cmt.latestAmountMinorExact !== undefined
+                              ? formatMinorUnitsExact(cmt.latestAmountMinorExact, cmt.currency)
+                              : formatINR(cmt.latestAmount, cmt.currency)}
                           </div>
                           <div className="text-xs text-teal-800 font-semibold">
-                            {cmt.annualisedAmount !== null && cmt.monthlyEquivalent !== null
+                            {cmt.annualisedAmountExact !== null &&
+                            cmt.annualisedAmountExact !== undefined &&
+                            cmt.monthlyEquivalentExact !== null &&
+                            cmt.monthlyEquivalentExact !== undefined
+                              ? `${formatMinorUnitsExact(cmt.annualisedAmountExact, cmt.currency)}/yr (${formatMinorUnitsExact(cmt.monthlyEquivalentExact, cmt.currency)}/mo eq)`
+                              : cmt.annualisedAmount !== null && cmt.monthlyEquivalent !== null
                               ? `${formatINR(cmt.annualisedAmount, cmt.currency)}/yr (${formatINR(cmt.monthlyEquivalent, cmt.currency)}/mo eq)`
                               : 'Not a recurring projection'}
+                            {cmt.projectionClassification === 'ESTIMATED' ? ' (estimated)' : ''}
                           </div>
                           <div className="text-[11px] text-slate-500">
                             Next expected: {formatDateIN(cmt.nextExpectedDate)}

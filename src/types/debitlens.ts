@@ -356,6 +356,7 @@ export interface CommitmentRecord {
   monthlyEquivalent: number | null;
   monthlyEquivalentExact?: string | null;
   averageDebitAmountExact?: string | null;
+  projectionClassification?: 'ACTUAL_DERIVED' | 'ESTIMATED' | 'UNAVAILABLE';
   totalHistoricalSpend: number;
   totalHistoricalSpendExact?: string | null;
   firstObservedDate?: string;

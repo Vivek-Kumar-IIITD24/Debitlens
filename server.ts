@@ -1857,6 +1857,8 @@ app.get('/api/dashboard/summary', (req, res) => {
       obligationAnnual: number;
       obligationAnnualExact: string | null;
       activeCommitmentsCount: number;
+      oneTimeCommitmentsExcludedCount: number;
+      incompleteRecurringProjectionCount: number;
     }
   > = {};
 
@@ -1885,6 +1887,8 @@ app.get('/api/dashboard/summary', (req, res) => {
         obligationAnnual: 0,
         obligationAnnualExact: '0',
         activeCommitmentsCount: 0,
+        oneTimeCommitmentsExcludedCount: 0,
+        incompleteRecurringProjectionCount: 0,
       };
     }
     const bucket = totalsByCurrency[currKey];
@@ -1892,6 +1896,21 @@ app.get('/api/dashboard/summary', (req, res) => {
       current !== null && value !== null && value !== undefined
         ? (BigInt(current) + BigInt(value)).toString()
         : null;
+    bucket.activeCommitmentsCount += 1;
+    if (c.recurrenceType === 'ONE_TIME') {
+      bucket.oneTimeCommitmentsExcludedCount += 1;
+      continue;
+    }
+    if (
+      c.projectionClassification === 'UNAVAILABLE' ||
+      c.monthlyEquivalentExact === null ||
+      c.annualisedAmountExact === null ||
+      c.monthlyEquivalentExact === undefined ||
+      c.annualisedAmountExact === undefined
+    ) {
+      bucket.incompleteRecurringProjectionCount += 1;
+      continue;
+    }
     bucket.monthlyRecurringSpendExact = addExact(
       bucket.monthlyRecurringSpendExact,
       c.monthlyEquivalentExact
@@ -1934,7 +1953,6 @@ app.get('/api/dashboard/summary', (req, res) => {
         );
       }
     }
-    bucket.activeCommitmentsCount += 1;
   }
 
   const primaryBucket = totalsByCurrency[primaryCurrency] || {
@@ -1949,6 +1967,8 @@ app.get('/api/dashboard/summary', (req, res) => {
     obligationAnnual: 0,
     obligationAnnualExact: '0',
     activeCommitmentsCount: 0,
+    oneTimeCommitmentsExcludedCount: 0,
+    incompleteRecurringProjectionCount: 0,
   };
 
   const priceChangeAlertsCount = state.alerts.filter(
@@ -2013,6 +2033,14 @@ app.get('/api/dashboard/summary', (req, res) => {
     unknownCurrencyCommitmentsCount,
     unknownCurrencyTransactionsCount: unknownCurrencyTxnsCount,
     excludedUnknownCurrencyCount,
+    oneTimeCommitmentsExcludedCount: currencySummaries.reduce(
+      (sum, summary) => sum + summary.oneTimeCommitmentsExcludedCount,
+      0
+    ),
+    incompleteRecurringProjectionCount: currencySummaries.reduce(
+      (sum, summary) => sum + summary.incompleteRecurringProjectionCount,
+      0
+    ),
     unsupportedCurrenciesCount,
     isMultiCurrency: currencySummaries.length > 1,
     totalDebitAmount: exactMinorToLegacyAmount(totalDebitAmountExact),

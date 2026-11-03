@@ -54,6 +54,8 @@ export interface CurrencyCommitmentSummary {
   obligationAnnual: number;
   obligationAnnualExact?: string | null;
   activeCommitmentsCount: number;
+  oneTimeCommitmentsExcludedCount?: number;
+  incompleteRecurringProjectionCount?: number;
 }
 
 export interface DashboardSummaryData {
@@ -75,6 +77,8 @@ export interface DashboardSummaryData {
   unresolvedDebitAmountExact?: string | null;
   unknownCurrencyTransactionsCount?: number;
   excludedUnknownCurrencyCount?: number;
+  oneTimeCommitmentsExcludedCount?: number;
+  incompleteRecurringProjectionCount?: number;
   unsupportedCurrenciesCount?: number;
   isMultiCurrency?: boolean;
   activeCommitmentsCount: number;

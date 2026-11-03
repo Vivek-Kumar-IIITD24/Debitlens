@@ -463,6 +463,82 @@ test('Recurrence override recalculates exact projections and rejects invalid val
   assert.notEqual(overridden.annualisedAmountExact, monthly.annualisedAmountExact);
 });
 
+test('Recurrence overrides recalculate calendar scheduling and preserve explicit dates', () => {
+  const { transactions } = parseAndNormaliseTransactions(SAMPLE_ROWS);
+  const withOverride = (recurrenceTypeOverride: any, nextExpectedDateOverride?: string | null) =>
+    detectCommitmentsAndAlerts(
+      transactions,
+      [],
+      {
+        'CMT-STREAMBOX': {
+          recurrenceTypeOverride,
+          ...(nextExpectedDateOverride !== undefined ? { nextExpectedDateOverride } : {}),
+        },
+      }
+    ).commitments.find((c) => c.id === 'CMT-STREAMBOX');
+
+  const weekly = withOverride('WEEKLY');
+  assert.equal(weekly?.recurrenceIntervalDays, 7);
+  assert.equal(weekly?.nextExpectedDate, '2026-08-12');
+
+  const quarterly = withOverride('QUARTERLY');
+  assert.equal(quarterly?.recurrenceIntervalDays, 91);
+  assert.equal(quarterly?.nextExpectedDate, '2026-11-05');
+
+  const halfYearly = withOverride('HALF_YEARLY');
+  assert.equal(halfYearly?.recurrenceIntervalDays, 182);
+  assert.equal(halfYearly?.nextExpectedDate, '2027-02-05');
+
+  const yearly = withOverride('YEARLY');
+  assert.equal(yearly?.recurrenceIntervalDays, 365);
+  assert.equal(yearly?.nextExpectedDate, '2027-08-05');
+
+  const explicit = withOverride('WEEKLY', '2027-01-15');
+  assert.equal(explicit?.nextExpectedDate, '2027-01-15');
+
+  const restored = detectCommitmentsAndAlerts(transactions, []).commitments.find(
+    (c) => c.id === 'CMT-STREAMBOX'
+  );
+  assert.equal(restored?.recurrenceType, 'MONTHLY');
+  assert.equal(restored?.recurrenceIntervalDays, 30);
+  assert.equal(restored?.nextExpectedDate, '2026-09-05');
+
+  const oneTime = withOverride('ONE_TIME');
+  assert.equal(oneTime?.nextExpectedDate, null);
+  assert.equal(oneTime?.recurrenceIntervalDays, null);
+  assert.equal(oneTime?.annualisedAmount, null);
+  assert.equal(oneTime?.monthlyEquivalent, null);
+});
+
+test('Calendar scheduling clamps month ends and preserves variable utility averages under overrides', () => {
+  const monthEndRows: RawCsvRow[] = [
+    { ...SAMPLE_ROWS[0], transaction_id: 'END-1', transaction_date: '2026-01-31' },
+    { ...SAMPLE_ROWS[1], transaction_id: 'END-2', transaction_date: '2026-02-28' },
+  ];
+  const { transactions: monthEndTransactions } = parseAndNormaliseTransactions(monthEndRows);
+  const monthEnd = detectCommitmentsAndAlerts(monthEndTransactions, []).commitments.find(
+    (c) => c.id === 'CMT-STREAMBOX'
+  );
+  assert.equal(monthEnd?.nextExpectedDate, '2026-03-28');
+
+  const variableRows: RawCsvRow[] = [
+    { ...SAMPLE_ROWS[0], transaction_id: 'UTIL-1', transaction_date: '2026-01-01', raw_description: 'BBPS*BESCOM-UTIL', amount: '100.01' },
+    { ...SAMPLE_ROWS[0], transaction_id: 'UTIL-2', transaction_date: '2026-02-01', raw_description: 'BBPS*BESCOM-UTIL', amount: '200.01' },
+    { ...SAMPLE_ROWS[0], transaction_id: 'UTIL-3', transaction_date: '2026-03-01', raw_description: 'BBPS*BESCOM-UTIL', amount: '300.01' },
+  ];
+  const { transactions } = parseAndNormaliseTransactions(variableRows);
+  const utility = detectCommitmentsAndAlerts(
+    transactions,
+    [],
+    { 'CMT-BESCOM': { recurrenceTypeOverride: 'QUARTERLY' } }
+  ).commitments.find((c) => c.id === 'CMT-BESCOM');
+  assert.equal(utility?.variableAmount, true);
+  assert.equal(utility?.averageDebitAmountExact, '20001');
+  assert.equal(utility?.recurrenceType, 'QUARTERLY');
+  assert.equal(utility?.annualisedAmountExact, '80004');
+  assert.equal(utility?.monthlyEquivalentExact, '6667');
+});
+
 test('Neo4j Commitment Graph builder constructs full path and executes Cypher Operations 1-7', () => {
   const { transactions } = parseAndNormaliseTransactions(SAMPLE_ROWS);
   const { commitments, alerts, playbooks, sessions } = detectCommitmentsAndAlerts(

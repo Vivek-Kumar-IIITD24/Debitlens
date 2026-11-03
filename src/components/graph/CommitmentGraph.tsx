@@ -17,7 +17,7 @@ import {
 import { GraphLegend } from './GraphLegend';
 import { GraphNodeDetails } from './GraphNodeDetails';
 import { RelationshipDetails } from './RelationshipDetails';
-import { formatINR } from '../../utils/currency';
+import { formatINR, formatMinorUnitsExact } from '../../utils/currency';
 import { Terminal, ShieldAlert, CheckCircle2, HelpCircle, RefreshCw, Layers, Filter } from 'lucide-react';
 
 interface CommitmentGraphProps {
@@ -270,7 +270,7 @@ export const CommitmentGraph: React.FC<CommitmentGraphProps> = ({
             >
               {(filteredCommitments.length > 0 ? filteredCommitments : commitments).map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.merchantName} — {c.serviceName} ({formatINR(c.latestAmount, c.currency)} · {c.connectedDescriptors.length} alias{c.connectedDescriptors.length > 1 ? 'es' : ''})
+                  {c.merchantName} — {c.serviceName} ({c.latestAmountMinorExact !== null && c.latestAmountMinorExact !== undefined ? formatMinorUnitsExact(c.latestAmountMinorExact, c.currency) : formatINR(c.latestAmount, c.currency)} · {c.connectedDescriptors.length} alias{c.connectedDescriptors.length > 1 ? 'es' : ''})
                 </option>
               ))}
             </select>

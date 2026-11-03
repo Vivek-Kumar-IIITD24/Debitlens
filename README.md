@@ -118,6 +118,18 @@ transaction_id,transaction_date,raw_description,amount,currency,direction,paymen
   quarterly × 4, yearly × 1, irregular latest debit × 3, and variable utilities use
   the eligible historical debit average × 12. Derived divisions use half-up minor-unit
   rounding; irregular results remain estimates, not confirmed contract prices.
+- Scheduling uses calendar-aware dates: weekly and fortnightly add 7/14 days, while
+  monthly, quarterly, half-yearly and yearly schedules add calendar months/years with
+  safe month-end clamping. Irregular and one-time commitments have no invented next
+  payment date. A valid user recurrence override recalculates both schedule and exact
+  projections; an explicit user next-payment date is preserved.
+- One-time commitments remain visible in transaction history but are excluded from
+  recurring dashboard totals. Recurring records with unavailable projections are
+  reported as incomplete rather than treated as zero. Variable utilities continue to
+  use their eligible historical debit average even when frequency is overridden.
+  Dashboard summaries expose counts for excluded one-time commitments and incomplete
+  recurring projections so an exact total is not mistaken for a complete population
+  when some recurring records are unavailable.
 - Mixed currencies are kept in separate buckets or reported as unavailable. No exchange-rate
   conversion is performed.
 
