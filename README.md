@@ -111,25 +111,38 @@ transaction_id,transaction_date,raw_description,amount,currency,direction,paymen
 - Missing or `UNKNOWN` currency has no authoritative minor-unit interpretation; it remains explicitly unavailable rather than being treated as INR.
 - Derived display values and legacy numeric summaries are rounded to the currency's supported decimal scale. Exact companion fields are provided where available; the prototype does not claim every derived public number is arbitrary-precision.
 - Dashboard summary fields expose `monthlyRecurringSpendExact`, `annualCommitmentTotalExact`,
-  `discretionaryAnnualExact` and `obligationAnnualExact`; monthly trend responses expose
-  `subscriptionsMinorExact`, `obligationsMinorExact`, `unresolvedMinorExact` and
-  `totalMinorExact`, together with the selected currency and precision.
-- Monthly projections preserve the existing business rules: monthly latest debit × 12,
-  quarterly × 4, yearly × 1, irregular latest debit × 3, and variable utilities use
-  the eligible historical debit average × 12. Derived divisions use half-up minor-unit
-  rounding; irregular results remain estimates, not confirmed contract prices.
+  `discretionaryAnnualExact`, `obligationAnnualExact`, `currencyPrecision`, `includedRecurringCount`,
+  `oneTimeCommitmentsExcludedCount`, `incompleteRecurringProjectionCount`,
+  `aggregationCompleteness` (`COMPLETE`, `PARTIAL`, `UNAVAILABLE`), `recurringKpiLabel`, and
+  `disclosureText`; monthly trend responses expose `subscriptionsMinorExact`,
+  `obligationsMinorExact`, `unresolvedMinorExact` and `totalMinorExact`, together with the
+  selected currency and precision.
+- Projections and annualized price-increase impacts share the same effective recurrence
+  multiplier rules (after applying any valid user recurrence override): weekly × 52,
+  fortnightly × 26, monthly/resumed/trial-converted × 12, quarterly × 4, half-yearly × 2,
+  yearly × 1, and irregular × 3 estimated cycles (`ESTIMATED`). Variable utilities use
+  their eligible historical debit average × effective annual frequency and do not report
+  synthetic contractual price increases. One-time and unknown-recurrence commitments
+  return `null` (`UNAVAILABLE`) for recurring annual projections and annual price-increase
+  impacts rather than defaulting to monthly. Derived divisions use half-up minor-unit
+  rounding (`BigInt`), and legacy numeric fields return `null` when minor units exceed
+  JavaScript's safe integer range (`Number.MAX_SAFE_INTEGER`).
 - Scheduling uses calendar-aware dates: weekly and fortnightly add 7/14 days, while
   monthly, quarterly, half-yearly and yearly schedules add calendar months/years with
   safe month-end clamping. Irregular and one-time commitments have no invented next
-  payment date. A valid user recurrence override recalculates both schedule and exact
-  projections; an explicit user next-payment date is preserved.
+  payment date. A valid user recurrence override recalculates schedule, exact projections,
+  and annualized price-increase impact; `PATCH /api/commitments/:id` strictly validates
+  `nextExpectedDate` (and `lastUsedDate`) as a real `YYYY-MM-DD` calendar date (including
+  leap-year rules), clears the date override when `null` is passed, leaves it unchanged when
+  omitted, and atomically rejects invalid payloads (`400 INVALID_CALENDAR_DATE`) without
+  partial state mutation.
 - One-time commitments remain visible in transaction history but are excluded from
   recurring dashboard totals. Recurring records with unavailable projections are
-  reported as incomplete rather than treated as zero. Variable utilities continue to
-  use their eligible historical debit average even when frequency is overridden.
-  Dashboard summaries expose counts for excluded one-time commitments and incomplete
-  recurring projections so an exact total is not mistaken for a complete population
-  when some recurring records are unavailable.
+  reported as incomplete rather than treated as zero. When some recurring projections are
+  incomplete, the dashboard labels the figure as a **Known monthly recurring subtotal**
+  (`PARTIAL`) and discloses the included recurring count, excluded one-time count, and
+  projections needing review. When all recurring commitments have unavailable projections,
+  recurring totals are returned as `null` (`Amount unavailable`) rather than a fabricated zero.
 - Mixed currencies are kept in separate buckets or reported as unavailable. No exchange-rate
   conversion is performed.
 

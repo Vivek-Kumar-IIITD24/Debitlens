@@ -36,11 +36,15 @@ import {
   previewCsvMapping,
   parseAllMappedCsvRows,
   computeCanonicalCsvRowFingerprint,
+  buildDashboardCurrencySummaries,
+  formatRecurringSummaryDisclosure,
+  safeMinorToLegacyMajorNumber,
 } from './src/engine/debitlensEngine';
 import {
   normalizeDateString,
   getRuntimeDateISO,
   getDynamicMonthWindow,
+  isStrictValidIsoDate,
 } from './src/utils/dateUtils';
 import {
   MERCHANT_CATALOGUE,
@@ -1843,121 +1847,17 @@ app.get('/api/dashboard/summary', (req, res) => {
     : null;
   const primaryCurrency = requestedCurrency || primaryDisplayCurrency || 'INR';
 
-  const totalsByCurrency: Record<
-    string,
-    {
-      currency: string;
-      currencyStatus: 'SUPPORTED' | 'UNSUPPORTED' | 'UNKNOWN';
-      monthlyRecurringSpend: number;
-      monthlyRecurringSpendExact: string | null;
-      annualCommitmentTotal: number;
-      annualCommitmentTotalExact: string | null;
-      discretionaryAnnual: number;
-      discretionaryAnnualExact: string | null;
-      obligationAnnual: number;
-      obligationAnnualExact: string | null;
-      activeCommitmentsCount: number;
-      oneTimeCommitmentsExcludedCount: number;
-      incompleteRecurringProjectionCount: number;
-    }
-  > = {};
-
-  for (const c of activeCommitments) {
-    const rawCurr =
-      c.currency !== undefined && c.currency !== null ? String(c.currency).trim().toUpperCase() : '';
-    const isUnknown = isUnknownCurrency(rawCurr);
-    const isSupported = !isUnknown && isValidCurrencyCode(rawCurr);
-    const currKey = isUnknown ? UNKNOWN_CURRENCY : rawCurr;
-    const currencyStatus: 'SUPPORTED' | 'UNSUPPORTED' | 'UNKNOWN' = isUnknown
-      ? 'UNKNOWN'
-      : isSupported
-      ? 'SUPPORTED'
-      : 'UNSUPPORTED';
-
-    if (!totalsByCurrency[currKey]) {
-      totalsByCurrency[currKey] = {
-        currency: currKey,
-        currencyStatus,
-        monthlyRecurringSpend: 0,
-        monthlyRecurringSpendExact: '0',
-        annualCommitmentTotal: 0,
-        annualCommitmentTotalExact: '0',
-        discretionaryAnnual: 0,
-        discretionaryAnnualExact: '0',
-        obligationAnnual: 0,
-        obligationAnnualExact: '0',
-        activeCommitmentsCount: 0,
-        oneTimeCommitmentsExcludedCount: 0,
-        incompleteRecurringProjectionCount: 0,
-      };
-    }
-    const bucket = totalsByCurrency[currKey];
-    const addExact = (current: string | null, value: string | null | undefined): string | null =>
-      current !== null && value !== null && value !== undefined
-        ? (BigInt(current) + BigInt(value)).toString()
-        : null;
-    bucket.activeCommitmentsCount += 1;
-    if (c.recurrenceType === 'ONE_TIME') {
-      bucket.oneTimeCommitmentsExcludedCount += 1;
-      continue;
-    }
-    if (
-      c.projectionClassification === 'UNAVAILABLE' ||
-      c.monthlyEquivalentExact === null ||
-      c.annualisedAmountExact === null ||
-      c.monthlyEquivalentExact === undefined ||
-      c.annualisedAmountExact === undefined
-    ) {
-      bucket.incompleteRecurringProjectionCount += 1;
-      continue;
-    }
-    bucket.monthlyRecurringSpendExact = addExact(
-      bucket.monthlyRecurringSpendExact,
-      c.monthlyEquivalentExact
-    );
-    bucket.annualCommitmentTotalExact = addExact(
-      bucket.annualCommitmentTotalExact,
-      c.annualisedAmountExact
-    );
-    if (c.isFinancialObligation) {
-      bucket.obligationAnnualExact = addExact(
-        bucket.obligationAnnualExact,
-        c.annualisedAmountExact
-      );
-    } else {
-      bucket.discretionaryAnnualExact = addExact(
-        bucket.discretionaryAnnualExact,
-        c.annualisedAmountExact
-      );
-    }
-    if (c.monthlyEquivalent !== null) {
-      bucket.monthlyRecurringSpend = Number(
-        (bucket.monthlyRecurringSpend + c.monthlyEquivalent).toFixed(2)
-      );
-    }
-    if (c.annualisedAmount !== null) {
-      bucket.annualCommitmentTotal = Number(
-        (bucket.annualCommitmentTotal + c.annualisedAmount).toFixed(2)
-      );
-    }
-    if (c.isFinancialObligation) {
-      if (c.annualisedAmount !== null) {
-        bucket.obligationAnnual = Number(
-          (bucket.obligationAnnual + c.annualisedAmount).toFixed(2)
-        );
-      }
-    } else {
-      if (c.annualisedAmount !== null) {
-        bucket.discretionaryAnnual = Number(
-          (bucket.discretionaryAnnual + c.annualisedAmount).toFixed(2)
-        );
-      }
-    }
-  }
-
+  const totalsByCurrency = buildDashboardCurrencySummaries(activeCommitments);
+  const emptyPrimaryDisclosure = formatRecurringSummaryDisclosure({
+    includedRecurringCount: 0,
+    oneTimeCommitmentsExcludedCount: 0,
+    incompleteRecurringProjectionCount: 0,
+    currencyStatus: 'SUPPORTED',
+  });
   const primaryBucket = totalsByCurrency[primaryCurrency] || {
     currency: primaryCurrency,
     currencyStatus: 'SUPPORTED' as const,
+    currencyPrecision: getCurrencyDecimalsOrNull(primaryCurrency),
     monthlyRecurringSpend: 0,
     monthlyRecurringSpendExact: '0',
     annualCommitmentTotal: 0,
@@ -1967,8 +1867,14 @@ app.get('/api/dashboard/summary', (req, res) => {
     obligationAnnual: 0,
     obligationAnnualExact: '0',
     activeCommitmentsCount: 0,
+    includedRecurringCount: 0,
     oneTimeCommitmentsExcludedCount: 0,
     incompleteRecurringProjectionCount: 0,
+    aggregationCompleteness: emptyPrimaryDisclosure.aggregationCompleteness,
+    isCompleteAggregate: emptyPrimaryDisclosure.isCompleteAggregate,
+    recurringKpiLabel: emptyPrimaryDisclosure.recurringKpiLabel,
+    annualKpiLabel: emptyPrimaryDisclosure.annualKpiLabel,
+    disclosureText: emptyPrimaryDisclosure.disclosureText,
   };
 
   const priceChangeAlertsCount = state.alerts.filter(
@@ -2013,13 +1919,25 @@ app.get('/api/dashboard/summary', (req, res) => {
         transaction.direction === 'DEBIT' && transaction.resolutionStatus === 'UNRESOLVED'
     )
     .reduce((sum, transaction) => sum + BigInt(transaction.amountMinorExact!), 0n);
-  const exactMinorToLegacyAmount = (minor: bigint): number | null =>
-    minor <= BigInt(Number.MAX_SAFE_INTEGER) && minor >= BigInt(Number.MIN_SAFE_INTEGER)
-      ? fromMinorUnitsStrict(Number(minor), primaryCurrency)
-      : null;
+
+  const totalOneTimeExcluded = currencySummaries.reduce(
+    (sum, summary) => sum + summary.oneTimeCommitmentsExcludedCount,
+    0
+  );
+  const totalIncompleteProjections = currencySummaries.reduce(
+    (sum, summary) => sum + summary.incompleteRecurringProjectionCount,
+    0
+  );
+  const topLevelDisclosure = formatRecurringSummaryDisclosure({
+    includedRecurringCount: primaryBucket.includedRecurringCount,
+    oneTimeCommitmentsExcludedCount: totalOneTimeExcluded,
+    incompleteRecurringProjectionCount: totalIncompleteProjections,
+    currencyStatus: primaryBucket.currencyStatus,
+  });
 
   res.json({
     primaryCurrency,
+    currencyPrecision: primaryBucket.currencyPrecision,
     monthlyRecurringSpend: primaryBucket.monthlyRecurringSpend,
     monthlyRecurringSpendExact: primaryBucket.monthlyRecurringSpendExact,
     annualCommitmentTotal: primaryBucket.annualCommitmentTotal,
@@ -2033,19 +1951,22 @@ app.get('/api/dashboard/summary', (req, res) => {
     unknownCurrencyCommitmentsCount,
     unknownCurrencyTransactionsCount: unknownCurrencyTxnsCount,
     excludedUnknownCurrencyCount,
-    oneTimeCommitmentsExcludedCount: currencySummaries.reduce(
-      (sum, summary) => sum + summary.oneTimeCommitmentsExcludedCount,
-      0
-    ),
-    incompleteRecurringProjectionCount: currencySummaries.reduce(
-      (sum, summary) => sum + summary.incompleteRecurringProjectionCount,
-      0
-    ),
+    includedRecurringCount: primaryBucket.includedRecurringCount,
+    oneTimeCommitmentsExcludedCount: totalOneTimeExcluded,
+    incompleteRecurringProjectionCount: totalIncompleteProjections,
+    aggregationCompleteness: topLevelDisclosure.aggregationCompleteness,
+    isCompleteAggregate: topLevelDisclosure.isCompleteAggregate,
+    recurringKpiLabel: topLevelDisclosure.recurringKpiLabel,
+    annualKpiLabel: topLevelDisclosure.annualKpiLabel,
+    disclosureText: topLevelDisclosure.disclosureText,
     unsupportedCurrenciesCount,
     isMultiCurrency: currencySummaries.length > 1,
-    totalDebitAmount: exactMinorToLegacyAmount(totalDebitAmountExact),
+    totalDebitAmount: safeMinorToLegacyMajorNumber(totalDebitAmountExact, primaryCurrency),
     totalDebitAmountExact: totalDebitAmountExact.toString(),
-    unresolvedDebitAmount: exactMinorToLegacyAmount(unresolvedDebitAmountExact),
+    unresolvedDebitAmount: safeMinorToLegacyMajorNumber(
+      unresolvedDebitAmountExact,
+      primaryCurrency
+    ),
     unresolvedDebitAmountExact: unresolvedDebitAmountExact.toString(),
     activeCommitmentsCount: activeCommitments.length,
     totalCommitmentsCount: state.commitments.length,
@@ -2556,18 +2477,26 @@ app.post('/api/commitments/:id/reject', async (req, res) => {
 // Section 15: Edit commitment fields (typicalAmount, expectedAmountMinor, recurrenceType, nextExpectedDate, lastUsedDate)
 app.patch('/api/commitments/:id', async (req, res) => {
   const id = req.params.id;
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+    res.status(400).json({
+      error: 'Request body must be a JSON object.',
+      code: 'INVALID_PAYLOAD',
+    });
+    return;
+  }
+
   const {
     typicalAmount,
     expectedAmountMinor,
     recurrenceType,
     nextExpectedDate,
     lastUsedDate,
-  } = (req.body || {}) as {
-    typicalAmount?: number;
-    expectedAmountMinor?: number;
-    recurrenceType?: RecurrenceFrequency | null;
-    nextExpectedDate?: string | null;
-    lastUsedDate?: string | null;
+  } = req.body as {
+    typicalAmount?: unknown;
+    expectedAmountMinor?: unknown;
+    recurrenceType?: unknown;
+    nextExpectedDate?: unknown;
+    lastUsedDate?: unknown;
   };
 
   const validOverrideFrequencies: RecurrenceFrequency[] = [
@@ -2583,11 +2512,61 @@ app.patch('/api/commitments/:id', async (req, res) => {
   if (
     recurrenceType !== undefined &&
     recurrenceType !== null &&
-    !validOverrideFrequencies.includes(recurrenceType)
+    (typeof recurrenceType !== 'string' ||
+      !validOverrideFrequencies.includes(recurrenceType as RecurrenceFrequency))
   ) {
     res.status(400).json({
       error: 'Invalid recurrenceType override',
       code: 'INVALID_RECURRENCE_FREQUENCY',
+    });
+    return;
+  }
+
+  if (
+    nextExpectedDate !== undefined &&
+    nextExpectedDate !== null &&
+    (typeof nextExpectedDate !== 'string' || !isStrictValidIsoDate(nextExpectedDate))
+  ) {
+    res.status(400).json({
+      error: 'Invalid nextExpectedDate: must be a valid YYYY-MM-DD calendar date or null.',
+      code: 'INVALID_CALENDAR_DATE',
+    });
+    return;
+  }
+
+  if (
+    lastUsedDate !== undefined &&
+    lastUsedDate !== null &&
+    (typeof lastUsedDate !== 'string' || !isStrictValidIsoDate(lastUsedDate))
+  ) {
+    res.status(400).json({
+      error: 'Invalid lastUsedDate: must be a valid YYYY-MM-DD calendar date or null.',
+      code: 'INVALID_CALENDAR_DATE',
+    });
+    return;
+  }
+
+  if (
+    typicalAmount !== undefined &&
+    (typeof typicalAmount !== 'number' || !Number.isFinite(typicalAmount) || typicalAmount < 0)
+  ) {
+    res.status(400).json({
+      error: 'Invalid typicalAmount: must be a non-negative finite number.',
+      code: 'INVALID_AMOUNT',
+    });
+    return;
+  }
+
+  if (
+    expectedAmountMinor !== undefined &&
+    (typeof expectedAmountMinor !== 'number' ||
+      !Number.isFinite(expectedAmountMinor) ||
+      !Number.isInteger(expectedAmountMinor) ||
+      expectedAmountMinor < 0)
+  ) {
+    res.status(400).json({
+      error: 'Invalid expectedAmountMinor: must be a non-negative integer.',
+      code: 'INVALID_AMOUNT',
     });
     return;
   }
@@ -2598,17 +2577,25 @@ app.patch('/api/commitments/:id', async (req, res) => {
     if (recurrenceType === null) {
       delete nextOverride.recurrenceTypeOverride;
     } else if (recurrenceType !== undefined) {
-      nextOverride.recurrenceTypeOverride = recurrenceType;
+      nextOverride.recurrenceTypeOverride = recurrenceType as RecurrenceFrequency;
     }
-    userCommitmentOverrides[id] = {
-      ...nextOverride,
-      ...(typicalAmount !== undefined ? { typicalAmountOverride: Number(typicalAmount) } : {}),
-      ...(expectedAmountMinor !== undefined
-        ? { expectedAmountMinorOverride: Number(expectedAmountMinor) }
-        : {}),
-      ...(nextExpectedDate !== undefined ? { nextExpectedDateOverride: nextExpectedDate } : {}),
-      ...(lastUsedDate !== undefined ? { lastUsedDate } : {}),
-    };
+    if (nextExpectedDate === null) {
+      delete nextOverride.nextExpectedDateOverride;
+    } else if (nextExpectedDate !== undefined) {
+      nextOverride.nextExpectedDateOverride = nextExpectedDate as string;
+    }
+    if (lastUsedDate === null) {
+      nextOverride.lastUsedDate = null;
+    } else if (lastUsedDate !== undefined) {
+      nextOverride.lastUsedDate = lastUsedDate as string;
+    }
+    if (typicalAmount !== undefined) {
+      nextOverride.typicalAmountOverride = Number(typicalAmount);
+    }
+    if (expectedAmountMinor !== undefined) {
+      nextOverride.expectedAmountMinorOverride = Number(expectedAmountMinor);
+    }
+    userCommitmentOverrides[id] = nextOverride;
 
     recordAuditEvent({
       commitmentId: id,
@@ -2626,12 +2613,23 @@ app.patch('/api/commitments/:id', async (req, res) => {
 });
 
 app.patch('/api/commitments/:id/usage', async (req, res) => {
-  const { lastUsedDate } = req.body as { lastUsedDate: string | null };
+  const { lastUsedDate } = (req.body || {}) as { lastUsedDate?: unknown };
   const id = req.params.id;
+  if (
+    lastUsedDate !== undefined &&
+    lastUsedDate !== null &&
+    (typeof lastUsedDate !== 'string' || !isStrictValidIsoDate(lastUsedDate))
+  ) {
+    res.status(400).json({
+      error: 'Invalid lastUsedDate: must be a valid YYYY-MM-DD calendar date or null.',
+      code: 'INVALID_CALENDAR_DATE',
+    });
+    return;
+  }
   await executeSerializedMutation(res, () => {
     userCommitmentOverrides[id] = {
       ...(userCommitmentOverrides[id] || {}),
-      lastUsedDate,
+      lastUsedDate: (lastUsedDate as string | null) ?? null,
     };
     const state = computeCurrentState();
     return {
@@ -5746,7 +5744,7 @@ async function startServer() {
   }
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa',
     });
     app.use(vite.middlewares);

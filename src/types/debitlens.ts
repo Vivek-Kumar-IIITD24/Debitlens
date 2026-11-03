@@ -343,6 +343,7 @@ export interface CommitmentRecord {
   observedFrequency?: RecurrenceFrequency;
   recurrenceIntervalDays: number | null;
   typicalAmount: number;
+  typicalAmountMinorExact?: string | null;
   expectedAmountMinor?: number | null;
   latestAmount: number;
   latestAmountMinor?: number | null;
@@ -379,6 +380,8 @@ export interface CommitmentRecord {
   priceChangeAmountExact?: string | null;
   priceChangePercent: number | null;
   annualPriceIncreaseImpact: number | null;
+  annualPriceIncreaseImpactExact?: string | null;
+  annualPriceIncreaseClassification?: 'ACTUAL_DERIVED' | 'ESTIMATED' | 'UNAVAILABLE';
   trialConverted: boolean;
   trialNotificationId: string | null;
   resumedAfterGap: boolean;
@@ -422,6 +425,8 @@ export interface DetectionAlertRecord {
   previousValue: string | null;
   percentageChange: number | null;
   annualImpact: number | null;
+  annualImpactExact?: string | null;
+  annualImpactClassification?: 'ACTUAL_DERIVED' | 'ESTIMATED' | 'UNAVAILABLE';
   currency?: string;
   evidenceReference: string;
   suggestedAction: string;

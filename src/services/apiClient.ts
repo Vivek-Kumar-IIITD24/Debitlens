@@ -45,28 +45,36 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 export interface CurrencyCommitmentSummary {
   currency: string;
   currencyStatus?: 'SUPPORTED' | 'UNSUPPORTED' | 'UNKNOWN';
-  monthlyRecurringSpend: number;
+  currencyPrecision?: number | null;
+  monthlyRecurringSpend: number | null;
   monthlyRecurringSpendExact?: string | null;
-  annualCommitmentTotal: number;
+  annualCommitmentTotal: number | null;
   annualCommitmentTotalExact?: string | null;
-  discretionaryAnnual: number;
+  discretionaryAnnual: number | null;
   discretionaryAnnualExact?: string | null;
-  obligationAnnual: number;
+  obligationAnnual: number | null;
   obligationAnnualExact?: string | null;
   activeCommitmentsCount: number;
+  includedRecurringCount?: number;
   oneTimeCommitmentsExcludedCount?: number;
   incompleteRecurringProjectionCount?: number;
+  aggregationCompleteness?: 'COMPLETE' | 'PARTIAL' | 'UNAVAILABLE';
+  isCompleteAggregate?: boolean;
+  recurringKpiLabel?: string;
+  annualKpiLabel?: string;
+  disclosureText?: string;
 }
 
 export interface DashboardSummaryData {
   primaryCurrency?: string;
-  monthlyRecurringSpend: number;
+  currencyPrecision?: number | null;
+  monthlyRecurringSpend: number | null;
   monthlyRecurringSpendExact?: string | null;
-  annualCommitmentTotal: number;
+  annualCommitmentTotal: number | null;
   annualCommitmentTotalExact?: string | null;
-  discretionaryAnnual: number;
+  discretionaryAnnual: number | null;
   discretionaryAnnualExact?: string | null;
-  obligationAnnual: number;
+  obligationAnnual: number | null;
   obligationAnnualExact?: string | null;
   totalsByCurrency?: Record<string, CurrencyCommitmentSummary>;
   currencySummaries?: CurrencyCommitmentSummary[];
@@ -77,8 +85,14 @@ export interface DashboardSummaryData {
   unresolvedDebitAmountExact?: string | null;
   unknownCurrencyTransactionsCount?: number;
   excludedUnknownCurrencyCount?: number;
+  includedRecurringCount?: number;
   oneTimeCommitmentsExcludedCount?: number;
   incompleteRecurringProjectionCount?: number;
+  aggregationCompleteness?: 'COMPLETE' | 'PARTIAL' | 'UNAVAILABLE';
+  isCompleteAggregate?: boolean;
+  recurringKpiLabel?: string;
+  annualKpiLabel?: string;
+  disclosureText?: string;
   unsupportedCurrenciesCount?: number;
   isMultiCurrency?: boolean;
   activeCommitmentsCount: number;

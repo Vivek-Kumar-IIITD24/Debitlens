@@ -424,9 +424,9 @@ export default function App() {
   ];
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 overflow-x-hidden">
+    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 overflow-x-clip">
       {/* Top Header */}
-      <header className="flex items-center justify-between gap-4 px-4 sm:px-6 py-3 bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+      <header className="flex items-center justify-between gap-4 px-4 sm:px-6 py-3 bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs">
         {/* Left: Mobile Menu Toggle + Wordmark */}
         <div className="flex items-center gap-3 shrink-0">
           <button
@@ -836,27 +836,62 @@ export default function App() {
 
               {/* Primary KPI Summary Strip (6 Cards) */}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-                <div className="p-4 rounded-xl bg-white border border-slate-200">
-                  <div className="text-xs text-slate-500">Monthly Equivalent</div>
-                  <div className="text-xl font-mono font-bold text-slate-900 mt-1 tabular-nums">
-                    {summary.monthlyRecurringSpendExact !== null &&
-                    summary.monthlyRecurringSpendExact !== undefined
+                <div
+                  className="p-4 rounded-xl bg-white border border-slate-200"
+                  data-testid="kpi-monthly-recurring"
+                >
+                  <div className="text-xs font-medium text-slate-600" data-testid="kpi-monthly-label">
+                    {summary.recurringKpiLabel ||
+                      ((summary.incompleteRecurringProjectionCount ?? 0) > 0 &&
+                      (summary.includedRecurringCount ?? 0) > 0
+                        ? 'Known monthly recurring subtotal'
+                        : 'Monthly recurring commitments')}
+                  </div>
+                  <div
+                    className="text-xl font-mono font-bold text-slate-900 mt-1 tabular-nums"
+                    data-testid="kpi-monthly-value"
+                  >
+                    {summary.aggregationCompleteness === 'UNAVAILABLE' ||
+                    (summary.monthlyRecurringSpendExact === null &&
+                      summary.monthlyRecurringSpend === null)
+                      ? 'Amount unavailable'
+                      : summary.monthlyRecurringSpendExact !== null &&
+                        summary.monthlyRecurringSpendExact !== undefined
                       ? formatMinorUnitsExact(
                           summary.monthlyRecurringSpendExact,
                           summary.primaryCurrency || null
                         )
                       : formatINR(summary.monthlyRecurringSpend, summary.primaryCurrency || 'INR')}
                   </div>
-                  <div className="text-[11px] text-slate-500 mt-1">
-                    Across {summary.activeCommitmentsCount} active commitments
+                  <div
+                    className="text-[11px] text-slate-600 mt-1 leading-snug"
+                    data-testid="dashboard-recurring-disclosure"
+                  >
+                    {summary.disclosureText ||
+                      `Recurring total includes ${
+                        summary.includedRecurringCount ?? summary.activeCommitmentsCount
+                      } ${
+                        (summary.includedRecurringCount ?? summary.activeCommitmentsCount) === 1
+                          ? 'commitment'
+                          : 'commitments'
+                      }.`}
                   </div>
                 </div>
 
-                <div className="p-4 rounded-xl bg-white border border-slate-200">
-                  <div className="text-xs text-slate-500">Projected Annual Total</div>
+                <div
+                  className="p-4 rounded-xl bg-white border border-slate-200"
+                  data-testid="kpi-annual-recurring"
+                >
+                  <div className="text-xs font-medium text-slate-600">
+                    {summary.annualKpiLabel || 'Projected Annual Total'}
+                  </div>
                   <div className="text-xl font-mono font-bold text-teal-800 mt-1 tabular-nums">
-                    {summary.annualCommitmentTotalExact !== null &&
-                    summary.annualCommitmentTotalExact !== undefined
+                    {summary.aggregationCompleteness === 'UNAVAILABLE' ||
+                    (summary.annualCommitmentTotalExact === null &&
+                      summary.annualCommitmentTotal === null)
+                      ? 'Amount unavailable'
+                      : summary.annualCommitmentTotalExact !== null &&
+                        summary.annualCommitmentTotalExact !== undefined
                       ? formatMinorUnitsExact(
                           summary.annualCommitmentTotalExact,
                           summary.primaryCurrency || null
@@ -864,21 +899,26 @@ export default function App() {
                       : formatINR(summary.annualCommitmentTotal, summary.primaryCurrency || 'INR')}
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
-                    Includes annual & quarterly
+                    One-time excluded: {summary.oneTimeCommitmentsExcludedCount ?? 0} · Projections needing review: {summary.incompleteRecurringProjectionCount ?? 0}
                   </div>
                 </div>
 
                 <div className="p-4 rounded-xl bg-white border border-slate-200">
                   <div className="text-xs text-slate-500">Discretionary Subscriptions</div>
                   <div className="text-xl font-mono font-bold text-slate-900 mt-1 tabular-nums">
-                    {summary.discretionaryAnnualExact !== null &&
-                    summary.discretionaryAnnualExact !== undefined
-                      ? formatMinorUnitsExact(
-                          summary.discretionaryAnnualExact,
-                          summary.primaryCurrency || null
-                        )
-                      : formatINR(summary.discretionaryAnnual, summary.primaryCurrency || 'INR')}
-                    /yr
+                    {summary.aggregationCompleteness === 'UNAVAILABLE' ||
+                    (summary.discretionaryAnnualExact === null &&
+                      summary.discretionaryAnnual === null)
+                      ? 'Amount unavailable'
+                      : `${
+                          summary.discretionaryAnnualExact !== null &&
+                          summary.discretionaryAnnualExact !== undefined
+                            ? formatMinorUnitsExact(
+                                summary.discretionaryAnnualExact,
+                                summary.primaryCurrency || null
+                              )
+                            : formatINR(summary.discretionaryAnnual, summary.primaryCurrency || 'INR')
+                        }/yr`}
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
                     OTT, music, cloud, fitness
@@ -888,14 +928,18 @@ export default function App() {
                 <div className="p-4 rounded-xl bg-white border border-slate-200">
                   <div className="text-xs text-slate-500">Contractual Obligations</div>
                   <div className="text-xl font-mono font-bold text-slate-900 mt-1 tabular-nums">
-                    {summary.obligationAnnualExact !== null &&
-                    summary.obligationAnnualExact !== undefined
-                      ? formatMinorUnitsExact(
-                          summary.obligationAnnualExact,
-                          summary.primaryCurrency || null
-                        )
-                      : formatINR(summary.obligationAnnual, summary.primaryCurrency || 'INR')}
-                    /yr
+                    {summary.aggregationCompleteness === 'UNAVAILABLE' ||
+                    (summary.obligationAnnualExact === null && summary.obligationAnnual === null)
+                      ? 'Amount unavailable'
+                      : `${
+                          summary.obligationAnnualExact !== null &&
+                          summary.obligationAnnualExact !== undefined
+                            ? formatMinorUnitsExact(
+                                summary.obligationAnnualExact,
+                                summary.primaryCurrency || null
+                              )
+                            : formatINR(summary.obligationAnnual, summary.primaryCurrency || 'INR')
+                        }/yr`}
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
                     Loan EMI, insurance, utility
@@ -935,16 +979,21 @@ export default function App() {
                         className="px-2.5 py-1 rounded-md bg-white border border-slate-200 text-slate-800"
                       >
                         <strong>{cs.currency}:</strong>{' '}
-                        {cs.monthlyRecurringSpendExact !== null &&
-                        cs.monthlyRecurringSpendExact !== undefined
-                          ? formatMinorUnitsExact(cs.monthlyRecurringSpendExact, cs.currency)
-                          : formatINR(cs.monthlyRecurringSpend, cs.currency)}
-                        /mo ·{' '}
-                        {cs.annualCommitmentTotalExact !== null &&
-                        cs.annualCommitmentTotalExact !== undefined
-                          ? formatMinorUnitsExact(cs.annualCommitmentTotalExact, cs.currency)
-                          : formatINR(cs.annualCommitmentTotal, cs.currency)}
-                        /yr ({cs.activeCommitmentsCount} active)
+                        {cs.aggregationCompleteness === 'UNAVAILABLE' ||
+                        (cs.monthlyRecurringSpendExact === null && cs.monthlyRecurringSpend === null)
+                          ? 'Amount unavailable'
+                          : `${
+                              cs.monthlyRecurringSpendExact !== null &&
+                              cs.monthlyRecurringSpendExact !== undefined
+                                ? formatMinorUnitsExact(cs.monthlyRecurringSpendExact, cs.currency)
+                                : formatINR(cs.monthlyRecurringSpend, cs.currency)
+                            }/mo · ${
+                              cs.annualCommitmentTotalExact !== null &&
+                              cs.annualCommitmentTotalExact !== undefined
+                                ? formatMinorUnitsExact(cs.annualCommitmentTotalExact, cs.currency)
+                                : formatINR(cs.annualCommitmentTotal, cs.currency)
+                            }/yr`}{' '}
+                        ({cs.disclosureText || `${cs.activeCommitmentsCount} active`})
                       </span>
                     ))}
                   </div>
@@ -1141,7 +1190,20 @@ export default function App() {
                               : formatINR(c.latestAmount, c.currency)}
                             {c.priceChangeDetected && (
                               <div className="text-[10px] text-rose-700">
-                                +{c.priceChangePercent}% vs {formatINR(c.typicalAmount, c.currency)}
+                                +{c.priceChangePercent}% vs{' '}
+                                {c.typicalAmountMinorExact
+                                  ? formatMinorUnitsExact(c.typicalAmountMinorExact, c.currency)
+                                  : formatINR(c.typicalAmount, c.currency)}
+                                {c.annualPriceIncreaseImpactExact
+                                  ? ` (+${formatMinorUnitsExact(
+                                      c.annualPriceIncreaseImpactExact,
+                                      c.currency
+                                    )}/yr${
+                                      c.annualPriceIncreaseClassification === 'ESTIMATED'
+                                        ? ' est.'
+                                        : ''
+                                    })`
+                                  : ''}
                               </div>
                             )}
                           </td>

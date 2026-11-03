@@ -45,6 +45,7 @@ import {
   formatMinorUnitsExact,
   roundDivideBigInt,
   fromMinorUnitsStrict,
+  getCurrencyDecimalsOrNull,
   isValidCurrencyCode,
   normalizeCurrencyCode,
   resolveTransactionCurrency,
@@ -716,6 +717,39 @@ function median(values: number[]): number {
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+export function getRecurrenceAnnualMultiplier(recurrenceType: RecurrenceFrequency): bigint | null {
+  switch (recurrenceType) {
+    case 'WEEKLY':
+      return 52n;
+    case 'FORTNIGHTLY':
+      return 26n;
+    case 'MONTHLY':
+    case 'RESUMED':
+    case 'TRIAL_CONVERTED':
+      return 12n;
+    case 'QUARTERLY':
+      return 4n;
+    case 'HALF_YEARLY':
+      return 2n;
+    case 'YEARLY':
+      return 1n;
+    case 'IRREGULAR':
+      return 3n;
+    case 'ONE_TIME':
+    case 'UNKNOWN':
+    default:
+      return null;
+  }
+}
+
+export function safeMinorToLegacyMajorNumber(minor: bigint | null, currency: string): number | null {
+  if (minor === null) return null;
+  if (minor > BigInt(Number.MAX_SAFE_INTEGER) || minor < BigInt(Number.MIN_SAFE_INTEGER)) {
+    return null;
+  }
+  return fromMinorUnitsStrict(Number(minor), currency);
+}
+
 export interface ExactProjectionResult {
   annualisedAmount: number | null;
   annualisedAmountExact: string | null;
@@ -739,6 +773,7 @@ export function calculateExactProjection(params: {
     currency,
     variableUtility,
   } = params;
+  const currencyDecimals = getCurrencyDecimalsOrNull(currency);
   const averageMinor =
     eligibleHistoricalMinors.length > 0
       ? roundDivideBigInt(
@@ -749,6 +784,8 @@ export function calculateExactProjection(params: {
   const usesAverage = variableUtility;
   const baseMinor = usesAverage ? averageMinor : latestMinor;
   if (
+    currencyDecimals === null ||
+    isUnknownCurrency(currency) ||
     baseMinor === null ||
     recurrenceType === 'ONE_TIME' ||
     recurrenceType === 'UNKNOWN'
@@ -763,22 +800,7 @@ export function calculateExactProjection(params: {
     };
   }
 
-  const multiplier =
-    recurrenceType === 'WEEKLY'
-      ? 52n
-      : recurrenceType === 'FORTNIGHTLY'
-      ? 26n
-      : recurrenceType === 'MONTHLY' || recurrenceType === 'RESUMED' || recurrenceType === 'TRIAL_CONVERTED'
-      ? 12n
-      : recurrenceType === 'QUARTERLY'
-      ? 4n
-      : recurrenceType === 'HALF_YEARLY'
-      ? 2n
-      : recurrenceType === 'YEARLY'
-      ? 1n
-      : recurrenceType === 'IRREGULAR'
-      ? 3n
-      : null;
+  const multiplier = getRecurrenceAnnualMultiplier(recurrenceType);
   if (multiplier === null) {
     return {
       annualisedAmount: null,
@@ -792,22 +814,344 @@ export function calculateExactProjection(params: {
 
   const annualMinor = baseMinor * multiplier;
   const monthlyMinor = roundDivideBigInt(annualMinor, 12n);
-  const toLegacy = (minor: bigint): number | null =>
-    fromMinorUnitsStrict(
-      minor <= BigInt(Number.MAX_SAFE_INTEGER) && minor >= BigInt(Number.MIN_SAFE_INTEGER)
-        ? Number(minor)
-        : Number.NaN,
-      currency
-    );
   return {
-    annualisedAmount: toLegacy(annualMinor),
+    annualisedAmount: safeMinorToLegacyMajorNumber(annualMinor, currency),
     annualisedAmountExact: annualMinor.toString(),
-    monthlyEquivalent: toLegacy(monthlyMinor),
+    monthlyEquivalent: safeMinorToLegacyMajorNumber(monthlyMinor, currency),
     monthlyEquivalentExact: monthlyMinor.toString(),
     averageDebitAmountExact: averageMinor?.toString() ?? null,
     classification:
       recurrenceType === 'IRREGULAR' || usesAverage ? 'ESTIMATED' : 'ACTUAL_DERIVED',
   };
+}
+
+export interface ExactPriceIncreaseResult {
+  priceChangeDetected: boolean;
+  priceChangeAmount: number | null;
+  priceChangeAmountExact: string | null;
+  priceChangePercent: number | null;
+  annualPriceIncreaseImpact: number | null;
+  annualPriceIncreaseImpactExact: string | null;
+  annualPriceIncreaseClassification: 'ACTUAL_DERIVED' | 'ESTIMATED' | 'UNAVAILABLE';
+}
+
+export function calculateExactPriceIncrease(params: {
+  effectiveRecurrence: RecurrenceFrequency;
+  typicalMinor: bigint | null;
+  latestMinor: bigint | null;
+  currency: string;
+  variableUtility: boolean;
+  currenciesMatch?: boolean;
+  hasEvidence?: boolean;
+}): ExactPriceIncreaseResult {
+  const {
+    effectiveRecurrence,
+    typicalMinor,
+    latestMinor,
+    currency,
+    variableUtility,
+    currenciesMatch = true,
+    hasEvidence = true,
+  } = params;
+  const currencyDecimals = getCurrencyDecimalsOrNull(currency);
+  if (
+    !currenciesMatch ||
+    !hasEvidence ||
+    currencyDecimals === null ||
+    isUnknownCurrency(currency) ||
+    variableUtility ||
+    typicalMinor === null ||
+    latestMinor === null ||
+    typicalMinor <= 0n ||
+    effectiveRecurrence === 'ONE_TIME'
+  ) {
+    return {
+      priceChangeDetected: false,
+      priceChangeAmount: null,
+      priceChangeAmountExact: null,
+      priceChangePercent: null,
+      annualPriceIncreaseImpact: null,
+      annualPriceIncreaseImpactExact: null,
+      annualPriceIncreaseClassification: 'UNAVAILABLE',
+    };
+  }
+
+  const priceChangeMinor = latestMinor - typicalMinor;
+  if (priceChangeMinor <= 0n) {
+    return {
+      priceChangeDetected: false,
+      priceChangeAmount: null,
+      priceChangeAmountExact: null,
+      priceChangePercent: null,
+      annualPriceIncreaseImpact: null,
+      annualPriceIncreaseImpactExact: null,
+      annualPriceIncreaseClassification: 'UNAVAILABLE',
+    };
+  }
+
+  const priceChangeAmountExact = priceChangeMinor.toString();
+  const priceChangeAmount = safeMinorToLegacyMajorNumber(priceChangeMinor, currency);
+  const basisPoints = roundDivideBigInt(priceChangeMinor * 10000n, typicalMinor);
+  const priceChangePercent =
+    basisPoints <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(basisPoints) / 100 : null;
+
+  const multiplier = getRecurrenceAnnualMultiplier(effectiveRecurrence);
+  if (multiplier === null) {
+    return {
+      priceChangeDetected: true,
+      priceChangeAmount,
+      priceChangeAmountExact,
+      priceChangePercent,
+      annualPriceIncreaseImpact: null,
+      annualPriceIncreaseImpactExact: null,
+      annualPriceIncreaseClassification: 'UNAVAILABLE',
+    };
+  }
+
+  const annualImpactMinor = priceChangeMinor * multiplier;
+  const annualPriceIncreaseImpactExact = annualImpactMinor.toString();
+  const annualPriceIncreaseImpact = safeMinorToLegacyMajorNumber(annualImpactMinor, currency);
+  const annualPriceIncreaseClassification: 'ACTUAL_DERIVED' | 'ESTIMATED' | 'UNAVAILABLE' =
+    effectiveRecurrence === 'IRREGULAR' ? 'ESTIMATED' : 'ACTUAL_DERIVED';
+
+  return {
+    priceChangeDetected: true,
+    priceChangeAmount,
+    priceChangeAmountExact,
+    priceChangePercent,
+    annualPriceIncreaseImpact,
+    annualPriceIncreaseImpactExact,
+    annualPriceIncreaseClassification,
+  };
+}
+
+export interface RecurringSummaryDisclosure {
+  aggregationCompleteness: 'COMPLETE' | 'PARTIAL' | 'UNAVAILABLE';
+  isCompleteAggregate: boolean;
+  recurringKpiLabel: string;
+  annualKpiLabel: string;
+  disclosureText: string;
+}
+
+export function formatRecurringSummaryDisclosure(params: {
+  includedRecurringCount: number;
+  oneTimeCommitmentsExcludedCount: number;
+  incompleteRecurringProjectionCount: number;
+  currencyStatus?: 'SUPPORTED' | 'UNSUPPORTED' | 'UNKNOWN';
+}): RecurringSummaryDisclosure {
+  const {
+    includedRecurringCount,
+    oneTimeCommitmentsExcludedCount,
+    incompleteRecurringProjectionCount,
+    currencyStatus = 'SUPPORTED',
+  } = params;
+  const isUnavailable =
+    currencyStatus !== 'SUPPORTED' ||
+    (includedRecurringCount === 0 && incompleteRecurringProjectionCount > 0);
+  const isPartial =
+    !isUnavailable && includedRecurringCount > 0 && incompleteRecurringProjectionCount > 0;
+  const aggregationCompleteness: 'COMPLETE' | 'PARTIAL' | 'UNAVAILABLE' = isUnavailable
+    ? 'UNAVAILABLE'
+    : isPartial
+    ? 'PARTIAL'
+    : 'COMPLETE';
+  const isCompleteAggregate = aggregationCompleteness === 'COMPLETE';
+  const recurringKpiLabel = isPartial
+    ? 'Known monthly recurring subtotal'
+    : 'Monthly recurring commitments';
+  const annualKpiLabel = isPartial ? 'Known annualized subtotal' : 'Annualized projection';
+
+  const commitWord = includedRecurringCount === 1 ? 'commitment' : 'commitments';
+  const oneTimeClause =
+    oneTimeCommitmentsExcludedCount > 0
+      ? `${oneTimeCommitmentsExcludedCount} one-time ${
+          oneTimeCommitmentsExcludedCount === 1 ? 'item' : 'items'
+        } excluded`
+      : null;
+  const reviewClause =
+    incompleteRecurringProjectionCount > 0
+      ? `${incompleteRecurringProjectionCount} ${
+          incompleteRecurringProjectionCount === 1 ? 'projection needs' : 'projections need'
+        } review`
+      : null;
+  const tailClauses = [oneTimeClause, reviewClause].filter((c): c is string => Boolean(c));
+
+  let disclosureText: string;
+  if (isUnavailable) {
+    disclosureText =
+      tailClauses.length > 0
+        ? `Recurring total unavailable (${tailClauses.join('; ')}).`
+        : 'Recurring total unavailable.';
+  } else if (isPartial) {
+    disclosureText = `Known recurring subtotal includes ${includedRecurringCount} ${commitWord}. ${tailClauses.join(
+      '; '
+    )}.`;
+  } else {
+    disclosureText =
+      tailClauses.length > 0
+        ? `Recurring total includes ${includedRecurringCount} ${commitWord}. ${tailClauses.join(
+            '; '
+          )}.`
+        : `Recurring total includes ${includedRecurringCount} ${commitWord}.`;
+  }
+
+  return {
+    aggregationCompleteness,
+    isCompleteAggregate,
+    recurringKpiLabel,
+    annualKpiLabel,
+    disclosureText,
+  };
+}
+
+export interface CurrencyRecurringAggregateSummary {
+  currency: string;
+  currencyStatus: 'SUPPORTED' | 'UNSUPPORTED' | 'UNKNOWN';
+  currencyPrecision: number | null;
+  monthlyRecurringSpend: number | null;
+  monthlyRecurringSpendExact: string | null;
+  annualCommitmentTotal: number | null;
+  annualCommitmentTotalExact: string | null;
+  discretionaryAnnual: number | null;
+  discretionaryAnnualExact: string | null;
+  obligationAnnual: number | null;
+  obligationAnnualExact: string | null;
+  activeCommitmentsCount: number;
+  includedRecurringCount: number;
+  oneTimeCommitmentsExcludedCount: number;
+  incompleteRecurringProjectionCount: number;
+  aggregationCompleteness: 'COMPLETE' | 'PARTIAL' | 'UNAVAILABLE';
+  isCompleteAggregate: boolean;
+  recurringKpiLabel: string;
+  annualKpiLabel: string;
+  disclosureText: string;
+}
+
+export function buildDashboardCurrencySummaries(
+  activeCommitments: CommitmentRecord[]
+): Record<string, CurrencyRecurringAggregateSummary> {
+  const accumulators: Record<
+    string,
+    {
+      currency: string;
+      currencyStatus: 'SUPPORTED' | 'UNSUPPORTED' | 'UNKNOWN';
+      currencyPrecision: number | null;
+      monthlyMinorSum: bigint;
+      annualMinorSum: bigint;
+      discretionaryAnnualMinorSum: bigint;
+      obligationAnnualMinorSum: bigint;
+      activeCommitmentsCount: number;
+      includedRecurringCount: number;
+      oneTimeCommitmentsExcludedCount: number;
+      incompleteRecurringProjectionCount: number;
+    }
+  > = {};
+
+  for (const c of activeCommitments) {
+    const rawCurr =
+      c.currency !== undefined && c.currency !== null ? String(c.currency).trim().toUpperCase() : '';
+    const isUnknown = isUnknownCurrency(rawCurr);
+    const isSupported = !isUnknown && isValidCurrencyCode(rawCurr);
+    const currKey = isUnknown ? UNKNOWN_CURRENCY : rawCurr;
+    const currencyStatus: 'SUPPORTED' | 'UNSUPPORTED' | 'UNKNOWN' = isUnknown
+      ? 'UNKNOWN'
+      : isSupported
+      ? 'SUPPORTED'
+      : 'UNSUPPORTED';
+    const currencyPrecision = isSupported ? getCurrencyDecimalsOrNull(currKey) : null;
+
+    if (!accumulators[currKey]) {
+      accumulators[currKey] = {
+        currency: currKey,
+        currencyStatus,
+        currencyPrecision,
+        monthlyMinorSum: 0n,
+        annualMinorSum: 0n,
+        discretionaryAnnualMinorSum: 0n,
+        obligationAnnualMinorSum: 0n,
+        activeCommitmentsCount: 0,
+        includedRecurringCount: 0,
+        oneTimeCommitmentsExcludedCount: 0,
+        incompleteRecurringProjectionCount: 0,
+      };
+    }
+
+    const bucket = accumulators[currKey];
+    bucket.activeCommitmentsCount += 1;
+
+    if (c.recurrenceType === 'ONE_TIME') {
+      bucket.oneTimeCommitmentsExcludedCount += 1;
+      continue;
+    }
+
+    if (
+      currencyStatus !== 'SUPPORTED' ||
+      c.projectionClassification === 'UNAVAILABLE' ||
+      c.monthlyEquivalentExact === null ||
+      c.annualisedAmountExact === null ||
+      c.monthlyEquivalentExact === undefined ||
+      c.annualisedAmountExact === undefined
+    ) {
+      bucket.incompleteRecurringProjectionCount += 1;
+      continue;
+    }
+
+    bucket.includedRecurringCount += 1;
+    const monthlyMinor = BigInt(c.monthlyEquivalentExact);
+    const annualMinor = BigInt(c.annualisedAmountExact);
+    bucket.monthlyMinorSum += monthlyMinor;
+    bucket.annualMinorSum += annualMinor;
+    if (c.isFinancialObligation) {
+      bucket.obligationAnnualMinorSum += annualMinor;
+    } else {
+      bucket.discretionaryAnnualMinorSum += annualMinor;
+    }
+  }
+
+  const result: Record<string, CurrencyRecurringAggregateSummary> = {};
+  for (const [currKey, acc] of Object.entries(accumulators)) {
+    const disclosure = formatRecurringSummaryDisclosure({
+      includedRecurringCount: acc.includedRecurringCount,
+      oneTimeCommitmentsExcludedCount: acc.oneTimeCommitmentsExcludedCount,
+      incompleteRecurringProjectionCount: acc.incompleteRecurringProjectionCount,
+      currencyStatus: acc.currencyStatus,
+    });
+    const isTotalUnavailable = disclosure.aggregationCompleteness === 'UNAVAILABLE';
+    result[currKey] = {
+      currency: acc.currency,
+      currencyStatus: acc.currencyStatus,
+      currencyPrecision: acc.currencyPrecision,
+      monthlyRecurringSpend: isTotalUnavailable
+        ? null
+        : safeMinorToLegacyMajorNumber(acc.monthlyMinorSum, currKey),
+      monthlyRecurringSpendExact: isTotalUnavailable ? null : acc.monthlyMinorSum.toString(),
+      annualCommitmentTotal: isTotalUnavailable
+        ? null
+        : safeMinorToLegacyMajorNumber(acc.annualMinorSum, currKey),
+      annualCommitmentTotalExact: isTotalUnavailable ? null : acc.annualMinorSum.toString(),
+      discretionaryAnnual: isTotalUnavailable
+        ? null
+        : safeMinorToLegacyMajorNumber(acc.discretionaryAnnualMinorSum, currKey),
+      discretionaryAnnualExact: isTotalUnavailable
+        ? null
+        : acc.discretionaryAnnualMinorSum.toString(),
+      obligationAnnual: isTotalUnavailable
+        ? null
+        : safeMinorToLegacyMajorNumber(acc.obligationAnnualMinorSum, currKey),
+      obligationAnnualExact: isTotalUnavailable ? null : acc.obligationAnnualMinorSum.toString(),
+      activeCommitmentsCount: acc.activeCommitmentsCount,
+      includedRecurringCount: acc.includedRecurringCount,
+      oneTimeCommitmentsExcludedCount: acc.oneTimeCommitmentsExcludedCount,
+      incompleteRecurringProjectionCount: acc.incompleteRecurringProjectionCount,
+      aggregationCompleteness: disclosure.aggregationCompleteness,
+      isCompleteAggregate: disclosure.isCompleteAggregate,
+      recurringKpiLabel: disclosure.recurringKpiLabel,
+      annualKpiLabel: disclosure.annualKpiLabel,
+      disclosureText: disclosure.disclosureText,
+    };
+  }
+
+  return result;
 }
 
 export function calculateConfidenceBreakdown(params: {
@@ -835,6 +1179,8 @@ export function calculateConfidenceBreakdown(params: {
       intervalConsistencyPoints = 30;
     } else if (recurrenceType === 'QUARTERLY' && maxDeviation <= 6) {
       intervalConsistencyPoints = 28;
+    } else if (recurrenceType === 'HALF_YEARLY' && maxDeviation <= 12) {
+      intervalConsistencyPoints = 26;
     } else if (recurrenceType === 'YEARLY' && maxDeviation <= 35) {
       intervalConsistencyPoints = 25;
     } else if (recurrenceType === 'RESUMED') {
@@ -844,7 +1190,7 @@ export function calculateConfidenceBreakdown(params: {
     } else {
       intervalConsistencyPoints = 22;
     }
-  } else if (intervals.length === 1 && recurrenceType === 'YEARLY') {
+  } else if (intervals.length === 1 && (recurrenceType === 'YEARLY' || recurrenceType === 'HALF_YEARLY')) {
     intervalConsistencyPoints = 22;
   } else if (recurrenceType === 'TRIAL_CONVERTED') {
     intervalConsistencyPoints = 24;
@@ -1088,6 +1434,9 @@ export function detectCommitmentsAndAlerts(
       } else if (medInterval >= 330 && medInterval <= 375) {
         recurrenceType = 'YEARLY';
         recurrenceIntervalDays = 365;
+      } else if (medInterval >= 170 && medInterval <= 195) {
+        recurrenceType = 'HALF_YEARLY';
+        recurrenceIntervalDays = 182;
       } else if (medInterval >= 85 && medInterval <= 96) {
         recurrenceType = 'QUARTERLY';
         recurrenceIntervalDays = 91;
@@ -1111,14 +1460,23 @@ export function detectCommitmentsAndAlerts(
       t.commitmentId = commitmentId;
     }
 
+    const effectiveRecurrence: RecurrenceFrequency =
+      override.recurrenceTypeOverride ||
+      (trialNotif && sorted.length === 1 ? 'TRIAL_CONVERTED' : recurrenceType);
+
     const exactMinorAmounts = sorted.map((t) =>
       t.amountMinorExact !== null && t.amountMinorExact !== undefined
         ? BigInt(t.amountMinorExact)
         : null
     );
+    const currenciesMatch = sorted.every(
+      (t) =>
+        !isUnknownCurrency(t.currency) &&
+        t.currency.trim().toUpperCase() === groupCurrency &&
+        getCurrencyDecimalsOrNull(groupCurrency) !== null
+    );
     const exactAnalysisAvailable =
-      exactMinorAmounts.every((value): value is bigint => value !== null) &&
-      sorted.every((t) => t.currency === groupCurrency);
+      exactMinorAmounts.every((value): value is bigint => value !== null) && currenciesMatch;
     const minorFactor = exactAnalysisAvailable ? toMinorUnitsStrict(1, groupCurrency) || 1 : 1;
     const analysisAmounts = exactAnalysisAvailable
       ? exactMinorAmounts.map((value) => Number(value))
@@ -1134,14 +1492,14 @@ export function detectCommitmentsAndAlerts(
     const baselineAmounts = sorted.length >= 2 ? analysisAmounts.slice(0, -1) : analysisAmounts;
     const typicalAnalysisAmount = median(baselineAmounts);
     const typicalExactMinor =
-      exactAnalysisAvailable
-        ? (baselineAmounts.length % 2 === 1
-            ? exactBaselineValues[Math.floor(exactBaselineValues.length / 2)]
-            : roundDivideBigInt(
-                exactBaselineValues[Math.floor(exactBaselineValues.length / 2) - 1] +
-                  exactBaselineValues[Math.floor(exactBaselineValues.length / 2)],
-                2n
-              ))
+      exactAnalysisAvailable && exactBaselineValues.length > 0
+        ? exactBaselineValues.length % 2 === 1
+          ? exactBaselineValues[Math.floor(exactBaselineValues.length / 2)]
+          : roundDivideBigInt(
+              exactBaselineValues[Math.floor(exactBaselineValues.length / 2) - 1] +
+                exactBaselineValues[Math.floor(exactBaselineValues.length / 2)],
+              2n
+            )
         : null;
     const latestExactMinor = exactAnalysisAvailable
       ? exactAnalysisValues[exactAnalysisValues.length - 1]
@@ -1166,41 +1524,22 @@ export function detectCommitmentsAndAlerts(
     const isUtilityVariable = merchant.category === 'UTILITY_ESSENTIAL' && uniqueAmounts.size >= 3;
     const variableAmount = isUtilityVariable;
 
-    let priceChangeDetected = false;
-    let priceChangeAmount: number | null = null;
-    let priceChangeAmountExact: string | null = null;
-    let priceChangePercent: number | null = null;
-    let annualPriceIncreaseImpact: number | null = null;
-
-    const priceChangeMinor =
-      exactAnalysisAvailable && latestExactMinor !== null && typicalExactMinor !== null
-        ? latestExactMinor - typicalExactMinor
-        : null;
-    if (
-      !isUtilityVariable &&
-      sorted.length >= 2 &&
-      (priceChangeMinor !== null ? priceChangeMinor > 0n : latestAnalysisAmount > typicalAnalysisAmount)
-    ) {
-      priceChangeDetected = true;
-      priceChangeAmountExact = priceChangeMinor?.toString() ?? null;
-      priceChangeAmount = Number(
-        ((priceChangeMinor !== null ? Number(priceChangeMinor) : latestAnalysisAmount - typicalAnalysisAmount) / minorFactor).toFixed(2)
-      );
-      priceChangePercent = Number(
-        (((priceChangeMinor !== null ? Number(priceChangeMinor) : latestAnalysisAmount - typicalAnalysisAmount) /
-          (typicalExactMinor !== null ? Number(typicalExactMinor) : typicalAnalysisAmount)) *
-          100).toFixed(2)
-      );
-      const multiplier =
-        recurrenceType === 'MONTHLY' || recurrenceType === 'RESUMED'
-          ? 12
-          : recurrenceType === 'QUARTERLY'
-          ? 4
-          : recurrenceType === 'YEARLY'
-          ? 1
-          : 3;
-      annualPriceIncreaseImpact = Number((priceChangeAmount * multiplier).toFixed(2));
-    }
+    const priceIncreaseResult = calculateExactPriceIncrease({
+      effectiveRecurrence,
+      typicalMinor: typicalExactMinor,
+      latestMinor: latestExactMinor,
+      currency: groupCurrency,
+      variableUtility: isUtilityVariable,
+      currenciesMatch,
+      hasEvidence: sorted.length >= 2 && exactAnalysisAvailable,
+    });
+    const priceChangeDetected = priceIncreaseResult.priceChangeDetected;
+    const priceChangeAmount = priceIncreaseResult.priceChangeAmount;
+    const priceChangeAmountExact = priceIncreaseResult.priceChangeAmountExact;
+    const priceChangePercent = priceIncreaseResult.priceChangePercent;
+    const annualPriceIncreaseImpact = priceIncreaseResult.annualPriceIncreaseImpact;
+    const annualPriceIncreaseImpactExact = priceIncreaseResult.annualPriceIncreaseImpactExact;
+    const annualPriceIncreaseClassification = priceIncreaseResult.annualPriceIncreaseClassification;
 
     const totalHistoricalSpendMinor = exactAnalysisAvailable
       ? exactAnalysisValues.reduce((sum, value) => sum + value, 0n)
@@ -1295,9 +1634,6 @@ export function detectCommitmentsAndAlerts(
       override.mandateLifecycleStatus
     );
 
-    const effectiveRecurrence =
-      override.recurrenceTypeOverride ||
-      (trialNotif && sorted.length === 1 ? 'TRIAL_CONVERTED' : recurrenceType);
     const schedule = scheduleForRecurrence(latestTxn.transactionDate, effectiveRecurrence);
     const recurrenceIntervalDaysEffective = schedule.intervalDays;
     const inferredNextExpectedDate = schedule.nextExpectedDate;
@@ -1355,13 +1691,21 @@ export function detectCommitmentsAndAlerts(
       recurrenceType: effectiveRecurrence,
       recurrenceIntervalDays: recurrenceIntervalDaysEffective,
       typicalAmount: effectiveTypicalAmount,
+      typicalAmountMinorExact: typicalExactMinor?.toString() ?? null,
       latestAmount,
       previousAmount,
       expectedAmountMinor:
         override.expectedAmountMinorOverride !== undefined
           ? override.expectedAmountMinorOverride
+          : safeMinorToLegacyMajorNumber(typicalExactMinor, groupCurrency) !== null && typicalExactMinor !== null
+          ? Number(typicalExactMinor)
           : toMinorUnitsStrict(effectiveTypicalAmount, groupCurrency),
-      latestAmountMinor: toMinorUnitsStrict(latestAmount, groupCurrency),
+      latestAmountMinor:
+        latestExactMinor !== null &&
+        latestExactMinor <= BigInt(Number.MAX_SAFE_INTEGER) &&
+        latestExactMinor >= BigInt(Number.MIN_SAFE_INTEGER)
+          ? Number(latestExactMinor)
+          : toMinorUnitsStrict(latestAmount, groupCurrency),
       latestAmountMinorExact: latestExactMinor?.toString() ?? null,
       previousAmountMinorExact: previousExactMinor?.toString() ?? null,
       currency: groupCurrency,
@@ -1397,6 +1741,8 @@ export function detectCommitmentsAndAlerts(
       priceChangeAmountExact,
       priceChangePercent,
       annualPriceIncreaseImpact,
+      annualPriceIncreaseImpactExact,
+      annualPriceIncreaseClassification,
       trialConverted: Boolean(trialNotif),
       trialNotificationId: trialNotif?.id ?? null,
       resumedAfterGap,
@@ -1411,19 +1757,36 @@ export function detectCommitmentsAndAlerts(
       mandateLifecycleStatus: independentLifecycles.mandateLifecycleStatus,
     });
 
-    if (priceChangeDetected && priceChangeAmount && priceChangePercent) {
+    if (priceChangeDetected && priceChangeAmountExact !== null && priceChangePercent !== null) {
+      const formattedLatest =
+        latestExactMinor !== null
+          ? formatMinorUnitsExact(latestExactMinor, groupCurrency)
+          : formatCurrency(latestAmount, groupCurrency);
+      const formattedTypical =
+        typicalExactMinor !== null
+          ? formatMinorUnitsExact(typicalExactMinor, groupCurrency)
+          : formatCurrency(typicalAmount, groupCurrency);
+      const formattedDelta = formatMinorUnitsExact(priceChangeAmountExact, groupCurrency);
+      const formattedAnnualImpact =
+        annualPriceIncreaseImpactExact !== null
+          ? `${formatMinorUnitsExact(annualPriceIncreaseImpactExact, groupCurrency)}/year${
+              annualPriceIncreaseClassification === 'ESTIMATED' ? ' (estimated)' : ''
+            }`
+          : 'annual recurring impact unavailable';
       alerts.push({
         id: `ALT-PRICE-${commitmentId}`,
         commitmentId,
         transactionId: latestTxn.id,
         alertType: 'PRICE_INCREASE',
         title: `Detected Amount Increase on ${merchant.serviceName} (+${priceChangePercent}%)`,
-        description: `Latest debit on ${latestTxn.transactionDate} is ${formatCurrency(latestAmount, groupCurrency)}, compared to prior baseline of ${formatCurrency(typicalAmount, groupCurrency)} (+${formatCurrency(priceChangeAmount, groupCurrency)} per billing cycle, or ${formatCurrency(annualPriceIncreaseImpact, groupCurrency)}/year). Could reflect a plan adjustment, tax revision, or rate update.`,
+        description: `Latest debit on ${latestTxn.transactionDate} is ${formattedLatest}, compared to prior baseline of ${formattedTypical} (+${formattedDelta} per billing cycle, or ${formattedAnnualImpact}). Could reflect a plan adjustment, tax revision, or rate update.`,
         severity: 'HIGH',
-        detectedValue: formatCurrency(latestAmount, groupCurrency),
-        previousValue: formatCurrency(typicalAmount, groupCurrency),
+        detectedValue: formattedLatest,
+        previousValue: formattedTypical,
         percentageChange: priceChangePercent,
         annualImpact: annualPriceIncreaseImpact,
+        annualImpactExact: annualPriceIncreaseImpactExact,
+        annualImpactClassification: annualPriceIncreaseClassification,
         currency: groupCurrency,
         evidenceReference: `Transactions ${sorted.slice(-2).map((t) => t.id).join(' vs ')}`,
         suggestedAction: merchant.isFinancialObligation

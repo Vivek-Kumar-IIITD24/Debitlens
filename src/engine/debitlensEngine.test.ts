@@ -42,6 +42,10 @@ import {
   computeCanonicalCsvRowFingerprint,
   buildPlaybookAndSessionForCommitment,
   calculateExactProjection,
+  getRecurrenceAnnualMultiplier,
+  calculateExactPriceIncrease,
+  buildDashboardCurrencySummaries,
+  formatRecurringSummaryDisclosure,
 } from './debitlensEngine';
 import { buildInitialSeedGuardrails } from './reconciliationEngine';
 import { formatExactCurrency } from '../utils/currency';
@@ -5392,3 +5396,838 @@ test('Final 10/10 Quality Assurance: Demo Reset Sentinel Preservation, Real File
     }
   }
 });
+
+// ============================================================================
+// SECTION B4: ANNUALIZED PRICE-INCREASE IMPACT REGRESSION TESTS (18 CASES)
+// ============================================================================
+test('B4 (1–18): Exact annualized price-increase impact across all recurrences, overrides, utilities, currencies, and precision boundaries', async () => {
+  const buildTxns = (
+    rows: Array<{ id: string; date: string; amount: string; currency?: string; desc?: string }>
+  ) =>
+    parseAndNormaliseTransactions(
+      rows.map((r) => ({
+        transaction_id: r.id,
+        transaction_date: r.date,
+        account_type: 'CARD',
+        account_alias: 'HDFC Millennia 4821',
+        raw_description: r.desc || 'SI-MUSICFLOW-IN',
+        amount: r.amount,
+        currency: r.currency || 'INR',
+        direction: 'DEBIT',
+        payment_rail: 'CARD_EMANDATE',
+        external_reference: 'SI-MFLOW-7741',
+      }))
+    ).transactions;
+
+  // 1. Weekly price increase (multiplier 52n)
+  {
+    const txns = buildTxns([
+      { id: 'W-1', date: '2026-09-01', amount: '100.00' },
+      { id: 'W-2', date: '2026-09-08', amount: '100.00' },
+      { id: 'W-3', date: '2026-09-15', amount: '125.00' },
+    ]);
+    const detected = detectCommitmentsAndAlerts(txns, []);
+    const cmt = detected.commitments.find((c) => c.id === 'CMT-MUSICFLOW');
+    assert.ok(cmt);
+    assert.equal(cmt.recurrenceType, 'WEEKLY');
+    assert.equal(cmt.priceChangeDetected, true);
+    assert.equal(cmt.priceChangeAmountExact, '2500');
+    assert.equal(cmt.priceChangeAmount, 25);
+    assert.equal(cmt.priceChangePercent, 25);
+    assert.equal(cmt.annualPriceIncreaseImpactExact, (2500n * 52n).toString());
+    assert.equal(cmt.annualPriceIncreaseImpact, 1300);
+    assert.equal(cmt.annualPriceIncreaseClassification, 'ACTUAL_DERIVED');
+  }
+
+  // 2. Fortnightly price increase (multiplier 26n)
+  {
+    const txns = buildTxns([
+      { id: 'FN-1', date: '2026-08-01', amount: '200.00' },
+      { id: 'FN-2', date: '2026-08-15', amount: '200.00' },
+      { id: 'FN-3', date: '2026-08-29', amount: '250.00' },
+    ]);
+    const detected = detectCommitmentsAndAlerts(txns, []);
+    const cmt = detected.commitments.find((c) => c.id === 'CMT-MUSICFLOW');
+    assert.ok(cmt);
+    assert.equal(cmt.recurrenceType, 'FORTNIGHTLY');
+    assert.equal(cmt.priceChangeDetected, true);
+    assert.equal(cmt.priceChangeAmountExact, '5000');
+    assert.equal(cmt.annualPriceIncreaseImpactExact, (5000n * 26n).toString());
+    assert.equal(cmt.annualPriceIncreaseImpact, 1300);
+    assert.equal(cmt.annualPriceIncreaseClassification, 'ACTUAL_DERIVED');
+  }
+
+  // 3. Monthly price increase (multiplier 12n)
+  {
+    const txns = buildTxns([
+      { id: 'M-1', date: '2026-08-05', amount: '199.00' },
+      { id: 'M-2', date: '2026-09-05', amount: '199.00' },
+      { id: 'M-3', date: '2026-10-05', amount: '249.00' },
+    ]);
+    const detected = detectCommitmentsAndAlerts(txns, []);
+    const cmt = detected.commitments.find((c) => c.id === 'CMT-MUSICFLOW');
+    assert.ok(cmt);
+    assert.equal(cmt.recurrenceType, 'MONTHLY');
+    assert.equal(cmt.priceChangeDetected, true);
+    assert.equal(cmt.priceChangeAmountExact, '5000');
+    assert.equal(cmt.annualPriceIncreaseImpactExact, '60000');
+    assert.equal(cmt.annualPriceIncreaseImpact, 600);
+    assert.equal(cmt.annualPriceIncreaseClassification, 'ACTUAL_DERIVED');
+  }
+
+  // 4. Quarterly price increase (multiplier 4n)
+  {
+    const txns = buildTxns([
+      { id: 'Q-1', date: '2026-01-12', amount: '999.00', desc: 'FITCLUB*QUARTERLY' },
+      { id: 'Q-2', date: '2026-04-12', amount: '999.00', desc: 'FITCLUB*QUARTERLY' },
+      { id: 'Q-3', date: '2026-07-12', amount: '1199.00', desc: 'FITCLUB*QUARTERLY' },
+    ]);
+    const detected = detectCommitmentsAndAlerts(txns, []);
+    const cmt = detected.commitments.find((c) => c.id === 'CMT-FITCLUB');
+    assert.ok(cmt);
+    assert.equal(cmt.recurrenceType, 'QUARTERLY');
+    assert.equal(cmt.priceChangeDetected, true);
+    assert.equal(cmt.priceChangeAmountExact, '20000');
+    assert.equal(cmt.annualPriceIncreaseImpactExact, '80000');
+    assert.equal(cmt.annualPriceIncreaseImpact, 800);
+    assert.equal(cmt.annualPriceIncreaseClassification, 'ACTUAL_DERIVED');
+  }
+
+  // 5. Half-yearly price increase (multiplier 2n)
+  {
+    const txns = buildTxns([
+      { id: 'HY-1', date: '2025-07-10', amount: '1500.00' },
+      { id: 'HY-2', date: '2026-01-08', amount: '1500.00' },
+      { id: 'HY-3', date: '2026-07-09', amount: '1800.00' },
+    ]);
+    const detected = detectCommitmentsAndAlerts(txns, []);
+    const cmt = detected.commitments.find((c) => c.id === 'CMT-MUSICFLOW');
+    assert.ok(cmt);
+    assert.equal(cmt.recurrenceType, 'HALF_YEARLY');
+    assert.equal(cmt.priceChangeDetected, true);
+    assert.equal(cmt.priceChangeAmountExact, '30000');
+    assert.equal(cmt.annualPriceIncreaseImpactExact, '60000');
+    assert.equal(cmt.annualPriceIncreaseImpact, 600);
+    assert.equal(cmt.annualPriceIncreaseClassification, 'ACTUAL_DERIVED');
+  }
+
+  // 6. Yearly price increase (multiplier 1n)
+  {
+    const txns = buildTxns([
+      { id: 'Y-1', date: '2025-10-14', amount: '14500.00', desc: 'NACH-DR-MAXLIFE-POL99' },
+      { id: 'Y-2', date: '2026-10-14', amount: '15225.00', desc: 'NACH-DR-MAXLIFE-POL99' },
+    ]);
+    const detected = detectCommitmentsAndAlerts(txns, []);
+    const cmt = detected.commitments.find((c) => c.id === 'CMT-MAXLIFE');
+    assert.ok(cmt);
+    assert.equal(cmt.recurrenceType, 'YEARLY');
+    assert.equal(cmt.priceChangeDetected, true);
+    assert.equal(cmt.priceChangeAmountExact, '72500');
+    assert.equal(cmt.annualPriceIncreaseImpactExact, '72500');
+    assert.equal(cmt.annualPriceIncreaseImpact, 725);
+    assert.equal(cmt.annualPriceIncreaseClassification, 'ACTUAL_DERIVED');
+  }
+
+  // 7. Irregular estimated price impact (multiplier 3n, ESTIMATED classification)
+  {
+    const txns = buildTxns([
+      { id: 'IR-1', date: '2026-04-01', amount: '2400.00', desc: 'NACH-BAJAJFIN-EMI44' },
+      { id: 'IR-2', date: '2026-05-15', amount: '2400.00', desc: 'NACH-BAJAJFIN-EMI44' },
+      { id: 'IR-3', date: '2026-07-10', amount: '2700.00', desc: 'NACH-BAJAJFIN-EMI44' },
+    ]);
+    const detected = detectCommitmentsAndAlerts(txns, []);
+    const cmt = detected.commitments.find((c) => c.id === 'CMT-BAJAJEMI');
+    assert.ok(cmt);
+    assert.equal(cmt.recurrenceType, 'IRREGULAR');
+    assert.equal(cmt.priceChangeDetected, true);
+    assert.equal(cmt.priceChangeAmountExact, '30000');
+    assert.equal(cmt.annualPriceIncreaseImpactExact, '90000');
+    assert.equal(cmt.annualPriceIncreaseImpact, 900);
+    assert.equal(cmt.annualPriceIncreaseClassification, 'ESTIMATED');
+    const priceAlert = detected.alerts.find((a) => a.id === 'ALT-PRICE-CMT-BAJAJEMI');
+    assert.ok(priceAlert);
+    assert.equal(priceAlert.annualImpactExact, '90000');
+    assert.equal(priceAlert.annualImpactClassification, 'ESTIMATED');
+    assert.match(priceAlert.description, /\(estimated\)/);
+  }
+
+  // 8. One-time commitment: no recurring price impact
+  {
+    const txns = buildTxns([
+      { id: 'OT-1', date: '2026-08-05', amount: '199.00' },
+      { id: 'OT-2', date: '2026-09-05', amount: '199.00' },
+      { id: 'OT-3', date: '2026-10-05', amount: '249.00' },
+    ]);
+    const detected = detectCommitmentsAndAlerts(txns, [], {
+      'CMT-MUSICFLOW': { recurrenceTypeOverride: 'ONE_TIME' },
+    });
+    const cmt = detected.commitments.find((c) => c.id === 'CMT-MUSICFLOW');
+    assert.ok(cmt);
+    assert.equal(cmt.recurrenceType, 'ONE_TIME');
+    assert.equal(cmt.priceChangeDetected, false);
+    assert.equal(cmt.priceChangeAmount, null);
+    assert.equal(cmt.priceChangeAmountExact, null);
+    assert.equal(cmt.annualPriceIncreaseImpact, null);
+    assert.equal(cmt.annualPriceIncreaseImpactExact, null);
+    assert.equal(cmt.annualPriceIncreaseClassification, 'UNAVAILABLE');
+    assert.equal(
+      detected.alerts.find((a) => a.id === 'ALT-PRICE-CMT-MUSICFLOW'),
+      undefined
+    );
+  }
+
+  // 9. Variable utility with historical average (even when recurrence is overridden)
+  {
+    const txns = buildTxns([
+      { id: 'U-1', date: '2026-08-10', amount: '1200.00', desc: 'BBPS*BESCOM-UTIL' },
+      { id: 'U-2', date: '2026-09-10', amount: '1500.00', desc: 'BBPS*BESCOM-UTIL' },
+      { id: 'U-3', date: '2026-10-10', amount: '1800.00', desc: 'BBPS*BESCOM-UTIL' },
+    ]);
+    const detectedMonthly = detectCommitmentsAndAlerts(txns, []);
+    const cmtMonthly = detectedMonthly.commitments.find((c) => c.id === 'CMT-BESCOM');
+    assert.ok(cmtMonthly);
+    assert.equal(cmtMonthly.variableAmount, true);
+    assert.equal(cmtMonthly.averageDebitAmountExact, '150000');
+    assert.equal(cmtMonthly.annualisedAmountExact, (150000n * 12n).toString());
+    assert.equal(cmtMonthly.projectionClassification, 'ESTIMATED');
+    assert.equal(cmtMonthly.priceChangeDetected, false);
+    assert.equal(cmtMonthly.annualPriceIncreaseImpact, null);
+    assert.equal(cmtMonthly.annualPriceIncreaseImpactExact, null);
+
+    // Override recurrence to QUARTERLY — must still use historical average (150000n * 4n), not single latest transaction (180000n)
+    const detectedQuarterly = detectCommitmentsAndAlerts(txns, [], {
+      'CMT-BESCOM': { recurrenceTypeOverride: 'QUARTERLY' },
+    });
+    const cmtQuarterly = detectedQuarterly.commitments.find((c) => c.id === 'CMT-BESCOM');
+    assert.ok(cmtQuarterly);
+    assert.equal(cmtQuarterly.recurrenceType, 'QUARTERLY');
+    assert.equal(cmtQuarterly.averageDebitAmountExact, '150000');
+    assert.equal(cmtQuarterly.annualisedAmountExact, (150000n * 4n).toString());
+    assert.equal(cmtQuarterly.priceChangeDetected, false);
+    assert.equal(cmtQuarterly.annualPriceIncreaseImpactExact, null);
+  }
+
+  // 10, 11, 12. Monthly commitment overridden to weekly, overridden to quarterly, and override removal restoring inferred recurrence (tested via HTTP API & persisted store)
+  {
+    const tmpStorePath = path.resolve(
+      process.cwd(),
+      `data/test-store-b4-overrides-${Date.now()}.json`
+    );
+    process.env.DEBITLENS_STORE_PATH = tmpStorePath;
+    process.env.DEBITLENS_SKIP_LISTEN = '1';
+    const { app, loadSeedData } = await import('../../server');
+    loadSeedData(true);
+    const server = app.listen(0);
+    const port = (server.address() as { port: number }).port;
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const api = async (method: string, endpoint: string, body?: unknown) => {
+      const res = await fetch(`${baseUrl}${endpoint}`, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      return { status: res.status, body: await res.json() };
+    };
+
+    try {
+      // Seed CMT-MUSICFLOW is detected as MONTHLY with baseline 199.00 (19900n) and latest 249.00 (24900n), delta = 5000n
+      const initialCommitments = (await api('GET', '/api/commitments')).body;
+      const initialMusicFlow = initialCommitments.find((c: any) => c.id === 'CMT-MUSICFLOW');
+      assert.ok(initialMusicFlow);
+      assert.equal(initialMusicFlow.recurrenceType, 'MONTHLY');
+      assert.equal(initialMusicFlow.priceChangeAmountExact, '5000');
+      assert.equal(initialMusicFlow.annualPriceIncreaseImpactExact, '60000'); // 5000n * 12n
+
+      // 10. Override Monthly -> Weekly
+      const weeklyPatch = await api('PATCH', '/api/commitments/CMT-MUSICFLOW', {
+        recurrenceType: 'WEEKLY',
+      });
+      assert.equal(weeklyPatch.status, 200);
+      assert.equal(weeklyPatch.body.recurrenceType, 'WEEKLY');
+      assert.equal(weeklyPatch.body.priceChangeAmountExact, '5000');
+      assert.equal(weeklyPatch.body.annualPriceIncreaseImpactExact, (5000n * 52n).toString());
+      assert.equal(weeklyPatch.body.annualPriceIncreaseImpact, 2600);
+      assert.equal(weeklyPatch.body.annualisedAmountExact, (24900n * 52n).toString());
+
+      // Verify alert also reflects the overridden weekly annual impact
+      const alertsAfterWeekly = (await api('GET', '/api/alerts')).body;
+      const musicAlertWeekly = alertsAfterWeekly.find(
+        (a: any) => a.id === 'ALT-PRICE-CMT-MUSICFLOW'
+      );
+      assert.ok(musicAlertWeekly);
+      assert.equal(musicAlertWeekly.annualImpactExact, (5000n * 52n).toString());
+      assert.equal(musicAlertWeekly.annualImpact, 2600);
+
+      // 11. Override Monthly -> Quarterly
+      const quarterlyPatch = await api('PATCH', '/api/commitments/CMT-MUSICFLOW', {
+        recurrenceType: 'QUARTERLY',
+      });
+      assert.equal(quarterlyPatch.status, 200);
+      assert.equal(quarterlyPatch.body.recurrenceType, 'QUARTERLY');
+      assert.equal(quarterlyPatch.body.annualPriceIncreaseImpactExact, (5000n * 4n).toString());
+      assert.equal(quarterlyPatch.body.annualPriceIncreaseImpact, 200);
+      assert.equal(quarterlyPatch.body.annualisedAmountExact, (24900n * 4n).toString());
+
+      // 12. Remove override -> restores inferred MONTHLY recurrence
+      const clearPatch = await api('PATCH', '/api/commitments/CMT-MUSICFLOW', {
+        recurrenceType: null,
+      });
+      assert.equal(clearPatch.status, 200);
+      assert.equal(clearPatch.body.recurrenceType, 'MONTHLY');
+      assert.equal(clearPatch.body.annualPriceIncreaseImpactExact, '60000');
+      assert.equal(clearPatch.body.annualPriceIncreaseImpact, 600);
+      assert.equal(clearPatch.body.annualisedAmountExact, (24900n * 12n).toString());
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      if (fs.existsSync(tmpStorePath)) {
+        fs.unlinkSync(tmpStorePath);
+      }
+    }
+  }
+
+  // 13. Unknown recurrence: preserves per-cycle delta but marks annual recurring impact unavailable (never defaults to monthly)
+  {
+    const txns = buildTxns([
+      { id: 'UNK-1', date: '2026-08-05', amount: '199.00' },
+      { id: 'UNK-2', date: '2026-09-05', amount: '199.00' },
+      { id: 'UNK-3', date: '2026-10-05', amount: '249.00' },
+    ]);
+    const detected = detectCommitmentsAndAlerts(txns, [], {
+      'CMT-MUSICFLOW': { recurrenceTypeOverride: 'UNKNOWN' },
+    });
+    const cmt = detected.commitments.find((c) => c.id === 'CMT-MUSICFLOW');
+    assert.ok(cmt);
+    assert.equal(cmt.recurrenceType, 'UNKNOWN');
+    assert.equal(cmt.priceChangeDetected, true);
+    assert.equal(cmt.priceChangeAmountExact, '5000');
+    assert.equal(cmt.annualPriceIncreaseImpact, null);
+    assert.equal(cmt.annualPriceIncreaseImpactExact, null);
+    assert.equal(cmt.annualPriceIncreaseClassification, 'UNAVAILABLE');
+  }
+
+  // 14. Mixed currencies & unknown currency
+  {
+    const mixedDirect = calculateExactPriceIncrease({
+      effectiveRecurrence: 'MONTHLY',
+      typicalMinor: 19900n,
+      latestMinor: 24900n,
+      currency: 'INR',
+      variableUtility: false,
+      currenciesMatch: false,
+    });
+    assert.equal(mixedDirect.priceChangeDetected, false);
+    assert.equal(mixedDirect.annualPriceIncreaseImpact, null);
+    assert.equal(mixedDirect.annualPriceIncreaseImpactExact, null);
+    assert.equal(mixedDirect.annualPriceIncreaseClassification, 'UNAVAILABLE');
+
+    const unknownCurrTxns = buildTxns([
+      { id: 'UC-1', date: '2026-08-05', amount: '199.00', currency: 'UNKNOWN' },
+      { id: 'UC-2', date: '2026-09-05', amount: '249.00', currency: 'UNKNOWN' },
+    ]);
+    const detectedUnknownCurr = detectCommitmentsAndAlerts(unknownCurrTxns, []);
+    const cmtUnknownCurr = detectedUnknownCurr.commitments[0];
+    assert.ok(cmtUnknownCurr);
+    assert.equal(cmtUnknownCurr.priceChangeDetected, false);
+    assert.equal(cmtUnknownCurr.annualPriceIncreaseImpact, null);
+    assert.equal(cmtUnknownCurr.annualPriceIncreaseImpactExact, null);
+    assert.equal(cmtUnknownCurr.annualPriceIncreaseClassification, 'UNAVAILABLE');
+  }
+
+  // 15. Negative price change (price decrease)
+  {
+    const txns = buildTxns([
+      { id: 'DEC-1', date: '2026-08-05', amount: '249.00' },
+      { id: 'DEC-2', date: '2026-09-05', amount: '249.00' },
+      { id: 'DEC-3', date: '2026-10-05', amount: '199.00' },
+    ]);
+    const detected = detectCommitmentsAndAlerts(txns, []);
+    const cmt = detected.commitments.find((c) => c.id === 'CMT-MUSICFLOW');
+    assert.ok(cmt);
+    assert.equal(cmt.priceChangeDetected, false);
+    assert.equal(cmt.priceChangeAmount, null);
+    assert.equal(cmt.priceChangeAmountExact, null);
+    assert.equal(cmt.annualPriceIncreaseImpact, null);
+    assert.equal(cmt.annualPriceIncreaseImpactExact, null);
+  }
+
+  // 16. Zero price change
+  {
+    const txns = buildTxns([
+      { id: 'ZERO-1', date: '2026-08-05', amount: '199.00' },
+      { id: 'ZERO-2', date: '2026-09-05', amount: '199.00' },
+      { id: 'ZERO-3', date: '2026-10-05', amount: '199.00' },
+    ]);
+    const detected = detectCommitmentsAndAlerts(txns, []);
+    const cmt = detected.commitments.find((c) => c.id === 'CMT-MUSICFLOW');
+    assert.ok(cmt);
+    assert.equal(cmt.priceChangeDetected, false);
+    assert.equal(cmt.priceChangeAmount, null);
+    assert.equal(cmt.priceChangeAmountExact, null);
+    assert.equal(cmt.annualPriceIncreaseImpact, null);
+    assert.equal(cmt.annualPriceIncreaseImpactExact, null);
+  }
+
+  // 17 & 18. Exact large INR amount 90071992547408.99 and safe handling of derived annual totals beyond Number.MAX_SAFE_INTEGER
+  {
+    const largeTxns = buildTxns([
+      { id: 'LG-1', date: '2026-08-05', amount: '10000000000000.00' },
+      { id: 'LG-2', date: '2026-09-05', amount: '10000000000000.00' },
+      { id: 'LG-3', date: '2026-10-05', amount: '90071992547408.99' },
+    ]);
+    assert.equal(largeTxns[2].amountMinorExact, '9007199254740899');
+    const detected = detectCommitmentsAndAlerts(largeTxns, []);
+    const cmt = detected.commitments.find((c) => c.id === 'CMT-MUSICFLOW');
+    assert.ok(cmt);
+    assert.equal(cmt.latestAmountMinorExact, '9007199254740899');
+    assert.equal(cmt.typicalAmountMinorExact, '1000000000000000');
+    assert.equal(cmt.priceChangeDetected, true);
+    // Exact delta: 9007199254740899n - 1000000000000000n = 8007199254740899n
+    assert.equal(cmt.priceChangeAmountExact, '8007199254740899');
+    // Annualized impact: 8007199254740899n * 12n = 96086391056890788n (> Number.MAX_SAFE_INTEGER 9007199254740991)
+    assert.equal(cmt.annualPriceIncreaseImpactExact, '96086391056890788');
+    assert.equal(
+      cmt.annualPriceIncreaseImpact,
+      null,
+      'Legacy numeric annualPriceIncreaseImpact must be null when minor units exceed Number.MAX_SAFE_INTEGER'
+    );
+    assert.equal(cmt.annualisedAmountExact, (9007199254740899n * 12n).toString());
+    assert.equal(
+      cmt.annualisedAmount,
+      null,
+      'Legacy numeric annualisedAmount must be null when minor units exceed Number.MAX_SAFE_INTEGER'
+    );
+  }
+});
+
+// ============================================================================
+// SECTION C4: DASHBOARD INCOMPLETE & EXCLUDED COMMITMENT DISCLOSURE TESTS (12 CASES)
+// ============================================================================
+test('C4 (1–12): Dashboard summary accurately discloses included recurring count, excluded one-time count, incomplete projections, and unavailable totals', async () => {
+  const buildTxns = (
+    rows: Array<{ id: string; date: string; amount: string; currency?: string; desc?: string }>
+  ) =>
+    parseAndNormaliseTransactions(
+      rows.map((r) => ({
+        transaction_id: r.id,
+        transaction_date: r.date,
+        account_type: 'CARD',
+        account_alias: 'HDFC Millennia 4821',
+        raw_description: r.desc || 'SI-MUSICFLOW-IN',
+        amount: r.amount,
+        currency: r.currency || 'INR',
+        direction: 'DEBIT',
+        payment_rail: 'CARD_EMANDATE',
+        external_reference: 'SI-MFLOW-7741',
+      }))
+    ).transactions;
+
+  const baseTxns = [
+    ...buildTxns([
+      { id: 'S-1', date: '2026-08-05', amount: '499.00', desc: 'RAZORPAY*STREAMBOX' },
+      { id: 'S-2', date: '2026-09-05', amount: '499.00', desc: 'RAZORPAY*STREAMBOX' },
+    ]),
+    ...buildTxns([
+      { id: 'M-1', date: '2026-08-10', amount: '199.00', desc: 'SI-MUSICFLOW-IN' },
+      { id: 'M-2', date: '2026-09-10', amount: '199.00', desc: 'SI-MUSICFLOW-IN' },
+    ]),
+    ...buildTxns([
+      { id: 'C-1', date: '2026-08-15', amount: '299.00', desc: 'GOOGLE*CLOUDNOTES' },
+      { id: 'C-2', date: '2026-09-15', amount: '299.00', desc: 'GOOGLE*CLOUDNOTES' },
+    ]),
+  ];
+
+  // 1. All recurring commitments with valid projections (COMPLETE)
+  {
+    const detected = detectCommitmentsAndAlerts(baseTxns, []);
+    const summaries = buildDashboardCurrencySummaries(detected.commitments);
+    const inr = summaries.INR;
+    assert.ok(inr);
+    assert.equal(inr.includedRecurringCount, 3);
+    assert.equal(inr.oneTimeCommitmentsExcludedCount, 0);
+    assert.equal(inr.incompleteRecurringProjectionCount, 0);
+    assert.equal(inr.aggregationCompleteness, 'COMPLETE');
+    assert.equal(inr.isCompleteAggregate, true);
+    assert.equal(inr.recurringKpiLabel, 'Monthly recurring commitments');
+    assert.equal(inr.disclosureText, 'Recurring total includes 3 commitments.');
+    assert.equal(inr.monthlyRecurringSpendExact, '99700'); // 49900 + 19900 + 29900
+  }
+
+  // 2. Recurring commitments + 1 one-time commitment excluded
+  {
+    const detected = detectCommitmentsAndAlerts(baseTxns, [], {
+      'CMT-CLOUDNOTES': { recurrenceTypeOverride: 'ONE_TIME' },
+    });
+    const summaries = buildDashboardCurrencySummaries(detected.commitments);
+    const inr = summaries.INR;
+    assert.equal(inr.includedRecurringCount, 2);
+    assert.equal(inr.oneTimeCommitmentsExcludedCount, 1);
+    assert.equal(inr.incompleteRecurringProjectionCount, 0);
+    assert.equal(inr.aggregationCompleteness, 'COMPLETE');
+    assert.equal(inr.recurringKpiLabel, 'Monthly recurring commitments');
+    assert.equal(
+      inr.disclosureText,
+      'Recurring total includes 2 commitments. 1 one-time item excluded.'
+    );
+    assert.equal(inr.monthlyRecurringSpendExact, '69800'); // 49900 + 19900
+  }
+
+  // 3. Recurring commitments + 1 incomplete recurring projection (PARTIAL)
+  {
+    const detected = detectCommitmentsAndAlerts(baseTxns, [], {
+      'CMT-MUSICFLOW': { recurrenceTypeOverride: 'UNKNOWN' },
+    });
+    const summaries = buildDashboardCurrencySummaries(detected.commitments);
+    const inr = summaries.INR;
+    assert.equal(inr.includedRecurringCount, 2);
+    assert.equal(inr.oneTimeCommitmentsExcludedCount, 0);
+    assert.equal(inr.incompleteRecurringProjectionCount, 1);
+    assert.equal(inr.aggregationCompleteness, 'PARTIAL');
+    assert.equal(inr.isCompleteAggregate, false);
+    assert.equal(inr.recurringKpiLabel, 'Known monthly recurring subtotal');
+    assert.equal(
+      inr.disclosureText,
+      'Known recurring subtotal includes 2 commitments. 1 projection needs review.'
+    );
+    assert.equal(inr.monthlyRecurringSpendExact, '79800'); // 49900 + 29900
+  }
+
+  // 4. Recurring commitments + both excluded one-time and incomplete recurring projections (PARTIAL)
+  {
+    const detected = detectCommitmentsAndAlerts(baseTxns, [], {
+      'CMT-CLOUDNOTES': { recurrenceTypeOverride: 'ONE_TIME' },
+      'CMT-MUSICFLOW': { recurrenceTypeOverride: 'UNKNOWN' },
+    });
+    const summaries = buildDashboardCurrencySummaries(detected.commitments);
+    const inr = summaries.INR;
+    assert.equal(inr.includedRecurringCount, 1);
+    assert.equal(inr.oneTimeCommitmentsExcludedCount, 1);
+    assert.equal(inr.incompleteRecurringProjectionCount, 1);
+    assert.equal(inr.aggregationCompleteness, 'PARTIAL');
+    assert.equal(inr.recurringKpiLabel, 'Known monthly recurring subtotal');
+    assert.equal(
+      inr.disclosureText,
+      'Known recurring subtotal includes 1 commitment. 1 one-time item excluded; 1 projection needs review.'
+    );
+    assert.equal(inr.monthlyRecurringSpendExact, '49900');
+  }
+
+  // 5. All recurring commitments have unavailable projections -> UNAVAILABLE (never fabricated zero)
+  {
+    const detected = detectCommitmentsAndAlerts(baseTxns, [], {
+      'CMT-STREAMBOX': { recurrenceTypeOverride: 'UNKNOWN' },
+      'CMT-MUSICFLOW': { recurrenceTypeOverride: 'UNKNOWN' },
+      'CMT-CLOUDNOTES': { recurrenceTypeOverride: 'ONE_TIME' },
+    });
+    const summaries = buildDashboardCurrencySummaries(detected.commitments);
+    const inr = summaries.INR;
+    assert.equal(inr.includedRecurringCount, 0);
+    assert.equal(inr.oneTimeCommitmentsExcludedCount, 1);
+    assert.equal(inr.incompleteRecurringProjectionCount, 2);
+    assert.equal(inr.aggregationCompleteness, 'UNAVAILABLE');
+    assert.equal(inr.isCompleteAggregate, false);
+    assert.equal(inr.monthlyRecurringSpend, null);
+    assert.equal(inr.monthlyRecurringSpendExact, null);
+    assert.equal(inr.annualCommitmentTotal, null);
+    assert.equal(inr.annualCommitmentTotalExact, null);
+    assert.equal(
+      inr.disclosureText,
+      'Recurring total unavailable (1 one-time item excluded; 2 projections need review).'
+    );
+  }
+
+  // 6. Multi-currency commitments (INR + USD segmented, never summed together)
+  {
+    const multiTxns = [
+      ...baseTxns,
+      ...buildTxns([
+        { id: 'USD-1', date: '2026-08-15', amount: '19.99', currency: 'USD', desc: 'GOOGLE*CLOUDNOTES' },
+        { id: 'USD-2', date: '2026-09-15', amount: '19.99', currency: 'USD', desc: 'GOOGLE*CLOUDNOTES' },
+      ]),
+    ];
+    const detected = detectCommitmentsAndAlerts(multiTxns, []);
+    const summaries = buildDashboardCurrencySummaries(detected.commitments);
+    assert.ok(summaries.INR);
+    assert.ok(summaries.USD);
+    assert.equal(summaries.INR.monthlyRecurringSpendExact, '99700');
+    assert.equal(summaries.USD.monthlyRecurringSpendExact, '1999');
+    assert.equal(summaries.USD.currencyPrecision, 2);
+    assert.equal(summaries.USD.includedRecurringCount, 1);
+  }
+
+  // 7 & 8. Unknown currency and unsupported currency commitments produce UNAVAILABLE bucket totals (never zero)
+  {
+    const unknownTxns = buildTxns([
+      { id: 'UK-1', date: '2026-08-05', amount: '499.00', currency: 'UNKNOWN', desc: 'RAZORPAY*STREAMBOX' },
+      { id: 'UK-2', date: '2026-09-05', amount: '499.00', currency: 'UNKNOWN', desc: 'RAZORPAY*STREAMBOX' },
+    ]);
+    const detectedUnknown = detectCommitmentsAndAlerts(unknownTxns, []);
+    const summaries = buildDashboardCurrencySummaries(detectedUnknown.commitments);
+    assert.ok(summaries.UNKNOWN);
+    assert.equal(summaries.UNKNOWN.currencyStatus, 'UNKNOWN');
+    assert.equal(summaries.UNKNOWN.aggregationCompleteness, 'UNAVAILABLE');
+    assert.equal(summaries.UNKNOWN.monthlyRecurringSpend, null);
+    assert.equal(summaries.UNKNOWN.monthlyRecurringSpendExact, null);
+    assert.equal(summaries.UNKNOWN.incompleteRecurringProjectionCount, 1);
+  }
+
+  // 9. Large exact amounts beyond Number.MAX_SAFE_INTEGER in dashboard summary
+  {
+    const largeTxns = buildTxns([
+      { id: 'L-1', date: '2026-08-05', amount: '90071992547408.99', desc: 'RAZORPAY*STREAMBOX' },
+      { id: 'L-2', date: '2026-09-05', amount: '90071992547408.99', desc: 'RAZORPAY*STREAMBOX' },
+    ]);
+    const detectedLarge = detectCommitmentsAndAlerts(largeTxns, []);
+    const summaries = buildDashboardCurrencySummaries(detectedLarge.commitments);
+    assert.equal(summaries.INR.monthlyRecurringSpendExact, '9007199254740899');
+    assert.equal(summaries.INR.annualCommitmentTotalExact, (9007199254740899n * 12n).toString());
+    assert.equal(summaries.INR.annualCommitmentTotal, null);
+  }
+
+  // 10. Variable utility commitment included in recurring summary (estimated projection, not incomplete)
+  {
+    const utilTxns = buildTxns([
+      { id: 'UT-1', date: '2026-08-10', amount: '1200.00', desc: 'BBPS*BESCOM-UTIL' },
+      { id: 'UT-2', date: '2026-09-10', amount: '1500.00', desc: 'BBPS*BESCOM-UTIL' },
+      { id: 'UT-3', date: '2026-10-10', amount: '1800.00', desc: 'BBPS*BESCOM-UTIL' },
+    ]);
+    const detectedUtil = detectCommitmentsAndAlerts(utilTxns, []);
+    const summaries = buildDashboardCurrencySummaries(detectedUtil.commitments);
+    assert.equal(summaries.INR.includedRecurringCount, 1);
+    assert.equal(summaries.INR.incompleteRecurringProjectionCount, 0);
+    assert.equal(summaries.INR.monthlyRecurringSpendExact, '150000');
+  }
+
+  // 11 & 12. HTTP API integration: overriding commitment to ONE_TIME and back updates /api/dashboard/summary counts and disclosureText
+  {
+    const tmpStorePath = path.resolve(
+      process.cwd(),
+      `data/test-store-c4-dashboard-${Date.now()}.json`
+    );
+    process.env.DEBITLENS_STORE_PATH = tmpStorePath;
+    process.env.DEBITLENS_SKIP_LISTEN = '1';
+    const { app, loadSeedData } = await import('../../server');
+    loadSeedData(true);
+    const server = app.listen(0);
+    const port = (server.address() as { port: number }).port;
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const api = async (method: string, endpoint: string, body?: unknown) => {
+      const res = await fetch(`${baseUrl}${endpoint}`, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      return { status: res.status, body: await res.json() };
+    };
+
+    try {
+      const baselineSummary = (await api('GET', '/api/dashboard/summary')).body;
+      assert.equal(baselineSummary.includedRecurringCount, 10);
+      assert.equal(baselineSummary.oneTimeCommitmentsExcludedCount, 0);
+      assert.equal(baselineSummary.incompleteRecurringProjectionCount, 0);
+      assert.equal(baselineSummary.aggregationCompleteness, 'COMPLETE');
+      assert.equal(baselineSummary.recurringKpiLabel, 'Monthly recurring commitments');
+      assert.equal(baselineSummary.disclosureText, 'Recurring total includes 10 commitments.');
+
+      // 11. Override CMT-STREAMBOX to ONE_TIME
+      const patchOneTime = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+        recurrenceType: 'ONE_TIME',
+      });
+      assert.equal(patchOneTime.status, 200);
+      const summaryAfterOneTime = (await api('GET', '/api/dashboard/summary')).body;
+      assert.equal(summaryAfterOneTime.includedRecurringCount, 9);
+      assert.equal(summaryAfterOneTime.oneTimeCommitmentsExcludedCount, 1);
+      assert.equal(summaryAfterOneTime.incompleteRecurringProjectionCount, 0);
+      assert.equal(
+        summaryAfterOneTime.disclosureText,
+        'Recurring total includes 9 commitments. 1 one-time item excluded.'
+      );
+
+      // 12. Clear override on CMT-STREAMBOX -> restores includedRecurringCount = 10
+      const clearOneTime = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+        recurrenceType: null,
+      });
+      assert.equal(clearOneTime.status, 200);
+      const summaryRestored = (await api('GET', '/api/dashboard/summary')).body;
+      assert.equal(summaryRestored.includedRecurringCount, 10);
+      assert.equal(summaryRestored.oneTimeCommitmentsExcludedCount, 0);
+      assert.equal(summaryRestored.disclosureText, 'Recurring total includes 10 commitments.');
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      if (fs.existsSync(tmpStorePath)) {
+        fs.unlinkSync(tmpStorePath);
+      }
+    }
+  }
+});
+
+// ============================================================================
+// SECTION D4: STRICT CALENDAR-DATE VALIDATION IN PATCH /api/commitments/:id (12 CASES)
+// ============================================================================
+test('D4 (1–12): PATCH /api/commitments/:id strictly validates YYYY-MM-DD calendar dates and rejects invalid payloads atomically', async () => {
+  const tmpStorePath = path.resolve(
+    process.cwd(),
+    `data/test-store-d4-dates-${Date.now()}.json`
+  );
+  process.env.DEBITLENS_STORE_PATH = tmpStorePath;
+  process.env.DEBITLENS_SKIP_LISTEN = '1';
+  const { app, loadSeedData } = await import('../../server');
+  loadSeedData(true);
+  const server = app.listen(0);
+  const port = (server.address() as { port: number }).port;
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const api = async (method: string, endpoint: string, body?: unknown) => {
+    const res = await fetch(`${baseUrl}${endpoint}`, {
+      method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    return { status: res.status, body: await res.json() };
+  };
+
+  try {
+    const beforeCommitments = (await api('GET', '/api/commitments')).body;
+    const beforeStreambox = beforeCommitments.find((c: any) => c.id === 'CMT-STREAMBOX');
+    assert.ok(beforeStreambox);
+    const inferredNextDate = beforeStreambox.nextExpectedDate;
+    assert.equal(inferredNextDate, '2026-11-05');
+
+    // 1. Valid YYYY-MM-DD date accepted and persisted
+    const validRes = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+      nextExpectedDate: '2026-11-15',
+    });
+    assert.equal(validRes.status, 200);
+    assert.equal(validRes.body.nextExpectedDate, '2026-11-15');
+
+    // 2. Valid leap-year dates (2024-02-29 and 2028-02-29) accepted
+    const leap2024 = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+      nextExpectedDate: '2024-02-29',
+    });
+    assert.equal(leap2024.status, 200);
+    assert.equal(leap2024.body.nextExpectedDate, '2024-02-29');
+
+    const leap2028 = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+      nextExpectedDate: '2028-02-29',
+    });
+    assert.equal(leap2028.status, 200);
+    assert.equal(leap2028.body.nextExpectedDate, '2028-02-29');
+
+    // 3. Invalid non-leap-year Feb 29 (2026-02-29) rejected with 400
+    const nonLeap = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+      nextExpectedDate: '2026-02-29',
+    });
+    assert.equal(nonLeap.status, 400);
+    assert.equal(nonLeap.body.code, 'INVALID_CALENDAR_DATE');
+
+    // 4. Impossible calendar date (2026-02-31) rejected with 400
+    const feb31 = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+      nextExpectedDate: '2026-02-31',
+    });
+    assert.equal(feb31.status, 400);
+    assert.equal(feb31.body.code, 'INVALID_CALENDAR_DATE');
+
+    // 5. Impossible 30-day month dates (2026-04-31, 2026-06-31, 2026-09-31, 2026-11-31) rejected with 400
+    for (const bad30 of ['2026-04-31', '2026-06-31', '2026-09-31', '2026-11-31']) {
+      const res = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+        nextExpectedDate: bad30,
+      });
+      assert.equal(res.status, 400, `Expected 400 for ${bad30}`);
+      assert.equal(res.body.code, 'INVALID_CALENDAR_DATE');
+    }
+
+    // 6. Invalid month (2026-13-01 and 2026-00-10) rejected with 400
+    for (const badMonth of ['2026-13-01', '2026-00-10']) {
+      const res = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+        nextExpectedDate: badMonth,
+      });
+      assert.equal(res.status, 400, `Expected 400 for ${badMonth}`);
+      assert.equal(res.body.code, 'INVALID_CALENDAR_DATE');
+    }
+
+    // 7. Invalid day (2026-01-00 and 2026-01-32) rejected with 400
+    for (const badDay of ['2026-01-00', '2026-01-32']) {
+      const res = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+        nextExpectedDate: badDay,
+      });
+      assert.equal(res.status, 400, `Expected 400 for ${badDay}`);
+      assert.equal(res.body.code, 'INVALID_CALENDAR_DATE');
+    }
+
+    // 8. Malformed strings ("15-11-2026", "2026/11/15", "not-a-date", "") rejected with 400
+    for (const malformed of ['15-11-2026', '2026/11/15', 'not-a-date', '', '2026-1-5']) {
+      const res = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+        nextExpectedDate: malformed,
+      });
+      assert.equal(res.status, 400, `Expected 400 for "${malformed}"`);
+      assert.equal(res.body.code, 'INVALID_CALENDAR_DATE');
+    }
+
+    // 9. ISO timestamp ("2026-11-15T00:00:00Z") rejected with 400
+    const isoTs = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+      nextExpectedDate: '2026-11-15T00:00:00Z',
+    });
+    assert.equal(isoTs.status, 400);
+    assert.equal(isoTs.body.code, 'INVALID_CALENDAR_DATE');
+
+    // 10. Non-string values (12345, true, {}, []) rejected with 400
+    for (const nonStr of [12345, true, { date: '2026-11-15' }, ['2026-11-15']]) {
+      const res = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+        nextExpectedDate: nonStr,
+      });
+      assert.equal(res.status, 400);
+      assert.equal(res.body.code, 'INVALID_CALENDAR_DATE');
+    }
+
+    // 11. Explicit null clears nextExpectedDateOverride and restores inferred schedule
+    const clearNull = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+      nextExpectedDate: null,
+    });
+    assert.equal(clearNull.status, 200);
+    assert.equal(clearNull.body.nextExpectedDate, inferredNextDate);
+
+    // 12. Omitted nextExpectedDate preserves existing override, and mixed valid recurrenceType + invalid nextExpectedDate rejects atomically
+    await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+      nextExpectedDate: '2026-12-01',
+    });
+    const omitDate = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+      recurrenceType: 'QUARTERLY',
+    });
+    assert.equal(omitDate.status, 200);
+    assert.equal(omitDate.body.recurrenceType, 'QUARTERLY');
+    assert.equal(
+      omitDate.body.nextExpectedDate,
+      '2026-12-01',
+      'Omitted nextExpectedDate must preserve existing nextExpectedDateOverride'
+    );
+
+    const storeSnapshotBeforeAtomicReject = fs.readFileSync(tmpStorePath, 'utf8');
+    const atomicReject = await api('PATCH', '/api/commitments/CMT-STREAMBOX', {
+      recurrenceType: 'WEEKLY',
+      nextExpectedDate: '2026-02-31',
+    });
+    assert.equal(atomicReject.status, 400);
+    assert.equal(atomicReject.body.code, 'INVALID_CALENDAR_DATE');
+    const storeSnapshotAfterAtomicReject = fs.readFileSync(tmpStorePath, 'utf8');
+    assert.equal(
+      storeSnapshotAfterAtomicReject,
+      storeSnapshotBeforeAtomicReject,
+      'Persisted canonical store must be 100% unchanged when PATCH is rejected'
+    );
+    const afterCommitments = (await api('GET', '/api/commitments')).body;
+    const afterStreambox = afterCommitments.find((c: any) => c.id === 'CMT-STREAMBOX');
+    assert.equal(
+      afterStreambox.recurrenceType,
+      'QUARTERLY',
+      'recurrenceType must not be partially updated when nextExpectedDate is invalid'
+    );
+    assert.equal(afterStreambox.nextExpectedDate, '2026-12-01');
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (fs.existsSync(tmpStorePath)) {
+      fs.unlinkSync(tmpStorePath);
+    }
+  }
+});
+
