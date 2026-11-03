@@ -491,7 +491,9 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
           <div className="text-sm font-mono font-bold text-teal-800 mt-1 tabular-nums">
             {activeCommitment.isFinancialObligation
               ? 'Contractual Obligation'
-              : `${formatINR(activeCommitment.annualisedAmount, activeCommitment.currency)}/yr`}
+              : activeCommitment.annualisedAmount !== null
+              ? `${formatINR(activeCommitment.annualisedAmount, activeCommitment.currency)}/yr`
+              : 'Not a recurring projection'}
           </div>
           <div className="text-[11px] text-slate-500 mt-1">
             Playbook status: {activePlaybook.lastVerifiedDate}

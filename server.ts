@@ -1911,20 +1911,28 @@ app.get('/api/dashboard/summary', (req, res) => {
         c.annualisedAmountExact
       );
     }
-    bucket.monthlyRecurringSpend = Number(
-      (bucket.monthlyRecurringSpend + c.monthlyEquivalent).toFixed(2)
-    );
-    bucket.annualCommitmentTotal = Number(
-      (bucket.annualCommitmentTotal + c.annualisedAmount).toFixed(2)
-    );
+    if (c.monthlyEquivalent !== null) {
+      bucket.monthlyRecurringSpend = Number(
+        (bucket.monthlyRecurringSpend + c.monthlyEquivalent).toFixed(2)
+      );
+    }
+    if (c.annualisedAmount !== null) {
+      bucket.annualCommitmentTotal = Number(
+        (bucket.annualCommitmentTotal + c.annualisedAmount).toFixed(2)
+      );
+    }
     if (c.isFinancialObligation) {
-      bucket.obligationAnnual = Number(
-        (bucket.obligationAnnual + c.annualisedAmount).toFixed(2)
-      );
+      if (c.annualisedAmount !== null) {
+        bucket.obligationAnnual = Number(
+          (bucket.obligationAnnual + c.annualisedAmount).toFixed(2)
+        );
+      }
     } else {
-      bucket.discretionaryAnnual = Number(
-        (bucket.discretionaryAnnual + c.annualisedAmount).toFixed(2)
-      );
+      if (c.annualisedAmount !== null) {
+        bucket.discretionaryAnnual = Number(
+          (bucket.discretionaryAnnual + c.annualisedAmount).toFixed(2)
+        );
+      }
     }
     bucket.activeCommitmentsCount += 1;
   }
@@ -2529,20 +2537,47 @@ app.patch('/api/commitments/:id', async (req, res) => {
   } = (req.body || {}) as {
     typicalAmount?: number;
     expectedAmountMinor?: number;
-    recurrenceType?: RecurrenceFrequency;
+    recurrenceType?: RecurrenceFrequency | null;
     nextExpectedDate?: string | null;
     lastUsedDate?: string | null;
   };
 
+  const validOverrideFrequencies: RecurrenceFrequency[] = [
+    'WEEKLY',
+    'FORTNIGHTLY',
+    'MONTHLY',
+    'QUARTERLY',
+    'HALF_YEARLY',
+    'YEARLY',
+    'IRREGULAR',
+    'ONE_TIME',
+  ];
+  if (
+    recurrenceType !== undefined &&
+    recurrenceType !== null &&
+    !validOverrideFrequencies.includes(recurrenceType)
+  ) {
+    res.status(400).json({
+      error: 'Invalid recurrenceType override',
+      code: 'INVALID_RECURRENCE_FREQUENCY',
+    });
+    return;
+  }
+
   await executeSerializedMutation(res, () => {
     const current = userCommitmentOverrides[id] || {};
+    const nextOverride = { ...current };
+    if (recurrenceType === null) {
+      delete nextOverride.recurrenceTypeOverride;
+    } else if (recurrenceType !== undefined) {
+      nextOverride.recurrenceTypeOverride = recurrenceType;
+    }
     userCommitmentOverrides[id] = {
-      ...current,
+      ...nextOverride,
       ...(typicalAmount !== undefined ? { typicalAmountOverride: Number(typicalAmount) } : {}),
       ...(expectedAmountMinor !== undefined
         ? { expectedAmountMinorOverride: Number(expectedAmountMinor) }
         : {}),
-      ...(recurrenceType !== undefined ? { recurrenceTypeOverride: recurrenceType } : {}),
       ...(nextExpectedDate !== undefined ? { nextExpectedDateOverride: nextExpectedDate } : {}),
       ...(lastUsedDate !== undefined ? { lastUsedDate } : {}),
     };

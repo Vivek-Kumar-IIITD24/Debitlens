@@ -351,9 +351,9 @@ export interface CommitmentRecord {
   previousAmountMinorExact?: string | null;
   currency: string;
   currencyStatus?: 'SUPPORTED' | 'UNKNOWN' | 'UNSUPPORTED';
-  annualisedAmount: number;
+  annualisedAmount: number | null;
   annualisedAmountExact?: string | null;
-  monthlyEquivalent: number;
+  monthlyEquivalent: number | null;
   monthlyEquivalentExact?: string | null;
   averageDebitAmountExact?: string | null;
   totalHistoricalSpend: number;

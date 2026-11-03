@@ -183,7 +183,7 @@ export const apiClient = {
     payload: {
       typicalAmount?: number;
       expectedAmountMinor?: number;
-      recurrenceType?: RecurrenceFrequency;
+      recurrenceType?: RecurrenceFrequency | null;
       nextExpectedDate?: string | null;
       lastUsedDate?: string | null;
     }

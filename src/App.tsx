@@ -1143,7 +1143,9 @@ export default function App() {
                             )}
                           </td>
                           <td className="py-3 px-3 font-mono tabular-nums text-right font-semibold text-teal-800">
-                            {formatINR(c.annualisedAmount, c.currency)}/yr
+                            {c.annualisedAmount !== null
+                              ? `${formatINR(c.annualisedAmount, c.currency)}/yr`
+                              : 'Not a recurring projection'}
                           </td>
                           <td className="py-3 px-3 font-mono text-[11px] text-slate-700 tabular-nums">
                             {c.confidenceScore}/100 ({c.confidenceLabel}) · {c.status.replace(/_/g, ' ')}
@@ -1419,7 +1421,9 @@ export default function App() {
                             {formatINR(cmt.latestAmount, cmt.currency)}
                           </div>
                           <div className="text-xs text-teal-800 font-semibold">
-                            {formatINR(cmt.annualisedAmount, cmt.currency)}/yr ({formatINR(cmt.monthlyEquivalent, cmt.currency)}/mo eq)
+                            {cmt.annualisedAmount !== null && cmt.monthlyEquivalent !== null
+                              ? `${formatINR(cmt.annualisedAmount, cmt.currency)}/yr (${formatINR(cmt.monthlyEquivalent, cmt.currency)}/mo eq)`
+                              : 'Not a recurring projection'}
                           </div>
                           <div className="text-[11px] text-slate-500">
                             Next expected: {formatDateIN(cmt.nextExpectedDate)}

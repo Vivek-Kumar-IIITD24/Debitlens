@@ -41,6 +41,7 @@ import {
   parseAllMappedCsvRows,
   computeCanonicalCsvRowFingerprint,
   buildPlaybookAndSessionForCommitment,
+  calculateExactProjection,
 } from './debitlensEngine';
 import { buildInitialSeedGuardrails } from './reconciliationEngine';
 import { formatExactCurrency } from '../utils/currency';
@@ -396,6 +397,70 @@ test('Exact recurrence projections preserve each established business rule', () 
   assert.equal(utility.monthlyEquivalentExact, '20001');
   assert.equal(utility.annualisedAmountExact, '240012');
   assert.equal(utility.totalHistoricalSpendExact, '60003');
+});
+
+test('Exact projection rules cover every supported frequency without defaulting to monthly', () => {
+  const expected: Array<[any, string, string]> = [
+    ['WEEKLY', '520000', '43333'],
+    ['FORTNIGHTLY', '260000', '21667'],
+    ['MONTHLY', '120000', '10000'],
+    ['QUARTERLY', '40000', '3333'],
+    ['HALF_YEARLY', '20000', '1667'],
+    ['YEARLY', '10000', '833'],
+    ['IRREGULAR', '30000', '2500'],
+  ];
+  for (const [recurrenceType, annualisedAmountExact, monthlyEquivalentExact] of expected) {
+    const projection = calculateExactProjection({
+      recurrenceType,
+      latestMinor: 10000n,
+      eligibleHistoricalMinors: [10000n],
+      currency: 'INR',
+      variableUtility: false,
+    });
+    assert.equal(projection.annualisedAmountExact, annualisedAmountExact, recurrenceType);
+    assert.equal(projection.monthlyEquivalentExact, monthlyEquivalentExact, recurrenceType);
+  }
+  const oneTime = calculateExactProjection({
+    recurrenceType: 'ONE_TIME',
+    latestMinor: 10000n,
+    eligibleHistoricalMinors: [10000n],
+    currency: 'INR',
+    variableUtility: false,
+  });
+  assert.equal(oneTime.annualisedAmount, null);
+  assert.equal(oneTime.monthlyEquivalent, null);
+  assert.equal(oneTime.classification, 'UNAVAILABLE');
+
+  const variable = calculateExactProjection({
+    recurrenceType: 'MONTHLY',
+    latestMinor: 30001n,
+    eligibleHistoricalMinors: [10001n, 20001n, 30001n],
+    currency: 'INR',
+    variableUtility: true,
+  });
+  assert.equal(variable.averageDebitAmountExact, '20001');
+  assert.equal(variable.monthlyEquivalentExact, '20001');
+  assert.equal(variable.annualisedAmountExact, '240012');
+  assert.equal(variable.classification, 'ESTIMATED');
+});
+
+test('Recurrence override recalculates exact projections and rejects invalid values', () => {
+  const { transactions } = parseAndNormaliseTransactions([
+    ...SAMPLE_ROWS.slice(0, 3),
+  ]);
+  const inferred = detectCommitmentsAndAlerts(transactions, []);
+  const monthly = inferred.commitments.find((c) => c.id === 'CMT-STREAMBOX');
+  assert.ok(monthly);
+  const overridden = detectCommitmentsAndAlerts(
+    transactions,
+    [],
+    { 'CMT-STREAMBOX': { recurrenceTypeOverride: 'WEEKLY' } }
+  ).commitments.find((c) => c.id === 'CMT-STREAMBOX');
+  assert.ok(overridden);
+  assert.equal(overridden.recurrenceType, 'WEEKLY');
+  assert.equal(overridden.annualisedAmountExact, '2594800');
+  assert.equal(overridden.monthlyEquivalentExact, '216233');
+  assert.notEqual(overridden.annualisedAmountExact, monthly.annualisedAmountExact);
 });
 
 test('Neo4j Commitment Graph builder constructs full path and executes Cypher Operations 1-7', () => {
