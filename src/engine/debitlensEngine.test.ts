@@ -3441,6 +3441,9 @@ test('Gates A, B, D, E Server Integration: Authoritative merchant confirmation, 
     const octUsd = trendUsd.body.find((p: any) => p.month === '2026-10');
     assert.equal(octUsd.currency, 'USD');
     assert.equal(octUsd.subscriptions, 19.99);
+    assert.equal(octUsd.currencyPrecision, 2);
+    assert.equal(octUsd.subscriptionsMinorExact, '1999');
+    assert.equal(octUsd.totalMinorExact, '1999');
 
     // 7. Evidence-attached status validation & separate Layer A/B monitoring + guardrail currency check
     const srvEvidMissing = await api('PATCH', '/api/cancellations/CMT-STREAMBOX/service-status', {

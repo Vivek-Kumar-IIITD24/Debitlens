@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { CommitmentPassport, EvidencePackData } from '../../types/debitlens';
 import { apiClient } from '../../services/apiClient';
-import { formatINR, formatDateIN } from '../../utils/currency';
+import { formatINR, formatDateIN, formatMinorUnitsExact } from '../../utils/currency';
 
 interface CommitmentPassportModalProps {
   commitmentId: string | null;
@@ -410,10 +410,16 @@ export const CommitmentPassportModal: React.FC<CommitmentPassportModalProps> = (
                   <div>
                     <span className="text-slate-400 block">Total Spent to Date</span>
                     <span className="text-lg font-bold text-slate-900">
-                      {formatINR(
-                        passport.sectionD_History.totalSpent,
-                        passport.sectionD_History.currency
-                      )}
+                      {passport.sectionD_History.totalSpentExact !== null &&
+                      passport.sectionD_History.totalSpentExact !== undefined
+                        ? formatMinorUnitsExact(
+                            passport.sectionD_History.totalSpentExact,
+                            passport.sectionD_History.currency
+                          )
+                        : formatINR(
+                            passport.sectionD_History.totalSpent,
+                            passport.sectionD_History.currency
+                          )}
                     </span>
                   </div>
                   <div>

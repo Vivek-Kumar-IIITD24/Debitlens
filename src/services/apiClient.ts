@@ -89,11 +89,16 @@ export interface DashboardSummaryData {
 
 export interface MonthlyTrendPoint {
   month: string;
-  currency?: string;
+  currency: string;
+  currencyPrecision: number | null;
   subscriptions: number;
+  subscriptionsMinorExact: string;
   obligations: number;
+  obligationsMinorExact: string;
   unresolved: number;
+  unresolvedMinorExact: string;
   total: number;
+  totalMinorExact: string;
 }
 
 export interface DetectionMetricsData {

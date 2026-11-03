@@ -112,6 +112,16 @@ transaction_id,transaction_date,raw_description,amount,currency,direction,paymen
   - `amountMinorExact` is the JSON-safe exact minor-unit integer string and is authoritative for exact calculations when the currency is supported.
 - Missing or `UNKNOWN` currency has no authoritative minor-unit interpretation; it remains explicitly unavailable rather than being treated as INR.
 - Derived display values and legacy numeric summaries are rounded to the currency's supported decimal scale. Exact companion fields are provided where available; the prototype does not claim every derived public number is arbitrary-precision.
+- Dashboard summary fields expose `monthlyRecurringSpendExact`, `annualCommitmentTotalExact`,
+  `discretionaryAnnualExact` and `obligationAnnualExact`; monthly trend responses expose
+  `subscriptionsMinorExact`, `obligationsMinorExact`, `unresolvedMinorExact` and
+  `totalMinorExact`, together with the selected currency and precision.
+- Monthly projections preserve the existing business rules: monthly latest debit × 12,
+  quarterly × 4, yearly × 1, irregular latest debit × 3, and variable utilities use
+  the eligible historical debit average × 12. Derived divisions use half-up minor-unit
+  rounding; irregular results remain estimates, not confirmed contract prices.
+- Mixed currencies are kept in separate buckets or reported as unavailable. No exchange-rate
+  conversion is performed.
 
 ## Storage, backup and demo reset
 

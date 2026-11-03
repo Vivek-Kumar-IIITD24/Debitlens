@@ -54,6 +54,7 @@ import {
   SarvamRuntimeStatus,
   MandateRecord,
   ServiceTermsRecord,
+  TransactionRecord,
   EvidenceCasebookEntry,
   AuditEventRecord,
   FinancialGuardrailConfig,
@@ -2057,6 +2058,16 @@ app.get('/api/dashboard/monthly-trend', (req, res) => {
   const obligationIds = new Set(
     state.commitments.filter((c) => c.isFinancialObligation).map((c) => c.id)
   );
+  const toExactMinor = (transaction: TransactionRecord): bigint | null => {
+    if (transaction.amountMinorExact !== null && transaction.amountMinorExact !== undefined) {
+      return BigInt(transaction.amountMinorExact);
+    }
+    if (transaction.amountMinor !== null && transaction.amountMinor !== undefined) {
+      return BigInt(transaction.amountMinor);
+    }
+    const converted = toMinorUnitsStrict(transaction.amountExact ?? transaction.amount, targetCurrency);
+    return converted === null ? null : BigInt(converted);
+  };
 
   const trend = months.map((m) => {
     const monthTxns = state.transactions.filter(
@@ -2067,32 +2078,60 @@ app.get('/api/dashboard/monthly-trend', (req, res) => {
         (normalizeCurrencyCode(t.currency) || String(t.currency).trim().toUpperCase()) ===
           targetCurrency
     );
-    const subscriptions = monthTxns
+    const subscriptionsMinorExact = monthTxns
       .filter(
         (t) =>
           t.commitmentId &&
           !obligationIds.has(t.commitmentId) &&
           !['CMT-BAJAJEMI', 'CMT-MAXLIFE', 'CMT-BESCOM'].includes(t.commitmentId)
       )
-      .reduce((s, t) => s + t.amount, 0);
-    const obligations = monthTxns
+      .reduce(
+        (sum, transaction) =>
+          toExactMinor(transaction) === null ? sum : sum + toExactMinor(transaction)!,
+        0n
+      );
+    const obligationsMinorExact = monthTxns
       .filter(
         (t) =>
           t.commitmentId &&
           (obligationIds.has(t.commitmentId) ||
             ['CMT-BAJAJEMI', 'CMT-MAXLIFE', 'CMT-BESCOM'].includes(t.commitmentId))
       )
-      .reduce((s, t) => s + t.amount, 0);
-    const unresolved = monthTxns
+      .reduce(
+        (sum, transaction) =>
+          toExactMinor(transaction) === null ? sum : sum + toExactMinor(transaction)!,
+        0n
+      );
+    const unresolvedMinorExact = monthTxns
       .filter((t) => t.resolutionStatus === 'UNRESOLVED')
-      .reduce((s, t) => s + t.amount, 0);
+      .reduce(
+        (sum, transaction) =>
+          toExactMinor(transaction) === null ? sum : sum + toExactMinor(transaction)!,
+        0n
+      );
+    const totalMinorExact =
+      subscriptionsMinorExact + obligationsMinorExact + unresolvedMinorExact;
+    const boundedMajor = (minor: bigint): number => {
+      if (
+        minor > BigInt(Number.MAX_SAFE_INTEGER) ||
+        minor < BigInt(Number.MIN_SAFE_INTEGER)
+      ) {
+        return 0;
+      }
+      return fromMinorUnitsStrict(Number(minor), targetCurrency) ?? 0;
+    };
     return {
       month: m,
       currency: targetCurrency,
-      subscriptions: Number(subscriptions.toFixed(2)),
-      obligations: Number(obligations.toFixed(2)),
-      unresolved: Number(unresolved.toFixed(2)),
-      total: Number((subscriptions + obligations + unresolved).toFixed(2)),
+      currencyPrecision: getCurrencyDecimalsOrNull(targetCurrency),
+      subscriptions: boundedMajor(subscriptionsMinorExact),
+      subscriptionsMinorExact: subscriptionsMinorExact.toString(),
+      obligations: boundedMajor(obligationsMinorExact),
+      obligationsMinorExact: obligationsMinorExact.toString(),
+      unresolved: boundedMajor(unresolvedMinorExact),
+      unresolvedMinorExact: unresolvedMinorExact.toString(),
+      total: boundedMajor(totalMinorExact),
+      totalMinorExact: totalMinorExact.toString(),
     };
   });
   res.json(trend);

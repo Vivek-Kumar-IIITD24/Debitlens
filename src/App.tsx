@@ -53,7 +53,12 @@ import {
   ServiceTermsRecord,
   ReconciliationFindingRecord,
 } from './types/debitlens';
-import { formatINR, formatDateIN, formatExactCurrency } from './utils/currency';
+import {
+  formatINR,
+  formatDateIN,
+  formatExactCurrency,
+  formatMinorUnitsExact,
+} from './utils/currency';
 import {
   SearchHistoryEntry,
   DEFAULT_DESCRIPTOR_SEARCH_HISTORY,
@@ -834,7 +839,13 @@ export default function App() {
                 <div className="p-4 rounded-xl bg-white border border-slate-200">
                   <div className="text-xs text-slate-500">Monthly Equivalent</div>
                   <div className="text-xl font-mono font-bold text-slate-900 mt-1 tabular-nums">
-                    {formatINR(summary.monthlyRecurringSpend, summary.primaryCurrency || 'INR')}
+                    {summary.monthlyRecurringSpendExact !== null &&
+                    summary.monthlyRecurringSpendExact !== undefined
+                      ? formatMinorUnitsExact(
+                          summary.monthlyRecurringSpendExact,
+                          summary.primaryCurrency || null
+                        )
+                      : formatINR(summary.monthlyRecurringSpend, summary.primaryCurrency || 'INR')}
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
                     Across {summary.activeCommitmentsCount} active commitments
@@ -844,7 +855,13 @@ export default function App() {
                 <div className="p-4 rounded-xl bg-white border border-slate-200">
                   <div className="text-xs text-slate-500">Projected Annual Total</div>
                   <div className="text-xl font-mono font-bold text-teal-800 mt-1 tabular-nums">
-                    {formatINR(summary.annualCommitmentTotal, summary.primaryCurrency || 'INR')}
+                    {summary.annualCommitmentTotalExact !== null &&
+                    summary.annualCommitmentTotalExact !== undefined
+                      ? formatMinorUnitsExact(
+                          summary.annualCommitmentTotalExact,
+                          summary.primaryCurrency || null
+                        )
+                      : formatINR(summary.annualCommitmentTotal, summary.primaryCurrency || 'INR')}
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
                     Includes annual & quarterly
@@ -854,7 +871,14 @@ export default function App() {
                 <div className="p-4 rounded-xl bg-white border border-slate-200">
                   <div className="text-xs text-slate-500">Discretionary Subscriptions</div>
                   <div className="text-xl font-mono font-bold text-slate-900 mt-1 tabular-nums">
-                    {formatINR(summary.discretionaryAnnual, summary.primaryCurrency || 'INR')}/yr
+                    {summary.discretionaryAnnualExact !== null &&
+                    summary.discretionaryAnnualExact !== undefined
+                      ? formatMinorUnitsExact(
+                          summary.discretionaryAnnualExact,
+                          summary.primaryCurrency || null
+                        )
+                      : formatINR(summary.discretionaryAnnual, summary.primaryCurrency || 'INR')}
+                    /yr
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
                     OTT, music, cloud, fitness
@@ -864,7 +888,14 @@ export default function App() {
                 <div className="p-4 rounded-xl bg-white border border-slate-200">
                   <div className="text-xs text-slate-500">Contractual Obligations</div>
                   <div className="text-xl font-mono font-bold text-slate-900 mt-1 tabular-nums">
-                    {formatINR(summary.obligationAnnual, summary.primaryCurrency || 'INR')}/yr
+                    {summary.obligationAnnualExact !== null &&
+                    summary.obligationAnnualExact !== undefined
+                      ? formatMinorUnitsExact(
+                          summary.obligationAnnualExact,
+                          summary.primaryCurrency || null
+                        )
+                      : formatINR(summary.obligationAnnual, summary.primaryCurrency || 'INR')}
+                    /yr
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
                     Loan EMI, insurance, utility
@@ -903,8 +934,17 @@ export default function App() {
                         key={cs.currency}
                         className="px-2.5 py-1 rounded-md bg-white border border-slate-200 text-slate-800"
                       >
-                        <strong>{cs.currency}:</strong> {formatINR(cs.monthlyRecurringSpend, cs.currency)}/mo ·{' '}
-                        {formatINR(cs.annualCommitmentTotal, cs.currency)}/yr ({cs.activeCommitmentsCount} active)
+                        <strong>{cs.currency}:</strong>{' '}
+                        {cs.monthlyRecurringSpendExact !== null &&
+                        cs.monthlyRecurringSpendExact !== undefined
+                          ? formatMinorUnitsExact(cs.monthlyRecurringSpendExact, cs.currency)
+                          : formatINR(cs.monthlyRecurringSpend, cs.currency)}
+                        /mo ·{' '}
+                        {cs.annualCommitmentTotalExact !== null &&
+                        cs.annualCommitmentTotalExact !== undefined
+                          ? formatMinorUnitsExact(cs.annualCommitmentTotalExact, cs.currency)
+                          : formatINR(cs.annualCommitmentTotal, cs.currency)}
+                        /yr ({cs.activeCommitmentsCount} active)
                       </span>
                     ))}
                   </div>
@@ -932,10 +972,21 @@ export default function App() {
                         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
                         <YAxis tick={{ fontSize: 12 }} />
                         <Tooltip
-                          formatter={(value: unknown) => [
-                            formatINR(Number(value || 0), summary.primaryCurrency || 'INR'),
-                            'Spend',
-                          ]}
+                          formatter={(value: unknown, name: string | number | undefined, item: { payload?: MonthlyTrendPoint }) => {
+                            const payload = item?.payload;
+                            const exactByName: Record<string, string | undefined> = {
+                              'Optional Subscriptions': payload?.subscriptionsMinorExact,
+                              'Loan / Insurance / Utility Obligations': payload?.obligationsMinorExact,
+                              'Unresolved Processor-Only': payload?.unresolvedMinorExact,
+                            };
+                            const exact = typeof name === 'string' ? exactByName[name] : undefined;
+                            return [
+                              exact !== undefined
+                                ? formatMinorUnitsExact(exact, payload?.currency || summary.primaryCurrency)
+                                : formatINR(Number(value || 0), payload?.currency || summary.primaryCurrency || 'INR'),
+                              String(name ?? 'Spend'),
+                            ];
+                          }}
                         />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
                         <Bar
