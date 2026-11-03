@@ -676,7 +676,7 @@ export function calculateConfidenceBreakdown(params: {
   recurrenceType: RecurrenceFrequency;
   merchantConfidence: number;
   occurrencesCount: number;
-  amounts: number[];
+  amounts: Array<number | string>;
   hasMandateOrNotification: boolean;
 }): ConfidenceScoreBreakdown {
   const {
@@ -1021,7 +1021,9 @@ export function detectCommitmentsAndAlerts(
     const latestAmount = latestAnalysisAmount / minorFactor;
     const previousAmount = previousAnalysisAmount === null ? null : previousAnalysisAmount / minorFactor;
 
-    const uniqueAmounts = new Set(analysisAmounts);
+    const uniqueAmounts = exactAnalysisAvailable
+      ? new Set(exactAnalysisValues.map((value) => value.toString()))
+      : new Set(sorted.map((t) => t.amount));
     const isUtilityVariable = merchant.category === 'UTILITY_ESSENTIAL' && uniqueAmounts.size >= 3;
     const variableAmount = isUtilityVariable;
 
@@ -1061,21 +1063,49 @@ export function detectCommitmentsAndAlerts(
       annualPriceIncreaseImpact = Number((priceChangeAmount * multiplier).toFixed(2));
     }
 
+    const averageMinorExact =
+      exactAnalysisAvailable && exactAnalysisValues.length > 0
+        ? roundDivideBigInt(
+            exactAnalysisValues.reduce((sum, value) => sum + value, 0n),
+            BigInt(exactAnalysisValues.length)
+          )
+        : null;
     let annualisedAmount = latestAmount * 12;
     let monthlyEquivalent = latestAmount;
+    let annualisedAmountMinor =
+      exactAnalysisAvailable && latestExactMinor !== null
+        ? latestExactMinor * 12n
+        : null;
+    let monthlyEquivalentMinor =
+      exactAnalysisAvailable && latestExactMinor !== null
+        ? latestExactMinor
+        : null;
     if (recurrenceType === 'YEARLY') {
       annualisedAmount = latestAmount;
       monthlyEquivalent = Number((latestAmount / 12).toFixed(2));
+      annualisedAmountMinor = latestExactMinor;
+      monthlyEquivalentMinor =
+        latestExactMinor === null ? null : roundDivideBigInt(latestExactMinor, 12n);
     } else if (recurrenceType === 'QUARTERLY') {
       annualisedAmount = latestAmount * 4;
       monthlyEquivalent = Number((latestAmount / 3).toFixed(2));
+      annualisedAmountMinor =
+        latestExactMinor === null ? null : latestExactMinor * 4n;
+      monthlyEquivalentMinor =
+        latestExactMinor === null ? null : roundDivideBigInt(latestExactMinor, 3n);
     } else if (recurrenceType === 'IRREGULAR') {
       annualisedAmount = Number((latestAmount * 3).toFixed(2));
       monthlyEquivalent = Number((annualisedAmount / 12).toFixed(2));
+      annualisedAmountMinor =
+        latestExactMinor === null ? null : latestExactMinor * 3n;
+      monthlyEquivalentMinor =
+        latestExactMinor === null ? null : roundDivideBigInt(latestExactMinor, 4n);
     } else if (variableAmount) {
       const avgAmt = analysisAmounts.reduce((a, b) => a + b, 0) / analysisAmounts.length / minorFactor;
       monthlyEquivalent = Number(avgAmt.toFixed(2));
       annualisedAmount = Number((avgAmt * 12).toFixed(2));
+      annualisedAmountMinor = averageMinorExact === null ? null : averageMinorExact * 12n;
+      monthlyEquivalentMinor = averageMinorExact;
     }
 
     const totalHistoricalSpendMinor = exactAnalysisAvailable
@@ -1087,22 +1117,6 @@ export function detectCommitmentsAndAlerts(
         : analysisAmounts.reduce((a, b) => a + b, 0) / minorFactor
       ).toFixed(2)
     );
-    const annualisedAmountMinor =
-      exactAnalysisAvailable && latestExactMinor !== null
-        ? recurrenceType === 'YEARLY'
-          ? latestExactMinor
-          : recurrenceType === 'QUARTERLY'
-          ? latestExactMinor * 4n
-          : latestExactMinor * 12n
-        : null;
-    const monthlyEquivalentMinor =
-      exactAnalysisAvailable && latestExactMinor !== null
-        ? recurrenceType === 'YEARLY'
-          ? roundDivideBigInt(latestExactMinor, 12n)
-          : recurrenceType === 'QUARTERLY'
-          ? roundDivideBigInt(latestExactMinor, 3n)
-          : latestExactMinor
-        : null;
     const nextExpectedDate =
       recurrenceType === 'IRREGULAR'
         ? null
@@ -1117,7 +1131,9 @@ export function detectCommitmentsAndAlerts(
         sorted.reduce((acc, t) => acc + t.confidenceScore, 0) / sorted.length
       ),
       occurrencesCount: sorted.length,
-      amounts: sorted.map((t) => t.amount),
+      amounts: exactAnalysisAvailable
+        ? exactAnalysisValues.map((value) => value.toString())
+        : sorted.map((t) => t.amount),
       hasMandateOrNotification: matchingNotifs.length > 0 || sorted.some((t) => Boolean(t.externalReference)),
     });
 
@@ -1252,6 +1268,7 @@ export function detectCommitmentsAndAlerts(
       annualisedAmountExact: annualisedAmountMinor?.toString() ?? null,
       monthlyEquivalent,
       monthlyEquivalentExact: monthlyEquivalentMinor?.toString() ?? null,
+      averageDebitAmountExact: averageMinorExact?.toString() ?? null,
       totalHistoricalSpend,
       totalHistoricalSpendExact: exactAnalysisAvailable
         ? exactMinorAmounts.reduce((sum, value) => sum + BigInt(value), 0n).toString()

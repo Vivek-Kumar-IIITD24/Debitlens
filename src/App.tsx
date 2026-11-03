@@ -970,7 +970,15 @@ export default function App() {
                       <BarChart data={monthlyTrend}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                        <YAxis tick={{ fontSize: 12 }} />
+                        <YAxis
+                          tick={{ fontSize: 12 }}
+                          label={{
+                            value: `Relative ${monthlyTrend[0]?.currency || summary.primaryCurrency || 'currency'} spend`,
+                            angle: -90,
+                            position: 'insideLeft',
+                            style: { textAnchor: 'middle', fontSize: 11 },
+                          }}
+                        />
                         <Tooltip
                           formatter={(value: unknown, name: string | number | undefined, item: { payload?: MonthlyTrendPoint }) => {
                             const payload = item?.payload;

@@ -14,12 +14,10 @@ The canonical financial state is local JSON. Neo4j and Sarvam are optional proje
 
 ## Install and start
 
-Replace `<repository-url>` in the commands below with the HTTPS URL shown by the repository hosting page. This checkout has no configured Git remote, so no project-specific clone URL can be asserted here.
-
 ### Windows PowerShell
 
 ```powershell
-git clone <repository-url> DebitLens
+git clone https://github.com/Vivek-Kumar-IIITD24/DebitLens.git DebitLens
 Set-Location .\DebitLens
 Copy-Item .env.example .env
 npm ci --legacy-peer-deps
@@ -31,7 +29,7 @@ Open `http://localhost:3000`.
 ### macOS
 
 ```bash
-git clone <repository-url> DebitLens
+git clone https://github.com/Vivek-Kumar-IIITD24/DebitLens.git DebitLens
 cd DebitLens
 cp .env.example .env
 npm ci --legacy-peer-deps
@@ -43,7 +41,7 @@ Open `http://localhost:3000`.
 ### Linux
 
 ```bash
-git clone <repository-url> DebitLens
+git clone https://github.com/Vivek-Kumar-IIITD24/DebitLens.git DebitLens
 cd DebitLens
 cp .env.example .env
 npm ci --legacy-peer-deps

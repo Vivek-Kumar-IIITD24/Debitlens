@@ -355,6 +355,7 @@ export interface CommitmentRecord {
   annualisedAmountExact?: string | null;
   monthlyEquivalent: number;
   monthlyEquivalentExact?: string | null;
+  averageDebitAmountExact?: string | null;
   totalHistoricalSpend: number;
   totalHistoricalSpendExact?: string | null;
   firstObservedDate?: string;

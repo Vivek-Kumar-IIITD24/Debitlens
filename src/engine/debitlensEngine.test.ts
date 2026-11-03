@@ -345,6 +345,59 @@ test('Neo4j Test 2, 3, 4, 5: Temporal recurrence, price increase, resumed patter
   assert.ok(alerts.some((a) => a.alertType === 'POST_CANCELLATION_DEBIT' && a.commitmentId === 'CMT-DESIGNVAULT'));
 });
 
+test('Exact recurrence projections preserve each established business rule', () => {
+  const rows: RawCsvRow[] = [
+    { transaction_id: 'P-M-1', transaction_date: '2026-01-01', raw_description: 'RZP*STREAMBOX', amount: '90071992547408.99', currency: 'INR', direction: 'DEBIT', payment_rail: 'UPI_AUTOPAY', account_alias: 'TEST', external_reference: '' },
+    { transaction_id: 'P-M-2', transaction_date: '2026-02-01', raw_description: 'RZP*STREAMBOX', amount: '90071992547408.99', currency: 'INR', direction: 'DEBIT', payment_rail: 'UPI_AUTOPAY', account_alias: 'TEST', external_reference: '' },
+    { transaction_id: 'P-Q-1', transaction_date: '2026-01-01', raw_description: 'FITCLUB*QUARTERLY', amount: '100.01', currency: 'INR', direction: 'DEBIT', payment_rail: 'UPI_AUTOPAY', account_alias: 'TEST', external_reference: '' },
+    { transaction_id: 'P-Q-2', transaction_date: '2026-04-02', raw_description: 'FITCLUB*QUARTERLY', amount: '100.01', currency: 'INR', direction: 'DEBIT', payment_rail: 'UPI_AUTOPAY', account_alias: 'TEST', external_reference: '' },
+    { transaction_id: 'P-Y-1', transaction_date: '2025-01-01', raw_description: 'GOOGLE*CLOUDNOTES', amount: '1200.00', currency: 'INR', direction: 'DEBIT', payment_rail: 'UPI_AUTOPAY', account_alias: 'TEST', external_reference: '' },
+    { transaction_id: 'P-Y-2', transaction_date: '2026-01-01', raw_description: 'GOOGLE*CLOUDNOTES', amount: '1200.00', currency: 'INR', direction: 'DEBIT', payment_rail: 'UPI_AUTOPAY', account_alias: 'TEST', external_reference: '' },
+    { transaction_id: 'P-I-1', transaction_date: '2026-01-01', raw_description: 'SI-MUSICFLOW-IN', amount: '90071992547408.99', currency: 'INR', direction: 'DEBIT', payment_rail: 'UPI_AUTOPAY', account_alias: 'TEST', external_reference: '' },
+    { transaction_id: 'P-I-2', transaction_date: '2026-03-15', raw_description: 'SI-MUSICFLOW-IN', amount: '90071992547408.99', currency: 'INR', direction: 'DEBIT', payment_rail: 'UPI_AUTOPAY', account_alias: 'TEST', external_reference: '' },
+    { transaction_id: 'P-U-1', transaction_date: '2026-01-01', raw_description: 'BBPS*BESCOM-UTIL', amount: '100.01', currency: 'INR', direction: 'DEBIT', payment_rail: 'UPI_AUTOPAY', account_alias: 'TEST', external_reference: '' },
+    { transaction_id: 'P-U-2', transaction_date: '2026-02-01', raw_description: 'BBPS*BESCOM-UTIL', amount: '200.01', currency: 'INR', direction: 'DEBIT', payment_rail: 'UPI_AUTOPAY', account_alias: 'TEST', external_reference: '' },
+    { transaction_id: 'P-U-3', transaction_date: '2026-03-01', raw_description: 'BBPS*BESCOM-UTIL', amount: '300.01', currency: 'INR', direction: 'DEBIT', payment_rail: 'UPI_AUTOPAY', account_alias: 'TEST', external_reference: '' },
+    { transaction_id: 'P-U-R', transaction_date: '2026-03-15', raw_description: 'BBPS*BESCOM-UTIL', amount: '-50.00', currency: 'INR', direction: 'CREDIT', payment_rail: 'UPI_AUTOPAY', account_alias: 'TEST', external_reference: '' },
+  ];
+  const { transactions, invalidRows } = parseAndNormaliseTransactions(rows);
+  assert.equal(invalidRows.length, 0);
+  assert.equal(transactions.find((t) => t.id === 'P-M-1')?.amountMinorExact, '9007199254740899');
+
+  const { commitments } = detectCommitmentsAndAlerts(transactions, []);
+  const monthly = commitments.find((c) => c.id === 'CMT-STREAMBOX');
+  assert.ok(monthly);
+  assert.equal(monthly.recurrenceType, 'MONTHLY');
+  assert.equal(monthly.monthlyEquivalentExact, '9007199254740899');
+  assert.equal(monthly.annualisedAmountExact, '108086391056890788');
+
+  const quarterly = commitments.find((c) => c.id === 'CMT-FITCLUB');
+  assert.ok(quarterly);
+  assert.equal(quarterly.recurrenceType, 'QUARTERLY');
+  assert.equal(quarterly.monthlyEquivalentExact, '3334');
+  assert.equal(quarterly.annualisedAmountExact, '40004');
+
+  const yearly = commitments.find((c) => c.id === 'CMT-CLOUDNOTES');
+  assert.ok(yearly);
+  assert.equal(yearly.recurrenceType, 'YEARLY');
+  assert.equal(yearly.annualisedAmountExact, '120000');
+  assert.equal(yearly.monthlyEquivalentExact, '10000');
+
+  const irregular = commitments.find((c) => c.id === 'CMT-MUSICFLOW');
+  assert.ok(irregular);
+  assert.equal(irregular.recurrenceType, 'IRREGULAR');
+  assert.equal(irregular.annualisedAmountExact, '27021597764222697');
+  assert.equal(irregular.monthlyEquivalentExact, '2251799813685225', 'Irregular monthly equivalent uses annual estimate divided by 12 with half-up rounding');
+
+  const utility = commitments.find((c) => c.id === 'CMT-BESCOM');
+  assert.ok(utility);
+  assert.equal(utility.variableAmount, true);
+  assert.equal(utility.averageDebitAmountExact, '20001');
+  assert.equal(utility.monthlyEquivalentExact, '20001');
+  assert.equal(utility.annualisedAmountExact, '240012');
+  assert.equal(utility.totalHistoricalSpendExact, '60003');
+});
+
 test('Neo4j Commitment Graph builder constructs full path and executes Cypher Operations 1-7', () => {
   const { transactions } = parseAndNormaliseTransactions(SAMPLE_ROWS);
   const { commitments, alerts, playbooks, sessions } = detectCommitmentsAndAlerts(
@@ -4699,6 +4752,25 @@ test('Part 4, 5 & 6 Server Closure: Demo Mode Server Enforcement, Simulated Data
       dynamicTrend.body.map((m: any) => m.month),
       ['2026-08', '2026-09', '2026-10', '2026-11', '2026-12']
     );
+
+    const largeTrendCsv = [
+      'transaction_id,transaction_date,raw_description,amount,currency,direction,payment_rail,account_alias,external_reference',
+      'TXN-LARGE-TREND-1,2026-10-12,RZP*STREAMBOX,90071992547408.99,INR,DEBIT,UPI_AUTOPAY,HDFC-LARGE,UTR-LARGE-1',
+      'TXN-LARGE-TREND-2,2026-11-12,RZP*STREAMBOX,90071992547408.99,INR,DEBIT,UPI_AUTOPAY,HDFC-LARGE,UTR-LARGE-2',
+    ].join('\n');
+    const largeTrendImport = await api('POST', '/api/import/transactions', {
+      csvContent: largeTrendCsv,
+      filename: 'large-trend.csv',
+    });
+    assert.equal(largeTrendImport.status, 200);
+    const largeTrend = await api(
+      'GET',
+      '/api/dashboard/monthly-trend?currency=INR&referenceDate=2026-11-15&months=2'
+    );
+    const largeNovember = largeTrend.body.find((p: any) => p.month === '2026-11');
+    assert.equal(largeNovember.subscriptionsMinorExact, '9007199254740899');
+    assert.ok(largeNovember.subscriptions > 0, 'Unsafe exact totals must remain visible in chart geometry');
+    assert.ok(largeNovember.subscriptions < 1, 'Unsafe chart geometry must be relative, not a financial number');
   } finally {
     server.closeAllConnections?.();
     await new Promise<void>((resolve) => server.close(() => resolve()));

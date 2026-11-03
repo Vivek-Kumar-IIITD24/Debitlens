@@ -99,6 +99,7 @@ export interface MonthlyTrendPoint {
   unresolvedMinorExact: string;
   total: number;
   totalMinorExact: string;
+  chartScaleMinorExact: string;
 }
 
 export interface DetectionMetricsData {

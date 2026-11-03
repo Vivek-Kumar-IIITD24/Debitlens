@@ -2068,6 +2068,22 @@ app.get('/api/dashboard/monthly-trend', (req, res) => {
     const converted = toMinorUnitsStrict(transaction.amountExact ?? transaction.amount, targetCurrency);
     return converted === null ? null : BigInt(converted);
   };
+  const allTargetDebitMinors = state.transactions
+    .filter(
+      (t) =>
+        t.direction === 'DEBIT' &&
+        !isUnknownCurrency(t.currency) &&
+        (normalizeCurrencyCode(t.currency) || String(t.currency).trim().toUpperCase()) ===
+          targetCurrency
+    )
+    .map(toExactMinor)
+    .filter((value): value is bigint => value !== null);
+  const globalAbsoluteMinor = allTargetDebitMinors.reduce((sum, value) => {
+    const absolute = value < 0n ? -value : value;
+    return sum + absolute;
+  }, 0n);
+  const requiresRelativeChartScale =
+    globalAbsoluteMinor > BigInt(Number.MAX_SAFE_INTEGER);
 
   const trend = months.map((m) => {
     const monthTxns = state.transactions.filter(
@@ -2111,27 +2127,39 @@ app.get('/api/dashboard/monthly-trend', (req, res) => {
       );
     const totalMinorExact =
       subscriptionsMinorExact + obligationsMinorExact + unresolvedMinorExact;
-    const boundedMajor = (minor: bigint): number => {
-      if (
-        minor > BigInt(Number.MAX_SAFE_INTEGER) ||
-        minor < BigInt(Number.MIN_SAFE_INTEGER)
-      ) {
-        return 0;
+    const monthAbsoluteMinor = [
+      subscriptionsMinorExact,
+      obligationsMinorExact,
+      unresolvedMinorExact,
+      totalMinorExact,
+    ].reduce((max, value) => {
+      const absolute = value < 0n ? -value : value;
+      return absolute > max ? absolute : max;
+    }, 0n);
+    const chartScaleMinor =
+      requiresRelativeChartScale ? globalAbsoluteMinor : monthAbsoluteMinor;
+    const chartUnits = (minor: bigint): number => {
+      if (chartScaleMinor === 0n) return 0;
+      if (!requiresRelativeChartScale) {
+        return fromMinorUnitsStrict(Number(minor), targetCurrency) ?? 0;
       }
-      return fromMinorUnitsStrict(Number(minor), targetCurrency) ?? 0;
+      const scaled = (minor * 1000000n) / chartScaleMinor;
+      if (scaled === 0n && minor !== 0n) return minor < 0n ? -0.000001 : 0.000001;
+      return Number(scaled) / 1000000;
     };
     return {
       month: m,
       currency: targetCurrency,
       currencyPrecision: getCurrencyDecimalsOrNull(targetCurrency),
-      subscriptions: boundedMajor(subscriptionsMinorExact),
+      subscriptions: chartUnits(subscriptionsMinorExact),
       subscriptionsMinorExact: subscriptionsMinorExact.toString(),
-      obligations: boundedMajor(obligationsMinorExact),
+      obligations: chartUnits(obligationsMinorExact),
       obligationsMinorExact: obligationsMinorExact.toString(),
-      unresolved: boundedMajor(unresolvedMinorExact),
+      unresolved: chartUnits(unresolvedMinorExact),
       unresolvedMinorExact: unresolvedMinorExact.toString(),
-      total: boundedMajor(totalMinorExact),
+      total: chartUnits(totalMinorExact),
       totalMinorExact: totalMinorExact.toString(),
+      chartScaleMinorExact: chartScaleMinor.toString(),
     };
   });
   res.json(trend);
