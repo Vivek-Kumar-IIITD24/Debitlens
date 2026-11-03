@@ -17,7 +17,7 @@ import {
   buildCommitmentGraphResponse,
   NotificationInput,
 } from '../engine/debitlensEngine';
-import { formatCurrency } from '../utils/currency';
+import { formatCurrency, formatExactCurrency } from '../utils/currency';
 
 export interface Neo4jRuntimeStatus {
   configured: boolean;
@@ -349,7 +349,7 @@ export class Neo4jPersistenceService {
       allNodesMap.set(uTxn.id, {
         id: uTxn.id,
         label: 'Transaction',
-        title: `${uTxn.id} · ${formatCurrency(uTxn.amount, uTxn.currency || 'UNKNOWN')} (UNRESOLVED)`,
+        title: `${uTxn.id} · ${formatExactCurrency(uTxn.amountExact ?? uTxn.amount, uTxn.currency || 'UNKNOWN')} (UNRESOLVED)`,
         subtitle: `${uTxn.transactionDate} · ${uTxn.rawDescription}`,
         status: 'UNRESOLVED',
         confidence: uTxn.confidenceScore,
@@ -359,7 +359,9 @@ export class Neo4jPersistenceService {
           date: uTxn.transactionDate,
           transactionDate: uTxn.transactionDate,
           amount: uTxn.amount,
+          amountExact: uTxn.amountExact ?? null,
           amountMinor: uTxn.amountMinor ?? null,
+          amountMinorExact: uTxn.amountMinorExact ?? null,
           currency: uTxn.currency || 'UNKNOWN',
           rawDescription: uTxn.rawDescription,
           normalisedDescription: uTxn.normalisedDescription,

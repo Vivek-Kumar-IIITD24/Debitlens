@@ -292,7 +292,7 @@ export function getMinorUnitLabel(currency: string | null | undefined): string {
 }
 
 export function toMinorUnitsStrictResult(
-  amountMajor: number | null | undefined,
+  amountMajor: number | string | null | undefined,
   currency: string | null | undefined
 ): StrictMoneyConversionResult {
   if (amountMajor === null || amountMajor === undefined) {
@@ -301,6 +301,31 @@ export function toMinorUnitsStrictResult(
       value: null,
       error: 'MISSING_AMOUNT',
       currency: typeof currency === 'string' ? currency.trim().toUpperCase() || null : null,
+    };
+  }
+  if (typeof amountMajor === 'string') {
+    const exact = convertMajorToMinorExact(amountMajor, currency || '');
+    if (exact.success === false) {
+      return {
+        ok: false,
+        value: null,
+        error: exact.error,
+        currency: typeof currency === 'string' ? currency.trim().toUpperCase() || null : null,
+      };
+    }
+    if (exact.minorUnits > BigInt(Number.MAX_SAFE_INTEGER) || exact.minorUnits < BigInt(Number.MIN_SAFE_INTEGER)) {
+      return {
+        ok: false,
+        value: null,
+        error: 'UNSAFE_INTEGER',
+        currency: typeof currency === 'string' ? currency.trim().toUpperCase() || null : null,
+      };
+    }
+    return {
+      ok: true,
+      value: Number(exact.minorUnits),
+      currency: currency!.trim().toUpperCase(),
+      decimals: getCurrencyDecimalsOrNull(currency)!,
     };
   }
   if (typeof amountMajor !== 'number' || Number.isNaN(amountMajor) || !Number.isFinite(amountMajor)) {
@@ -446,7 +471,7 @@ export function convertMajorToMinorExact(
  * - Enforces Number.isSafeInteger bounds and avoids IEEE-754 drift.
  */
 export function toMinorUnitsStrict(
-  amountMajor: number | null | undefined,
+  amountMajor: number | string | null | undefined,
   currency: string | null | undefined
 ): number | null {
   const res = toMinorUnitsStrictResult(amountMajor, currency);
@@ -590,9 +615,11 @@ export function formatCurrency(
   ) {
     return 'Amount unavailable';
   }
+
   if (currency === null || currency === undefined || typeof currency !== 'string') {
     return `${amount} (Currency unavailable)`;
   }
+
   const trimmed = currency.trim().toUpperCase();
   if (!trimmed || trimmed === UNKNOWN_CURRENCY) {
     return `${amount} (Currency unavailable)`;
@@ -608,6 +635,57 @@ export function formatCurrency(
     minimumFractionDigits: 0,
     maximumFractionDigits: decimals,
   }).format(amount);
+}
+
+export function formatExactCurrency(
+  amount: string | number | null | undefined,
+  currency?: string | null
+): string {
+  if (typeof amount === 'number') return formatCurrency(amount, currency);
+  if (!amount || !/^-?\d+(?:\.\d+)?$/.test(amount.trim())) return 'Amount unavailable';
+  if (isUnknownCurrency(currency)) return `${amount} (Currency unavailable)`;
+  const decimals = getCurrencyDecimalsOrNull(currency);
+  if (decimals === null) return `${amount} ${currency} (Unsupported currency)`;
+  const symbolByCurrency: Record<string, string> = {
+    INR: '₹',
+    USD: '$',
+    EUR: '€',
+    GBP: '£',
+    JPY: '¥',
+  };
+  return `${symbolByCurrency[currency!] || `${currency} `}${amount}`;
+}
+
+export function formatMinorUnitsExact(
+  amountMinor: number | string | bigint | null | undefined,
+  currency?: string | null
+): string {
+  if (amountMinor === null || amountMinor === undefined) return 'Amount unavailable';
+  const decimals = getCurrencyDecimalsOrNull(currency);
+  if (decimals === null || isUnknownCurrency(currency)) return 'Amount unavailable';
+  let minor: bigint;
+  try {
+    minor = typeof amountMinor === 'bigint' ? amountMinor : BigInt(String(amountMinor));
+  } catch {
+    return 'Amount unavailable';
+  }
+  const negative = minor < 0n;
+  const digits = (negative ? -minor : minor).toString().padStart(decimals + 1, '0');
+  const major =
+    decimals === 0
+      ? digits
+      : `${digits.slice(0, -decimals)}.${digits.slice(-decimals)}`;
+  return formatExactCurrency(`${negative ? '-' : ''}${major}`, currency);
+}
+
+export function roundDivideBigInt(value: bigint, divisor: bigint): bigint {
+  if (divisor <= 0n) throw new Error('Divisor must be positive');
+  const negative = value < 0n;
+  const absolute = negative ? -value : value;
+  const quotient = absolute / divisor;
+  const remainder = absolute % divisor;
+  const rounded = remainder * 2n >= divisor ? quotient + 1n : quotient;
+  return negative ? -rounded : rounded;
 }
 
 /**

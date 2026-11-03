@@ -43,6 +43,7 @@ import {
   buildPlaybookAndSessionForCommitment,
 } from './debitlensEngine';
 import { buildInitialSeedGuardrails } from './reconciliationEngine';
+import { formatExactCurrency } from '../utils/currency';
 import {
   toMinorUnits,
   fromMinorUnits,
@@ -1848,6 +1849,105 @@ test('Phase 4 Hardening: parseAllMappedCsvRows parses all rows, preserves credit
     dateFormat: 'DD/MM/YYYY',
   });
 
+  {
+    const parsed = parseAllMappedCsvRows(
+      `Date,Description,Amount
+  01/10/2026,PRECISION-DEBIT,90071992547408.99
+  02/10/2026,PRECISION-REFUND,-90071992547408.99`,
+      {
+        dateColumn: 'Date',
+        descriptionColumn: 'Description',
+        singleAmountColumn: 'Amount',
+        amountMode: 'SINGLE_SIGNED_COLUMN',
+        dateFormat: 'DD/MM/YYYY',
+        defaultCurrency: 'INR',
+      },
+      true
+    );
+    assert.equal(parsed.validRows.length, 2);
+    const normalized = parseAndNormaliseTransactions(
+      parsed.validRows,
+      'BATCH-PRECISION-TEST',
+      'CSV_STATEMENT'
+    );
+    assert.equal(normalized.invalidRows.length, 0);
+    assert.equal(normalized.transactions[0].amountMinor, 9007199254740899);
+    assert.equal(normalized.transactions[0].amountExact, '90071992547408.99');
+    assert.equal(formatExactCurrency(normalized.transactions[0].amountExact, 'INR'), '₹90071992547408.99');
+    assert.equal(normalized.transactions[0].direction, 'DEBIT');
+    assert.equal(normalized.transactions[1].amountMinor, -9007199254740899);
+    assert.equal(normalized.transactions[1].direction, 'CREDIT');
+  }
+
+  {
+    const parsed = parseAndNormaliseTransactions(
+      [
+        {
+          transaction_id: 'TXN-EXCESS-DECIMALS',
+          transaction_date: '2026-10-01',
+          raw_description: 'EXCESS DECIMAL',
+          amount: '1.001',
+          currency: 'INR',
+          direction: 'DEBIT',
+          payment_rail: 'UNKNOWN',
+          account_alias: 'TEST',
+          external_reference: '',
+        },
+        {
+          transaction_id: 'TXN-SAFE-BOUNDARY',
+          transaction_date: '2026-10-02',
+          raw_description: 'SAFE BOUNDARY',
+          amount: '90071992547408.99',
+          currency: 'INR',
+          direction: 'DEBIT',
+          payment_rail: 'UNKNOWN',
+          account_alias: 'TEST',
+          external_reference: '',
+        },
+        {
+          transaction_id: 'TXN-UNSAFE-MINOR',
+          transaction_date: '2026-10-03',
+          raw_description: 'UNSAFE MINOR',
+          amount: '900719925474099.92',
+          currency: 'INR',
+          direction: 'DEBIT',
+          payment_rail: 'UNKNOWN',
+          account_alias: 'TEST',
+          external_reference: '',
+        },
+        {
+          transaction_id: 'TXN-UNKNOWN-CURRENCY',
+          transaction_date: '2026-10-04',
+          raw_description: 'UNKNOWN CURRENCY',
+          amount: '1.001',
+          currency: 'UNKNOWN',
+          direction: 'DEBIT',
+          payment_rail: 'UNKNOWN',
+          account_alias: 'TEST',
+          external_reference: '',
+        },
+        {
+          transaction_id: 'TXN-REFUND',
+          transaction_date: '2026-10-05',
+          raw_description: 'REFUND',
+          amount: '-12.34',
+          currency: 'INR',
+          direction: 'DEBIT',
+          payment_rail: 'UNKNOWN',
+          account_alias: 'TEST',
+          external_reference: '',
+        },
+      ],
+      'BATCH-MONEY-GUARDRAILS',
+      'CSV_STATEMENT'
+    );
+    assert.equal(parsed.invalidRows.length, 2);
+    assert.equal(parsed.transactions.length, 3);
+    assert.equal(parsed.transactions.find((t) => t.id === 'TXN-SAFE-BOUNDARY')?.amountExact, '90071992547408.99');
+    assert.equal(parsed.transactions.find((t) => t.id === 'TXN-UNKNOWN-CURRENCY')?.amountMinor, null);
+    assert.equal(parsed.transactions.find((t) => t.id === 'TXN-REFUND')?.direction, 'CREDIT');
+  }
+
   // All 5 rows should be parsed
   assert.equal(parsed.validRows.length, 5);
 
@@ -1871,6 +1971,160 @@ test('Phase 4 Hardening: parseAllMappedCsvRows parses all rows, preserves credit
   assert.ok(salary);
   assert.equal(salary.direction, 'CREDIT');
   assert.equal(salary.amount, '95000');
+});
+
+test('Exact money boundaries reject unrepresentable values and preserve display precision', () => {
+  const parsed = parseAndNormaliseTransactions([
+    {
+      transaction_id: 'TXN-BOUNDARY',
+      transaction_date: '2026-10-01',
+      raw_description: 'BOUNDARY',
+      amount: '90071992547408.99',
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UNKNOWN',
+      account_alias: 'TEST',
+      external_reference: '',
+    },
+    {
+      transaction_id: 'TXN-EXCESS',
+      transaction_date: '2026-10-02',
+      raw_description: 'EXCESS',
+      amount: '1.001',
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UNKNOWN',
+      account_alias: 'TEST',
+      external_reference: '',
+    },
+    {
+      transaction_id: 'TXN-UNKNOWN',
+      transaction_date: '2026-10-03',
+      raw_description: 'UNKNOWN',
+      amount: '1.001',
+      currency: 'UNKNOWN',
+      direction: 'DEBIT',
+      payment_rail: 'UNKNOWN',
+      account_alias: 'TEST',
+      external_reference: '',
+    },
+  ]);
+  assert.equal(parsed.invalidRows.length, 1);
+  assert.equal(parsed.transactions.length, 2);
+  assert.equal(parsed.transactions[0].amountMinor, 9007199254740899);
+  assert.equal(parsed.transactions[0].amountMinorExact, '9007199254740899');
+  assert.equal(parsed.transactions[0].amountExact, '90071992547408.99');
+  assert.equal(formatExactCurrency(parsed.transactions[0].amountExact, 'INR'), '₹90071992547408.99');
+  assert.equal(parsed.transactions[1].amountMinor, null);
+});
+
+test('Exact minor units survive downstream commitment, reconciliation, passport and evidence calculations', () => {
+  const rows: RawCsvRow[] = [
+    {
+      transaction_id: 'TXN-EXACT-1',
+      transaction_date: '2026-06-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: '90071992547408.99',
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'EXACT',
+      external_reference: 'EXACT-1',
+    },
+    {
+      transaction_id: 'TXN-EXACT-2',
+      transaction_date: '2026-07-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: '90071992547408.99',
+      currency: 'INR',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'EXACT',
+      external_reference: 'EXACT-2',
+    },
+    {
+      transaction_id: 'TXN-EXACT-REFUND',
+      transaction_date: '2026-07-06',
+      raw_description: 'REFUND-RZP*STREAMBOX',
+      amount: '90071992547408.99',
+      currency: 'INR',
+      direction: 'CREDIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'EXACT',
+      external_reference: 'EXACT-REFUND',
+    },
+    {
+      transaction_id: 'TXN-EXACT-USD',
+      transaction_date: '2026-08-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: '90071992547408.99',
+      currency: 'USD',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'EXACT',
+      external_reference: 'EXACT-USD',
+    },
+    {
+      transaction_id: 'TXN-EXACT-USD-2',
+      transaction_date: '2026-09-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: '90071992547408.99',
+      currency: 'USD',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'EXACT',
+      external_reference: 'EXACT-USD-2',
+    },
+    {
+      transaction_id: 'TXN-EXACT-USD-3',
+      transaction_date: '2026-10-05',
+      raw_description: 'RZP*STREAMBOX',
+      amount: '90071992547408.99',
+      currency: 'USD',
+      direction: 'DEBIT',
+      payment_rail: 'UPI_AUTOPAY',
+      account_alias: 'EXACT',
+      external_reference: 'EXACT-USD-3',
+    },
+  ];
+  const parsed = parseAndNormaliseTransactions(rows);
+  assert.equal(parsed.transactions[0].amountMinorExact, '9007199254740899');
+  assert.equal(parsed.transactions[2].direction, 'CREDIT');
+  const detected = detectCommitmentsAndAlerts(parsed.transactions, []);
+  const inrCommitment = detected.commitments.find((commitment) => commitment.currency === 'INR');
+  const usdCommitment = detected.commitments.find((commitment) => commitment.currency === 'USD');
+  assert.ok(inrCommitment);
+  assert.ok(usdCommitment);
+  assert.equal(inrCommitment.totalHistoricalSpendExact, '18014398509481798');
+  assert.equal(usdCommitment.totalHistoricalSpendExact, '27021597764222697');
+
+  const inrTransactions = parsed.transactions.filter((transaction) => transaction.currency === 'INR');
+  const inrPassport = generateCommitmentPassport({
+    commitment: inrCommitment,
+    transactions: inrTransactions,
+    mandate: null,
+    serviceTerms: null,
+    reconciliation: null,
+    alerts: [],
+    casebookEntries: [],
+    auditEvents: [],
+  });
+  assert.equal(inrPassport.sectionD_History.totalSpentExact, '18014398509481798');
+  assert.equal(inrPassport.sectionD_History.averageDebitAmountExact, '₹90071992547408.99');
+  const inrPack = generateEvidencePackData({
+    commitment: inrCommitment,
+    transactions: inrTransactions,
+    mandate: null,
+    serviceTerms: null,
+    reconciliation: null,
+    alerts: [],
+    casebookEntries: [],
+    auditEvents: [],
+  });
+  assert.ok(
+    inrPack.transactions.some((entry) => entry.amountMinorExact === '9007199254740899')
+  );
+  assert.ok(generatePrintableEvidencePackHtml(inrPack).includes('90071992547408.99'));
 });
 
 test('Phase 4 Hardening: generateCommitmentPassport strictly upholds zero-fabrication rule for contacts and dates', () => {
@@ -3177,6 +3431,8 @@ test('Gates A, B, D, E Server Integration: Authoritative merchant confirmation, 
     assert.ok(summaryAfterUsd.body.totalsByCurrency.INR);
     assert.ok(summaryAfterUsd.body.totalsByCurrency.USD);
     assert.equal(summaryAfterUsd.body.totalsByCurrency.USD.monthlyRecurringSpend, 19.99);
+    assert.equal(summaryAfterUsd.body.totalsByCurrency.USD.monthlyRecurringSpendExact, '1999');
+    assert.equal(summaryAfterUsd.body.totalsByCurrency.INR.monthlyRecurringSpendExact !== undefined, true);
 
     const trendInr = await api('GET', '/api/dashboard/monthly-trend?currency=INR');
     const trendUsd = await api('GET', '/api/dashboard/monthly-trend?currency=USD');
@@ -4533,7 +4789,12 @@ test('Final 10/10 Quality Assurance: Demo Reset Sentinel Preservation, Real File
   process.env.DEBITLENS_STORE_PATH = tmpStorePath;
   process.env.DEBITLENS_SKIP_LISTEN = '1';
 
-  const { app, loadSeedData } = await import('../../server');
+  const {
+    app,
+    loadSeedData,
+    setSimulatePersistenceFailureForTesting,
+    setSimulateGraphSyncFailureForTesting,
+  } = await import('../../server');
   loadSeedData(true);
 
   const server = http.createServer(app);
@@ -4617,6 +4878,55 @@ test('Final 10/10 Quality Assurance: Demo Reset Sentinel Preservation, Real File
     assert.equal(validPdfRes.body.evidence.verificationStatus, 'EVIDENCE_ATTACHED');
     assert.ok(validPdfRes.body.evidence.sha256Hash, 'SHA-256 hash must be generated');
     assert.equal(validPdfRes.body.evidence.fileSizeBytes, validPdfBuffer.length);
+    const uploadsDir = path.resolve(process.cwd(), 'data/uploads');
+    const filesAfterFirstUpload = fs.existsSync(uploadsDir) ? fs.readdirSync(uploadsDir) : [];
+    const repeatedPdfRes = await api(
+      'POST',
+      `/api/cancellation/sessions/${targetSession.id}/evidence`,
+      {
+        evidenceType: 'SERVICE_CONFIRMATION',
+        description: 'Repeated official cancellation confirmation letter PDF',
+        referenceNumber: 'REF-VALID-PDF-100',
+        documentUploaded: true,
+        documentName: 'cancellation_receipt.pdf',
+        fileBase64: validPdfBuffer.toString('base64'),
+      }
+    );
+    assert.equal(repeatedPdfRes.status, 200);
+    const filesAfterRepeatedUpload = fs.readdirSync(uploadsDir);
+    assert.equal(filesAfterRepeatedUpload.length, filesAfterFirstUpload.length + 1);
+    assert.notEqual(
+      repeatedPdfRes.body.evidence.storagePath,
+      validPdfRes.body.evidence.storagePath,
+      'Repeated uploads must receive unique storage paths'
+    );
+
+    const evidenceBeforeFailedUpload = (await api(
+      'GET',
+      `/api/commitments/${targetSession.commitmentId}/evidence`
+    )).body;
+    setSimulatePersistenceFailureForTesting(true);
+    const failedUploadRes = await api(
+      'POST',
+      `/api/cancellation/sessions/${targetSession.id}/evidence`,
+      {
+        evidenceType: 'SERVICE_CONFIRMATION',
+        description: 'Persistence failure cleanup upload',
+        referenceNumber: 'REF-FAILED-PERSISTENCE-01',
+        documentUploaded: true,
+        documentName: 'failed_upload.pdf',
+        fileBase64: validPdfBuffer.toString('base64'),
+      }
+    );
+    setSimulatePersistenceFailureForTesting(false);
+    assert.equal(failedUploadRes.status, 500);
+    const filesAfterFailedUpload = fs.readdirSync(uploadsDir);
+    assert.deepEqual(filesAfterFailedUpload.sort(), filesAfterRepeatedUpload.sort());
+    const evidenceAfterFailedUpload = (await api(
+      'GET',
+      `/api/commitments/${targetSession.commitmentId}/evidence`
+    )).body;
+    assert.equal(evidenceAfterFailedUpload.entries.length, evidenceBeforeFailedUpload.entries.length);
 
     // D. Accept reference-only evidence without document upload
     const refOnlyRes = await api(
@@ -4635,6 +4945,42 @@ test('Final 10/10 Quality Assurance: Demo Reset Sentinel Preservation, Real File
     assert.equal(refOnlyRes.body.evidence.sourceType, 'USER_ENTERED');
     assert.equal(refOnlyRes.body.evidence.evidenceRecordLifecycle, 'EVIDENCE_REFERENCE_RECORDED');
     assert.equal(refOnlyRes.body.evidence.verificationStatus, 'USER_REPORTED');
+
+    // E. Legacy reference and lifecycle routes cannot manufacture uploaded-document state.
+    const commitmentEvidenceClaim = await api(
+      'POST',
+      `/api/commitments/${targetSession.commitmentId}/evidence`,
+      {
+        title: 'Unsupported upload assertion',
+        description: 'No file bytes were supplied',
+        sourceReference: 'REF-LEGACY-UPLOAD-01',
+        documentUploaded: true,
+      }
+    );
+    assert.equal(commitmentEvidenceClaim.status, 400);
+    assert.equal(commitmentEvidenceClaim.body.code, 'DOCUMENT_UPLOAD_REQUIRES_FILE_BYTES');
+
+    const serviceUploadClaim = await api(
+      'PATCH',
+      `/api/cancellations/${targetSession.id}/service-status`,
+      {
+        serviceLifecycleStatus: 'CANCELLATION_REQUESTED',
+        documentUploaded: true,
+      }
+    );
+    assert.equal(serviceUploadClaim.status, 400);
+    assert.equal(serviceUploadClaim.body.code, 'DOCUMENT_UPLOAD_REQUIRES_FILE_BYTES');
+
+    const mandateUploadClaim = await api(
+      'PATCH',
+      `/api/cancellations/${targetSession.id}/mandate-status`,
+      {
+        mandateLifecycleStatus: 'REVOCATION_REQUESTED',
+        documentUploaded: true,
+      }
+    );
+    assert.equal(mandateUploadClaim.status, 400);
+    assert.equal(mandateUploadClaim.body.code, 'DOCUMENT_UPLOAD_REQUIRES_FILE_BYTES');
 
     // ------------------------------------------------------------------------
     // GATE 2: Rejection of Self-Declared Independent Verification
@@ -4756,6 +5102,10 @@ test('Final 10/10 Quality Assurance: Demo Reset Sentinel Preservation, Real File
     const userTxnPreserved = txnsAfterReset.find((t: any) => t.id === 'TXN-USER-SENTINEL-01');
     assert.ok(userTxnPreserved, 'User-imported transaction must survive demo reset');
     assert.equal(userTxnPreserved.amount, 2499.0);
+    const baselineIdsAfterFirstReset = txnsAfterReset
+      .filter((t: any) => t.sourceType === 'DEMO_SEED' || t.importBatchId === 'BATCH-SEED-01')
+      .map((t: any) => t.id)
+      .sort();
 
     // Ephemeral simulated demo transaction MUST be cleared
     const simTxnAfterReset = txnsAfterReset.find((t: any) => t.id.startsWith('TXN-POST-'));
@@ -4777,6 +5127,47 @@ test('Final 10/10 Quality Assurance: Demo Reset Sentinel Preservation, Real File
     // Audit trail must contain the sentinel demo reset event
     const evidenceCasebook = (await api('GET', `/api/commitments/${targetSession.commitmentId}/evidence`)).body;
     assert.ok(evidenceCasebook.auditEvents.length > 0);
+
+    const secondReset = await api('POST', '/api/demo/reset');
+    assert.equal(secondReset.status, 200);
+    const txnsAfterSecondReset = (await api('GET', '/api/transactions')).body;
+    const baselineIdsAfterSecondReset = txnsAfterSecondReset
+      .filter((t: any) => t.sourceType === 'DEMO_SEED' || t.importBatchId === 'BATCH-SEED-01')
+      .map((t: any) => t.id)
+      .sort();
+    assert.deepEqual(baselineIdsAfterSecondReset, baselineIdsAfterFirstReset);
+    assert.deepEqual(
+      txnsAfterSecondReset.find((t: any) => t.id === 'TXN-USER-SENTINEL-01'),
+      txnsAfterReset.find((t: any) => t.id === 'TXN-USER-SENTINEL-01')
+    );
+
+    setSimulateGraphSyncFailureForTesting(true);
+    const graphMutationTarget = (await api('GET', '/api/investigations')).body.find(
+      (item: any) => item.status !== 'CLOSED'
+    );
+    assert.ok(graphMutationTarget);
+    const [graphFailure, concurrentMutation] = await Promise.all([
+      api('POST', '/api/graph/rebuild-demo', {}),
+      api('POST', `/api/investigations/${graphMutationTarget.id}/action`, {
+        actionType: 'MARKED_UNDER_REVIEW',
+        notes: 'Concurrent mutation must survive graph projection failure',
+      }),
+    ]);
+    setSimulateGraphSyncFailureForTesting(false);
+    assert.equal(graphFailure.status, 502);
+    assert.equal(graphFailure.body.projectionStatus, 'FAILED');
+    assert.equal(graphFailure.body.canonicalPersistenceStatus, 'UNCHANGED');
+    assert.equal(concurrentMutation.status, 200);
+    const persistedAfterGraphFailure = JSON.parse(fs.readFileSync(tmpStorePath, 'utf8'));
+    assert.ok(
+      persistedAfterGraphFailure.investigationCases.some(
+        (item: any) => item.id === graphMutationTarget.id && item.status === 'UNDER_REVIEW'
+      )
+    );
+    assert.equal(
+      (await api('GET', '/api/investigations')).body.find((item: any) => item.id === graphMutationTarget.id).status,
+      'UNDER_REVIEW'
+    );
   } finally {
     server.closeAllConnections?.();
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -4785,7 +5176,3 @@ test('Final 10/10 Quality Assurance: Demo Reset Sentinel Preservation, Real File
     }
   }
 });
-
-
-
-

@@ -1,120 +1,160 @@
-# DebitLens — Financial Commitment Intelligence & Reconciliation Platform
+# DebitLens
 
-**Tagline:** *Find it. Understand it. Reconcile it. Verify it.*
+**Find it. Understand it. Reconcile it. Verify it.**
 
----
+DebitLens is a local React/Express prototype for finding recurring or unexplained debits. It imports statement CSV data, separates merchants from payment processors, compares transactions with service terms and mandates, supports evidence-backed cancellation workflows, and keeps service cancellation separate from mandate revocation.
 
-## 1. Product Positioning & Five Intelligence Pillars
+The canonical financial state is local JSON. Neo4j and Sarvam are optional projections/services; they are not required for offline startup.
 
-Ordinary consumers face opaque bank statement descriptors (`RZP*STREAMBOX`, `SI-MUSICFLOW-IN`, `UPI/DR/42571190/RAZORPAY`), silent trial-to-paid conversions, unannounced price increases that still pass because of high UPI AutoPay / eNACH mandate caps, and post-cancellation charges caused by revoking only the merchant account or only the payment mandate.
+## Requirements
 
-**DebitLens** is an evidence-backed financial commitment intelligence and three-way reconciliation platform built around five pillars:
+- Node.js **22.12.0 or newer**. Vite 8.3.5 requires `^20.19.0 || >=22.12.0`.
+- npm 10 or newer.
+- `package-lock.json` is authoritative. The recommended version is recorded in [.nvmrc](./.nvmrc).
 
-1. **Identity Intelligence:** Separates **Merchant Identity**, **Payment Processor Identity** (Razorpay, BillDesk, Cashfree, Paytm), and **Payment Rail Mechanism** (`UPI_AUTOPAY`, `CARD_EMANDATE`, `ENACH_NACH`, `GOOGLE_PLAY`). Never merges unknown processor-only transactions (`TXN-9501`, `TXN-9502`, `TXN-9503`) into false commitments.
-2. **Temporal Intelligence:** Deterministic recurrence detection across weekly, fortnightly, monthly (including Jan 31 → Feb 28 → Mar 31 month-end handling), quarterly, annual (2-occurrence support), resumed-after-gap, and trial-to-paid conversion patterns. Distinguishes `RecurringCandidate` (`PENDING_REVIEW`) from confirmed `FinancialCommitment` (`CONFIRMED` / `USER_CONFIRMED`).
-3. **Reconciliation Intelligence:** **Three-Way Financial Reconciliation Engine** comparing **(1) Documented Service Terms / Invoices**, **(2) Actual Statement Transactions** (stored in integer minor units / `paise`), and **(3) Available Payment Authorisations / Mandates** across 9 deterministic outcomes (`MATCHED`, `AMOUNT_DISCREPANCY`, `FREQUENCY_DISCREPANCY`, `TRANSACTION_WITHOUT_VISIBLE_MANDATE`, `MANDATE_WITHOUT_RECENT_TRANSACTION`, `SERVICE_TERMS_UNAVAILABLE`, `POSSIBLE_DUPLICATE`, `CONFLICTING_EVIDENCE`, `UNRESOLVED`).
-4. **Cancellation & Verification Intelligence:** Mechanism-specific **Two-Layer Cancellation Assistant** tracking **Layer A (`ServiceLifecycleStatus`)** and **Layer B (`MandateLifecycleStatus`)** independently, backed by a chronological **Evidence Casebook & Audit Timeline** and post-cancellation debit monitoring.
-5. **Multilingual Financial Intelligence (*DebitLens Bhasha*):** Privacy-preserving Indian-language explanation and contextual Q&A powered by **Sarvam AI** (`sarvam-105b` + `sarvam-translate:v1`) across English (`en-IN`), Hindi (`hi-IN`), Tamil (`ta-IN`), Telugu (`te-IN`), Kannada (`kn-IN`), Bengali (`bn-IN`), Marathi (`mr-IN`), Gujarati (`gu-IN`), Malayalam (`ml-IN`), Punjabi (`pa-IN`), Odia (`or-IN`), and Urdu (`ur-IN`), with field-level status tracking (`LIVE_SARVAM`, `PARTIAL_SARVAM`, `LOCAL_FALLBACK`).
+## Install and start
 
----
+Replace `<repository-url>` in the commands below with the HTTPS URL shown by the repository hosting page. This checkout has no configured Git remote, so no project-specific clone URL can be asserted here.
 
-## 2. Epistemic Honesty Principles
+### Windows PowerShell
 
-- **Evidence over speculation:** Every link, confidence score, and reconciliation finding cites exact transaction IDs, mandate references, or document IDs.
-- **Discrepancy ≠ Fraud:** DebitLens never declares an amount discrepancy or post-cancellation debit to be "fraud"; it flags `AMOUNT_DISCREPANCY` or `CONFLICTING_EVIDENCE` with clear explanations of possible legitimate causes (tier upgrade, tax revision, trailing billing cycle) alongside dispute-ready evidence.
-- **Data Coverage Humility:** Absence of a mandate in imported records is reported as `"No matching mandate was found in the available imported records"` (`TRANSACTION_WITHOUT_VISIBLE_MANDATE`), never as proof that no bank authorisation exists.
-- **Partner Integration Honesty:** Neo4j and Sarvam statuses are reported per operation (`LIVE_NEO4J`, `LOCAL_PREVIEW`, `NOT_CONFIGURED`, `CONNECTION_FAILED`, `EMPTY_LIVE_RESULT`, `QUERY_FAILED`; and `LIVE_SARVAM`, `PARTIAL_SARVAM`, `LOCAL_FALLBACK`).
+```powershell
+git clone <repository-url> DebitLens
+Set-Location .\DebitLens
+Copy-Item .env.example .env
+npm ci --legacy-peer-deps
+npm run dev
+```
 
----
+Open `http://localhost:3000`.
 
-## 3. Architecture & Technology Stack
+### macOS
 
-- **Backend (`server.ts`):** Node.js + Express + TypeScript API server with official `neo4j-driver` v6 connection pooling, parameterised Cypher queries, `SHOW CONSTRAINTS` verification, Sarvam AI concurrency-limited client (`runWithConcurrencyLimit`, 10s timeout), and atomic local persistence (`data/persistent-store.json` written via temporary file + `fs.renameSync` with explicit caller error reporting).
-  - **Core Intelligence Engines (`src/engine/`):**
-  - `debitlensEngine.ts`: RFC-4180 CSV parser, strict signed/unsigned amount parsers (`parseStrictAmount`, `parseStrictSignedAmount`), descriptor normaliser, 6-tier identity resolver, temporal cadence detector, 100-point explainable confidence scorer, ground-truth evaluator, and graph builder.
-  - `reconciliationEngine.ts`: Three-way reconciliation engine, synchronized mandate completeness & lifecycle validator, deterministic invoice/receipt term extractor (`expectedAmountMinor: null` when no currency token is present, `userVerified: false` until explicitly confirmed), Evidence Casebook & Append-Only Application Audit Timeline builder, Data Coverage analyser, Financial Guardrails, and grounded Contextual Bhasha Q&A builder.
-  - `investigationEngine.ts`: Unrecognized Debit Investigation engine, Commitment Passport generator (3 distinct quality metrics: `recordCoverage`, `verificationQuality`, `financialReconciliationStatus`), Printable Evidence Pack HTML/JSON generator with XSS sanitization, Review & Resolve priority queue builder, and Smart Bank Statement CSV Column Mapping Wizard with canonical fingerprint deduplication.
-- **Frontend (`src/`):** React 19 + TypeScript + Tailwind CSS + Lucide Icons + Recharts workspace featuring:
-  - **Overview Dashboard & Spend Breakdown**
-  - **Commitments, Commitment Passport Modal & Printable Evidence Pack**
-  - **Review & Resolve Priority Inbox**
-  - **Unrecognized Debit Investigation Drawer**
-  - **3-Way Reconciliation Centre, Extracted-Field Preview & Section 22 Judge Demo**
-  - **Evidence Casebook, Append-Only Application Audit Timeline, Data Coverage & Guardrails**
-  - **Transactions Explorer with Raw Statement Descriptor Search History**
-  - **Smart CSV Statement Mapping Wizard & Mandate Registry Import**
-  - **Neo4j Commitment Map & Live Cypher Inspector**
-  - **Sarvam Bhasha Explainer & Contextual Financial Q&A**
-  - **Two-Layer Cancellation Centre (Independent Layer A & Layer B Lifecycles)**
+```bash
+git clone <repository-url> DebitLens
+cd DebitLens
+cp .env.example .env
+npm ci --legacy-peer-deps
+npm run dev
+```
 
----
+Open `http://localhost:3000`.
 
-## 4. Environment Configuration & Running Locally
+### Linux
 
-1. Copy `.env.example` to `.env` and provide your credentials (never use placeholder strings such as `<PASTE_YOUR_...>`):
-   ```bash
-   NEO4J_ENABLED=true
-   NEO4J_URI=neo4j+s://<your-instance>.databases.neo4j.io
-   NEO4J_USERNAME=neo4j
-   NEO4J_PASSWORD=<your-password>
-   NEO4J_DATABASE=<your-database-name>
-   ALLOW_LOCAL_PREVIEW=true
+```bash
+git clone <repository-url> DebitLens
+cd DebitLens
+cp .env.example .env
+npm ci --legacy-peer-deps
+npm run dev
+```
 
-   SARVAM_ENABLED=true
-   SARVAM_API_KEY=<your-sarvam-api-key>
-   SARVAM_BASE_URL=https://api.sarvam.ai
-   SARVAM_CHAT_MODEL=sarvam-105b
-   SARVAM_TRANSLATE_MODEL=sarvam-translate:v1
-   SARVAM_DEFAULT_LANGUAGE=en-IN
-   ```
-2. Install dependencies and start the server on port `3000` (both `npm run dev` and `npm start` execute `tsx server.ts`):
-   ```bash
-   npm install
-   npm run dev
-   # or: npm start
-   ```
-3. Run automated unit, financial integrity & adversarial tests (71 tests across `src/engine/debitlensEngine.test.ts` and `src/utils/searchHistory.test.ts`):
-   ```bash
-   npm test
-   ```
-4. Run TypeScript typechecking and production build:
-   ```bash
-   npm run typecheck
-   npm run build
-   ```
+Open `http://localhost:3000`.
 
----
+If port 3000 is busy, edit the existing line in `.env` from `PORT=3000` to `PORT=3001`; do not add a duplicate `PORT` entry.
 
-## 5. Architectural Invariants & Quality Guarantees
+## Environment variables
 
-- **Authoritative Canonical JSON Store:** `data/persistent-store.json` is the single source of financial truth. All mutations serialize through atomic write-to-temp-plus-rename (`fs.renameSync`) with rollback-safe snapshots. Neo4j is an asynchronous graph projection only. Sarvam AI is a read-only language assistant (never establishes financial facts).
-- **Demo Reset Sentinel Preservation:** The `/api/demo/reset` endpoint wipes only ephemeral demo simulations (`demoSimulatedRows`, `demoCommitmentOverrides`, `demoServiceTerms`, `demoMandates`), restoring baseline seed data while strictly preserving 100% of user data: user-imported transactions (`import_batch_id !== 'BATCH-SEED-01'`), user mandates (`sourceType !== 'DEMO_SEED'`), user service terms, user-configured guardrails, custom casebook entries, investigation cases, merchant confirmations, user commitment overrides, confirmed account currencies, and user audit trails. An `AUD-DEMO-RESET` sentinel audit record is appended.
-- **Cryptographic File Upload Verification (Zero False Claims):** Document uploads in `/api/cancellation/sessions/:id/evidence` require genuine Base64 payloads with magic byte signature verification (PDF, PNG, JPEG, WebP), 10MB size limits, and SHA-256 hashing stored to disk. Upload claims without payload are strictly rejected with HTTP 400 `DOCUMENT_PAYLOAD_REQUIRED`. Non-file reference evidence truthfully records `documentUploaded: false` and `sourceType: 'USER_ENTERED'`.
-- **Elimination of Client-Declared Independent Verification:** Client PATCH endpoints reject premature terminal statuses (`CANCELLATION_VERIFIED`, `REVOCATION_VERIFIED`) with HTTP 400 `UNVERIFIED_STATUS_REJECTED`. Forged privileged provenance (`INDEPENDENTLY_VERIFIED`, `SYSTEM_GENERATED`) submitted from client requests is rejected with HTTP 400 `FORGED_PROVENANCE_REJECTED`. Independent verification can only be established through subsequent bank statements or explicit system reconciliation.
-- **Empty Initial Guardrails & Zero Hardcoded Amounts:** Guardrails start completely unconfigured (empty state). Users must explicitly configure a positive `maxExpectedAmount` or `maxExpectedAmountMinor`; missing amounts are rejected with HTTP 400 `AMOUNT_REQUIRED` without arbitrary fallback caps. Commitments with `UNKNOWN` currency are prevented from guardrail creation until currency is confirmed.
-- **Exact Money Precision & Currency Disambiguation:** All monetary arithmetic uses exact string decimal parsing and BigInt minor-unit scaling (`paise`, `cents`), completely eliminating IEEE-754 floating-point drift even on 11-digit sums. Ambiguous currency symbols (`$` or `¥`) without confirmed account context resolve to `UNKNOWN_CURRENCY` with `UNKNOWN_SOURCE` provenance rather than guessing USD or JPY.
-- **Demo Mode Default:** Demo Mode defaults strictly OFF on both client and server; baseline production behaviour requires real user imports and actions.
+| Variable | Purpose | Required? | Default behaviour |
+|---|---|---:|---|
+| `NODE_ENV` | Runtime environment | No | `development` in `.env.example` |
+| `PORT` | Express/Vite server port | No | `3000` |
+| `CLIENT_ORIGIN` | Documented client origin | No | `http://localhost:5173` |
+| `NEO4J_ENABLED` | Enable Neo4j projection | No | `false` |
+| `NEO4J_URI` | Neo4j/Aura URI | Only when enabled | Placeholder; no connection offline |
+| `NEO4J_USERNAME` | Neo4j username | Only when enabled | Placeholder |
+| `NEO4J_PASSWORD` | Neo4j password | Only when enabled | Placeholder |
+| `NEO4J_DATABASE` | Neo4j database name | No | `neo4j` |
+| `SARVAM_ENABLED` | Enable Sarvam explanations/translations | No | `false` in `.env.example` |
+| `SARVAM_API_KEY` | Sarvam API key | Only when enabled | Placeholder; local fallback remains available |
+| `SARVAM_BASE_URL` | Sarvam API endpoint | No | `https://api.sarvam.ai` |
+| `SARVAM_CHAT_MODEL` | Sarvam chat model | No | `sarvam-105b` |
+| `SARVAM_TRANSLATION_MODEL` | Sarvam translation model | No | `sarvam-translate:v1` |
+| `SARVAM_DEFAULT_LANGUAGE` | Default language code | No | `en-IN` |
+| `DEMO_MODE` | Enable demo-only reset and simulation controls | No | `false` |
+| `ALLOW_LOCAL_PREVIEW` | Permit local graph preview when Neo4j is unavailable | No | `true` |
 
----
+Additional test/runtime-only variables used by the source include `DEBITLENS_STORE_PATH`, `DEBITLENS_SKIP_LISTEN`, and `DISABLE_HMR`; they are not needed for normal setup.
 
-## 5. Prototype Architecture vs Production Deployment Boundaries
+## First-run workflow
 
-- **Single-User Local Persistence Prototype:** Application state is persisted locally in `data/persistent-store.json` using atomic write-to-temp-plus-rename (`fs.renameSync`) and serialized through an in-memory route mutation queue (`executeSerializedMutation`) with full deep-copy state snapshot rollback on validation error, runtime throw, or disk write failure, and asynchronous Neo4j graph projection triggered only after canonical JSON commit succeeds.
-- **Production Multi-User Evolution:** In a multi-tenant production deployment, `data/persistent-store.json` would be replaced by per-tenant encrypted PostgreSQL / Cloud SQL transactional storage with RBAC authentication, Account Aggregator (AA) / NPCI UPI AutoPay API webhooks, and hardware-backed KMS audit log signing.
-- **Regulatory Scope:** DebitLens is an informational consumer financial intelligence and evidence-preparation tool; it does not execute payments, revoke bank mandates directly, or provide formal legal advice.
+1. Start the server with `npm run dev`.
+2. Open **Transactions & Explorer** and use the import flow with the sample CSV.
+3. Review detected commitments in **Discover Commitments**.
+4. Open **Financial Overview** for recurring spend and alerts.
+5. Use **Review & Resolve** or the transaction investigation drawer for unresolved debits.
+6. Inspect **3-Way Reconciliation** to compare transactions, service terms and mandates.
+7. Open **Evidence Casebook** to record evidence references or upload a valid document.
+8. Use **Cancellation Centre** to track service cancellation and mandate revocation independently.
+9. Use **Settings & Diagnostics** to inspect local storage and optional integrations.
 
-## 5. Documentation Index (`/docs`)
+## CSV import contract
 
-- [`docs/NEO4J_GRAPH_SCHEMA.md`](docs/NEO4J_GRAPH_SCHEMA.md) — Node labels, relationship types, constraints, and evidence properties.
-- [`docs/CYPHER_QUERY_CATALOGUE.md`](docs/CYPHER_QUERY_CATALOGUE.md) — Parameterised Cypher queries for graph sync, traversal, and unresolved isolation.
-- [`docs/SARVAM_BHASHA_DESIGN.md`](docs/SARVAM_BHASHA_DESIGN.md) — Grounded multilingual architecture, PII redaction, concurrency control, and field-level status reporting.
-- [`docs/RECONCILIATION_ENGINE.md`](docs/RECONCILIATION_ENGINE.md) — Three-way reconciliation specification, minor-unit arithmetic, and all 9 outcome statuses.
-- [`docs/SERVICE_DOCUMENT_INTELLIGENCE.md`](docs/SERVICE_DOCUMENT_INTELLIGENCE.md) — Deterministic extraction of billing terms from invoices/receipts and user verification workflow.
-- [`docs/EVIDENCE_CASEBOOK.md`](docs/EVIDENCE_CASEBOOK.md) — Chronological evidence chain, audit log events, and dispute-ready export.
-- [`docs/TWO_LAYER_CANCELLATION_GUIDE.md`](docs/TWO_LAYER_CANCELLATION_GUIDE.md) — Independent `ServiceLifecycleStatus` (Layer A) and `MandateLifecycleStatus` (Layer B) workflows.
-- [`docs/CONFIDENCE_SCORING_SPEC.md`](docs/CONFIDENCE_SCORING_SPEC.md) — 100-point additive confidence formula and `RecurringCandidate` vs `FinancialCommitment` thresholds.
-- [`docs/DETECTION_EVALUATION.md`](docs/DETECTION_EVALUATION.md) — Dynamic benchmark evaluation against `data/ground-truth.json` (100% precision, 100% recall, 0 false merges).
-- [`docs/SYNTHETIC_DATASET_DICTIONARY.md`](docs/SYNTHETIC_DATASET_DICTIONARY.md) — Complete catalogue of the 45 synthetic transactions, 10 mandates, 8 service documents, and 3 notifications.
-- [`docs/PRIVACY_AND_SECURITY.md`](docs/PRIVACY_AND_SECURITY.md) — Data minimization, account/reference masking, and secret protection.
-- [`docs/DEMO_SCRIPT_3_MINUTES.md`](docs/DEMO_SCRIPT_3_MINUTES.md) — Step-by-step 3-minute live judge walkthrough including the StreamBox ₹499 vs ₹799 vs ₹999 reconciliation demo.
-- [`docs/QNA_DEFENCE_SHEET.md`](docs/QNA_DEFENCE_SHEET.md) — Engineering answers to anticipated judge questions on Fintech, Neo4j, and Sarvam AI.
+The repository sample is [data/synthetic-transactions.csv](./data/synthetic-transactions.csv). A browser-downloadable copy is also available at [public/samples/debitlens-transactions.csv](./public/samples/debitlens-transactions.csv).
+
+The actual header row is:
+
+```csv
+transaction_id,transaction_date,raw_description,amount,currency,direction,payment_rail,account_alias,external_reference
+```
+
+- Mandatory fields: `transaction_id`, `transaction_date`, `raw_description`, and `amount`.
+- Optional fields: `currency`, `direction`, `payment_rail`, `account_alias`, and `external_reference`.
+- Dates accept the mapper-selected formats such as `YYYY-MM-DD`, `DD/MM/YYYY`, `DD-MM-YYYY`, and `MM/DD/YYYY`.
+- Amounts must be ordinary decimal text, with no currency symbols or trailing text. Supported currencies reject excess decimal places and unsafe minor-unit values.
+- Missing or `UNKNOWN` currency remains explicitly unknown rather than being silently treated as INR.
+- Negative amounts and credit/refund rows are retained as credits; a negative debit is normalised as a credit.
+- Monetary fields:
+  - `amount` is the backward-compatible JavaScript numeric major-unit field and can lose precision for large values.
+  - `amountExact` preserves the normalized original decimal text for display.
+  - `amountMinor` is the safe numeric minor-unit compatibility field.
+  - `amountMinorExact` is the JSON-safe exact minor-unit integer string and is authoritative for exact calculations when the currency is supported.
+- Missing or `UNKNOWN` currency has no authoritative minor-unit interpretation; it remains explicitly unavailable rather than being treated as INR.
+- Derived display values and legacy numeric summaries are rounded to the currency's supported decimal scale. Exact companion fields are provided where available; the prototype does not claim every derived public number is arbitrary-precision.
+
+## Storage, backup and demo reset
+
+- Canonical state: `data/persistent-store.json`.
+- Uploaded evidence: `data/uploads/`.
+- Both locations are local runtime data and are ignored by Git.
+- For a safe backup, stop the server and copy `data/persistent-store.json` together with the complete `data/uploads/` directory.
+- Demo reset is available only when **Demo Mode** is enabled. It removes tagged demo/simulation state, restores the baseline seed once, and preserves user and conservatively unclassified records. Back up the two data locations before resetting.
+
+## Offline and optional integrations
+
+The default startup is offline. The deterministic CSV, commitment, reconciliation, evidence and cancellation workflows do not require external services.
+
+Neo4j is an optional rebuildable relationship projection. Set `NEO4J_ENABLED=true` and provide its URI, username and password to connect; otherwise the application reports local preview/unavailable status and keeps canonical JSON authoritative.
+
+Sarvam is optional language assistance. Set `SARVAM_ENABLED=true` and provide `SARVAM_API_KEY`; without credentials the application uses its local fallback explanations.
+
+## Commands
+
+```bash
+npm ci --legacy-peer-deps
+npm run dev
+npm run start
+npm test
+npm run typecheck
+npm run build
+npm run clean
+node scripts/health-smoke.mjs
+```
+
+`npm run clean` removes generated `dist/` and `server.js` only. It does not remove canonical JSON or uploaded evidence. The health smoke script starts a temporary server on an available port, verifies `/api/health`, and terminates it.
+
+## Troubleshooting
+
+- **Unsupported Node.js:** check `node --version`; use Node 22.12.0 or newer. `.nvmrc` contains the recommended version.
+- **Dependency installation conflict:** use `npm ci --legacy-peer-deps`, not a plain install.
+- **Port conflict:** change the existing `.env` value `PORT=3000` to `PORT=3001`, restart the server, and open the matching URL.
+- **Browser connection refused:** confirm `npm run dev` is still running and that the browser port matches `.env`.
+- **Upload failure:** use PDF, PNG, JPEG or WebP content with a valid signature, stay within the 10 MB limit, and ensure `data/uploads/` is writable.
+- **Missing Neo4j/Sarvam credentials:** leave the corresponding integration disabled for offline operation, or provide valid credentials and enable it explicitly.
+
+## Limitations
+
+DebitLens is a local single-process JSON prototype, not a production multi-user financial service. It has no bank connectivity, legal cancellation authority, regulatory approval, bank-grade access control, or guaranteed external-service availability. Financial analysis uses exact minor units where representable; derived public numeric summaries remain bounded by JavaScript number fields and should be displayed through the preserved exact transaction text when precision is material.
+
+The cross-platform workflow is configured in [.github/workflows/ci.yml](./.github/workflows/ci.yml), but configuration is not proof of execution. Hosted Ubuntu, Windows and macOS results must be checked from actual workflow runs.

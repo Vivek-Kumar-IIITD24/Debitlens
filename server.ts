@@ -371,7 +371,7 @@ export function computeCanonicalTxnFingerprint(row: RawCsvRow): string {
     currency: row.currency || UNKNOWN_CURRENCY,
     parsedDate: row.transaction_date || '',
     direction: row.direction || 'DEBIT',
-    amount: Number(row.amount) || 0,
+    amount: row.amount || '0',
     rawDescription: row.raw_description || '',
     externalReference: row.external_reference || '',
   });
@@ -380,8 +380,12 @@ export function computeCanonicalTxnFingerprint(row: RawCsvRow): string {
 let mutationQueue = Promise.resolve();
 
 export type RouteMutationResult<T = any> =
-  | { status?: number; body: T; syncGraph?: boolean }
-  | { errorStatus: number; errorBody: { error: string; [key: string]: any } };
+  | { status?: number; body: T; syncGraph?: boolean; cleanup?: () => void }
+  | {
+      errorStatus: number;
+      errorBody: { error: string; [key: string]: any };
+      cleanup?: () => void;
+    };
 
 /**
  * Serializes route state mutations via mutationQueue, snapshots full state before mutation,
@@ -395,9 +399,12 @@ export async function executeSerializedMutation<T>(
   return new Promise((resolve) => {
     mutationQueue = mutationQueue.then(async () => {
       const snapshot = snapshotState();
+      let cleanup: (() => void) | undefined;
       try {
         const outcome = await mutator();
+        cleanup = outcome.cleanup;
         if ('errorStatus' in outcome) {
+          cleanup?.();
           restoreStateSnapshot(snapshot);
           res.status(outcome.errorStatus).json(outcome.errorBody);
           resolve();
@@ -405,6 +412,7 @@ export async function executeSerializedMutation<T>(
         }
         const saveRes = savePersistentStore();
         if (!saveRes.saved) {
+          cleanup?.();
           restoreStateSnapshot(snapshot);
           res.status(500).json({
             error: `Failed to persist application state: ${saveRes.error || 'Disk write error'}`,
@@ -418,6 +426,7 @@ export async function executeSerializedMutation<T>(
         res.status(outcome.status ?? 200).json(outcome.body);
         resolve();
       } catch (err) {
+        cleanup?.();
         restoreStateSnapshot(snapshot);
         const message = err instanceof Error ? err.message : String(err);
         res.status(500).json({
@@ -592,14 +601,22 @@ export function resetDemoDataOnly(): {
   demoMandates = [];
 
   // 2. Preserve user-imported transactions (rows belonging to user import batches or not DEMO_SEED/DEMO_SIMULATION)
-  const userRows = (rawCsvRows || []).filter(
-    (r) =>
-      (Boolean(r.import_batch_id) && r.import_batch_id !== 'BATCH-SEED-01') ||
-      (Boolean(r.source_type) && (r.source_type as string) !== 'DEMO_SEED' && (r.source_type as string) !== 'DEMO_SIMULATION')
-  );
-
   const csvPath = path.resolve(process.cwd(), 'data/synthetic-transactions.csv');
   const baseSeedRows = parseCsvTextRFC4180(fs.readFileSync(csvPath, 'utf-8'));
+  const baseSeedFingerprints = new Set(
+    baseSeedRows.map((row) => computeCanonicalTxnFingerprint(row))
+  );
+  const userRows = (rawCsvRows || []).filter((r) => {
+    const sourceType = String(r.source_type || '').trim().toUpperCase();
+    const importBatch = String(r.import_batch_id || '').trim().toUpperCase();
+    const explicitlyDemo = sourceType === 'DEMO_SEED' || sourceType === 'DEMO_SIMULATION';
+    const explicitlySeedBatch = importBatch === 'BATCH-SEED-01';
+    const explicitlyUserOwned = Boolean(sourceType || importBatch) && !explicitlyDemo && !explicitlySeedBatch;
+    const isUnclassifiedSeedDuplicate =
+      !sourceType && !importBatch && baseSeedFingerprints.has(computeCanonicalTxnFingerprint(r));
+    return !explicitlyDemo && !explicitlySeedBatch && (explicitlyUserOwned || !isUnclassifiedSeedDuplicate);
+  });
+
   rawCsvRows = [...baseSeedRows, ...userRows];
 
   // 3. Preserve user mandates (sourceType !== 'DEMO_SEED')
@@ -1288,9 +1305,12 @@ app.post('/api/graph/rebuild-demo', async (_req, res) => {
     });
     return;
   }
-  await executeSerializedMutation(res, async () => {
-    loadSeedData(true);
+  try {
     const state = computeCurrentState();
+    if (simulateGraphSyncFailureForTesting) {
+      await Promise.resolve();
+      throw new Error('Simulated Neo4j graph projection failure for testing');
+    }
     const rebuildResult = await neo4jPersistenceService.rebuildDemoGraphInNeo4j({
       transactions: state.transactions,
       commitments: state.commitments,
@@ -1302,15 +1322,22 @@ app.post('/api/graph/rebuild-demo', async (_req, res) => {
       serviceTerms: getEffectiveServiceTerms(),
       reconciliationFindings: state.reconciliationFindings,
     });
-    return {
-      syncGraph: false,
-      body: {
-        ...rebuildResult,
-        commitmentsCount: state.commitments.length,
-        transactionsCount: state.transactions.length,
-      },
-    };
-  });
+    const projectionFailed = rebuildResult.rebuilt === false;
+    res.status(projectionFailed ? 502 : 200).json({
+      ...rebuildResult,
+      commitmentsCount: state.commitments.length,
+      transactionsCount: state.transactions.length,
+      projectionStatus: projectionFailed ? 'FAILED' : 'REBUILT',
+      canonicalPersistenceStatus: 'UNCHANGED',
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(502).json({
+      error: `Graph projection rebuild failed; canonical persisted records were left unchanged: ${message}`,
+      projectionStatus: 'FAILED',
+      canonicalPersistenceStatus: 'UNCHANGED',
+    });
+  }
 });
 
 // ============================================================================
@@ -1821,9 +1848,13 @@ app.get('/api/dashboard/summary', (req, res) => {
       currency: string;
       currencyStatus: 'SUPPORTED' | 'UNSUPPORTED' | 'UNKNOWN';
       monthlyRecurringSpend: number;
+      monthlyRecurringSpendExact: string | null;
       annualCommitmentTotal: number;
+      annualCommitmentTotalExact: string | null;
       discretionaryAnnual: number;
+      discretionaryAnnualExact: string | null;
       obligationAnnual: number;
+      obligationAnnualExact: string | null;
       activeCommitmentsCount: number;
     }
   > = {};
@@ -1845,13 +1876,40 @@ app.get('/api/dashboard/summary', (req, res) => {
         currency: currKey,
         currencyStatus,
         monthlyRecurringSpend: 0,
+        monthlyRecurringSpendExact: '0',
         annualCommitmentTotal: 0,
+        annualCommitmentTotalExact: '0',
         discretionaryAnnual: 0,
+        discretionaryAnnualExact: '0',
         obligationAnnual: 0,
+        obligationAnnualExact: '0',
         activeCommitmentsCount: 0,
       };
     }
     const bucket = totalsByCurrency[currKey];
+    const addExact = (current: string | null, value: string | null | undefined): string | null =>
+      current !== null && value !== null && value !== undefined
+        ? (BigInt(current) + BigInt(value)).toString()
+        : null;
+    bucket.monthlyRecurringSpendExact = addExact(
+      bucket.monthlyRecurringSpendExact,
+      c.monthlyEquivalentExact
+    );
+    bucket.annualCommitmentTotalExact = addExact(
+      bucket.annualCommitmentTotalExact,
+      c.annualisedAmountExact
+    );
+    if (c.isFinancialObligation) {
+      bucket.obligationAnnualExact = addExact(
+        bucket.obligationAnnualExact,
+        c.annualisedAmountExact
+      );
+    } else {
+      bucket.discretionaryAnnualExact = addExact(
+        bucket.discretionaryAnnualExact,
+        c.annualisedAmountExact
+      );
+    }
     bucket.monthlyRecurringSpend = Number(
       (bucket.monthlyRecurringSpend + c.monthlyEquivalent).toFixed(2)
     );
@@ -1874,9 +1932,13 @@ app.get('/api/dashboard/summary', (req, res) => {
     currency: primaryCurrency,
     currencyStatus: 'SUPPORTED' as const,
     monthlyRecurringSpend: 0,
+    monthlyRecurringSpendExact: '0',
     annualCommitmentTotal: 0,
+    annualCommitmentTotalExact: '0',
     discretionaryAnnual: 0,
+    discretionaryAnnualExact: '0',
     obligationAnnual: 0,
+    obligationAnnualExact: '0',
     activeCommitmentsCount: 0,
   };
 
@@ -1907,13 +1969,36 @@ app.get('/api/dashboard/summary', (req, res) => {
     totalsByCurrency[UNKNOWN_CURRENCY]?.activeCommitmentsCount || 0;
   const excludedUnknownCurrencyCount =
     unknownCurrencyCommitmentsCount + unknownCurrencyTxnsCount;
+  const primaryCurrencyTransactions = state.transactions.filter(
+    (transaction) =>
+      transaction.currency === primaryCurrency &&
+      transaction.amountMinorExact !== null &&
+      transaction.amountMinorExact !== undefined
+  );
+  const totalDebitAmountExact = primaryCurrencyTransactions
+    .filter((transaction) => transaction.direction === 'DEBIT')
+    .reduce((sum, transaction) => sum + BigInt(transaction.amountMinorExact!), 0n);
+  const unresolvedDebitAmountExact = primaryCurrencyTransactions
+    .filter(
+      (transaction) =>
+        transaction.direction === 'DEBIT' && transaction.resolutionStatus === 'UNRESOLVED'
+    )
+    .reduce((sum, transaction) => sum + BigInt(transaction.amountMinorExact!), 0n);
+  const exactMinorToLegacyAmount = (minor: bigint): number | null =>
+    minor <= BigInt(Number.MAX_SAFE_INTEGER) && minor >= BigInt(Number.MIN_SAFE_INTEGER)
+      ? fromMinorUnitsStrict(Number(minor), primaryCurrency)
+      : null;
 
   res.json({
     primaryCurrency,
     monthlyRecurringSpend: primaryBucket.monthlyRecurringSpend,
+    monthlyRecurringSpendExact: primaryBucket.monthlyRecurringSpendExact,
     annualCommitmentTotal: primaryBucket.annualCommitmentTotal,
+    annualCommitmentTotalExact: primaryBucket.annualCommitmentTotalExact,
     discretionaryAnnual: primaryBucket.discretionaryAnnual,
+    discretionaryAnnualExact: primaryBucket.discretionaryAnnualExact,
     obligationAnnual: primaryBucket.obligationAnnual,
+    obligationAnnualExact: primaryBucket.obligationAnnualExact,
     totalsByCurrency,
     currencySummaries,
     unknownCurrencyCommitmentsCount,
@@ -1921,6 +2006,10 @@ app.get('/api/dashboard/summary', (req, res) => {
     excludedUnknownCurrencyCount,
     unsupportedCurrenciesCount,
     isMultiCurrency: currencySummaries.length > 1,
+    totalDebitAmount: exactMinorToLegacyAmount(totalDebitAmountExact),
+    totalDebitAmountExact: totalDebitAmountExact.toString(),
+    unresolvedDebitAmount: exactMinorToLegacyAmount(unresolvedDebitAmountExact),
+    unresolvedDebitAmountExact: unresolvedDebitAmountExact.toString(),
     activeCommitmentsCount: activeCommitments.length,
     totalCommitmentsCount: state.commitments.length,
     upcomingPaymentsCount: activeCommitments.filter((c) => Boolean(c.nextExpectedDate)).length,
@@ -3010,6 +3099,15 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
     sourceType?: RecordSourceProvenance;
   };
 
+  if (documentUploaded === true) {
+    res.status(400).json({
+      error:
+        'This reference-only endpoint cannot establish an uploaded document. Upload file bytes through POST /api/cancellation/sessions/:id/evidence.',
+      code: 'DOCUMENT_UPLOAD_REQUIRES_FILE_BYTES',
+    });
+    return;
+  }
+
   if (isForgedPrivilegedProvenance(sourceType)) {
     res.status(400).json({
       error: `Client-forged privileged sourceType "${sourceType}" is not permitted on user evidence submissions.`,
@@ -3044,7 +3142,6 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
       };
     }
 
-    const isUploadedDoc = Boolean(documentUploaded);
     const entry: EvidenceCasebookEntry = {
       id: `CB-USER-${Date.now()}`,
       commitmentId: id,
@@ -3058,8 +3155,8 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
       sourceReference,
       amountMinor,
       currency: targetCmt.currency || UNKNOWN_CURRENCY,
-      sourceType: isUploadedDoc ? 'USER_UPLOADED' : 'USER_ENTERED',
-      evidenceRecordLifecycle: isUploadedDoc ? 'DOCUMENT_UPLOADED' : 'EVIDENCE_REFERENCE_RECORDED',
+      sourceType: 'USER_ENTERED',
+      evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
       verificationStatus: 'USER_CONFIRMED',
       actor: 'USER_CASEBOOK_ATTACHMENT',
     };
@@ -3068,7 +3165,7 @@ app.post('/api/commitments/:id/evidence', async (req, res) => {
     recordAuditEvent({
       commitmentId: id,
       eventType: 'EVIDENCE_ATTACHED',
-      summary: `Attached ${isUploadedDoc ? 'uploaded document' : 'evidence reference'} "${title}" (Ref: ${sourceReference}${
+      summary: `Attached evidence reference "${title}" (Ref: ${sourceReference}${
         parsedEvidenceDate ? `, Date: ${parsedEvidenceDate}` : ''
       }).`,
       previousState: null,
@@ -3203,6 +3300,15 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
     sourceType?: RecordSourceProvenance;
     verifiedConfirmation?: boolean;
   };
+
+  if (documentUploaded === true || (typeof documentName === 'string' && documentName.trim())) {
+    res.status(400).json({
+      error:
+        'Lifecycle status endpoints accept reference-only evidence. Upload file bytes through POST /api/cancellation/sessions/:id/evidence and link the resulting evidence record.',
+      code: 'DOCUMENT_UPLOAD_REQUIRES_FILE_BYTES',
+    });
+    return;
+  }
 
   if (
     !serviceLifecycleStatus ||
@@ -3394,10 +3500,7 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
       };
     }
 
-    const isUploadedDoc = Boolean(documentUploaded);
-    const assignedSourceType: RecordSourceProvenance = isUploadedDoc
-      ? 'USER_UPLOADED'
-      : 'USER_ENTERED';
+    const assignedSourceType: RecordSourceProvenance = 'USER_ENTERED';
 
     if (cleanRef) {
       const evidType =
@@ -3419,11 +3522,8 @@ app.patch('/api/cancellations/:id/service-status', async (req, res) => {
           referenceNumber: cleanRef,
           evidenceDate: parsedEvidDate,
           ...(isServiceCompletion && parsedEffectiveDate ? { effectiveDate: parsedEffectiveDate } : {}),
-          documentUploaded: isUploadedDoc,
-          ...(documentName ? { documentName } : {}),
-          evidenceRecordLifecycle: isUploadedDoc
-            ? 'DOCUMENT_UPLOADED'
-            : 'EVIDENCE_REFERENCE_RECORDED',
+          documentUploaded: false,
+          evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
           sourceType: assignedSourceType,
           verificationStatus:
             serviceLifecycleStatus === 'CANCELLATION_EVIDENCE_ATTACHED'
@@ -3528,6 +3628,15 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
     sourceType?: RecordSourceProvenance;
     verifiedConfirmation?: boolean;
   };
+
+  if (documentUploaded === true || (typeof documentName === 'string' && documentName.trim())) {
+    res.status(400).json({
+      error:
+        'Lifecycle status endpoints accept reference-only evidence. Upload file bytes through POST /api/cancellation/sessions/:id/evidence and link the resulting evidence record.',
+      code: 'DOCUMENT_UPLOAD_REQUIRES_FILE_BYTES',
+    });
+    return;
+  }
 
   if (
     !mandateLifecycleStatus ||
@@ -3724,10 +3833,7 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
       };
     }
 
-    const isUploadedDoc = Boolean(documentUploaded);
-    const assignedSourceType: RecordSourceProvenance = isUploadedDoc
-      ? 'USER_UPLOADED'
-      : 'USER_ENTERED';
+    const assignedSourceType: RecordSourceProvenance = 'USER_ENTERED';
 
     if (cleanRef) {
       const alreadyExists = updatedEvid.some(
@@ -3747,11 +3853,8 @@ app.patch('/api/cancellations/:id/mandate-status', async (req, res) => {
           ...(isMandateCompletion && parsedRevocationDate
             ? { effectiveDate: parsedRevocationDate }
             : {}),
-          documentUploaded: isUploadedDoc,
-          ...(documentName ? { documentName } : {}),
-          evidenceRecordLifecycle: isUploadedDoc
-            ? 'DOCUMENT_UPLOADED'
-            : 'EVIDENCE_REFERENCE_RECORDED',
+          documentUploaded: false,
+          evidenceRecordLifecycle: 'EVIDENCE_REFERENCE_RECORDED',
           sourceType: assignedSourceType,
           verificationStatus:
             mandateLifecycleStatus === 'REVOCATION_EVIDENCE_ATTACHED'
@@ -4168,16 +4271,26 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
       if (!fs.existsSync(uploadsDir)) {
         fs.mkdirSync(uploadsDir, { recursive: true });
       }
-      const safeFilename = `${computedSha256.slice(0, 16)}_${Date.now()}.${detectedExtension}`;
+      const safeFilename = `${computedSha256.slice(0, 16)}_${crypto.randomUUID()}.${detectedExtension}`;
       savedStoragePath = path.join('data/uploads', safeFilename);
       fs.writeFileSync(path.resolve(process.cwd(), savedStoragePath), fileBuffer);
     }
+    const cleanupSavedUpload = () => {
+      if (!savedStoragePath) return;
+      const absoluteSavedPath = path.resolve(process.cwd(), savedStoragePath);
+      try {
+        if (fs.existsSync(absoluteSavedPath)) fs.unlinkSync(absoluteSavedPath);
+      } finally {
+        savedStoragePath = null;
+      }
+    };
 
     // Gate D: Never default omitted historical evidenceDate to '2026-10-30' or today's date!
     let parsedEvidenceDate: string | null = null;
     if (evidenceDate !== undefined && evidenceDate !== null && String(evidenceDate).trim() !== '') {
       parsedEvidenceDate = normalizeDateString(String(evidenceDate));
       if (!parsedEvidenceDate) {
+        cleanupSavedUpload();
         return {
           errorStatus: 400,
           errorBody: {
@@ -4191,6 +4304,7 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
     if (effectiveDate !== undefined && effectiveDate !== null && String(effectiveDate).trim() !== '') {
       parsedEffectiveDate = normalizeDateString(String(effectiveDate));
       if (!parsedEffectiveDate) {
+        cleanupSavedUpload();
         return {
           errorStatus: 400,
           errorBody: {
@@ -4243,6 +4357,7 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
         verificationStatus: isRealDocumentUploaded ? 'EVIDENCE_ATTACHED' : 'USER_REPORTED',
         createdAt: new Date().toISOString(),
       };
+    if (existingDuplicate) cleanupSavedUpload();
     if (!existingDuplicate) {
       userCommitmentOverrides[cmtId] = {
         ...(userCommitmentOverrides[cmtId] || {}),
@@ -4267,6 +4382,7 @@ app.post('/api/cancellation/sessions/:id/evidence', async (req, res) => {
         session: updatedState.sessions.find((s) => s.id === sess.id),
         commitment: updatedState.commitments.find((c) => c.id === cmtId),
       },
+      cleanup: cleanupSavedUpload,
     };
   });
 });
@@ -4314,10 +4430,26 @@ app.patch('/api/guardrails/:commitmentId', async (req, res) => {
   await executeSerializedMutation(res, () => {
     const state = computeCurrentState();
     const targetCommitment = state.commitments.find((c) => c.id === cmtId);
+    if (!targetCommitment) {
+      return {
+        errorStatus: 404,
+        errorBody: { error: `Commitment "${cmtId}" not found.` },
+      };
+    }
     const commitmentCurrency =
       targetCommitment?.currency && !isUnknownCurrency(targetCommitment.currency)
         ? normalizeCurrencyCode(targetCommitment.currency)
         : null;
+
+    if (!commitmentCurrency) {
+      return {
+        errorStatus: 400,
+        errorBody: {
+          error: `Commitment ${cmtId} has unknown currency. Confirm the commitment currency through a supported provenance-recorded flow before configuring a guardrail.`,
+          code: 'UNKNOWN_CURRENCY_GUARDRAIL_NOT_ALLOWED',
+        },
+      };
+    }
 
     if (currency !== undefined && currency !== null && String(currency).trim() !== '') {
       if (!isValidCurrencyCode(currency)) {
@@ -5474,7 +5606,14 @@ app.post('/api/detection/evaluate', handleEvaluateDetectionMetrics);
 // VITE DEV SERVER / STATIC ASSET MOUNTING & GRACEFUL SHUTDOWN
 // ============================================================================
 async function startServer() {
-  const PORT = 3000;
+  const configuredPort = process.env.PORT?.trim() || '3000';
+  if (!/^\d+$/.test(configuredPort)) {
+    throw new Error(`Invalid PORT "${configuredPort}". PORT must be an integer between 1 and 65535.`);
+  }
+  const PORT = Number(configuredPort);
+  if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+    throw new Error(`Invalid PORT "${configuredPort}". PORT must be an integer between 1 and 65535.`);
+  }
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -5507,4 +5646,3 @@ async function startServer() {
 if (process.env.DEBITLENS_SKIP_LISTEN !== '1') {
   startServer();
 }
-

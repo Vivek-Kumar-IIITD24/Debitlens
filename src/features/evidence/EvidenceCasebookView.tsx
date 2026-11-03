@@ -53,7 +53,10 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
 
   const activeCommitment =
     commitments.find((c) => c.id === selectedCommitmentId) || commitments[0] || null;
-  const activeCurrency = activeCommitment?.currency || 'INR';
+  const activeCurrency =
+    activeCommitment?.currency && !isUnknownCurrency(activeCommitment.currency)
+      ? activeCommitment.currency
+      : 'Currency unavailable';
   const activeGuardrail = guardrails.find((g) => g.commitmentId === activeCommitment?.id) || null;
 
   const loadCasebookAndCoverage = async (cmtId: string) => {
@@ -69,9 +72,11 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
     setGuardrails(gr);
     const activeGr = gr.find((g) => g.commitmentId === cmtId);
     const cmt = commitments.find((c) => c.id === cmtId);
-    const grCurr = activeGr?.currency || cmt?.currency || 'INR';
+    const grCurr =
+      activeGr?.currency ||
+      (cmt?.currency && !isUnknownCurrency(cmt.currency) ? cmt.currency : null);
     if (activeGr && activeGr.maxExpectedAmountMinor != null) {
-      setMaxCapMajor(String(fromMinorUnits(activeGr.maxExpectedAmountMinor, grCurr)));
+      setMaxCapMajor(grCurr ? String(fromMinorUnits(activeGr.maxExpectedAmountMinor, grCurr)) : '');
       setReminderDays(String(activeGr.preDebitReminderDays));
     } else {
       setMaxCapMajor('');
@@ -105,8 +110,8 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
   const handleSaveGuardrail = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeCommitment) return;
-    const guardrailCurrency = activeCommitment.currency || 'INR';
-    if (isUnknownCurrency(guardrailCurrency)) {
+    const guardrailCurrency = activeCommitment.currency;
+    if (!guardrailCurrency || isUnknownCurrency(guardrailCurrency)) {
       setStatusMessage(
         `Error: Cannot configure financial guardrails for ${activeCommitment.serviceName} with UNKNOWN currency. Reconcile or confirm currency first.`
       );
@@ -120,6 +125,10 @@ export const EvidenceCasebookView: React.FC<EvidenceCasebookViewProps> = ({
     }
     try {
       const minorCap = toMinorUnitsStrict(enteredCap, guardrailCurrency);
+      if (minorCap === null) {
+        setStatusMessage('Error: Amount exceeds the safe precision or currency scale.');
+        return;
+      }
       const updated = await apiClient.updateGuardrail(activeCommitment.id, {
         currency: guardrailCurrency,
         maxExpectedAmountMinor: minorCap,

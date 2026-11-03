@@ -231,7 +231,9 @@ export interface TransactionRecord {
   rawDescription: string;
   normalisedDescription: string;
   amount: number;
+  amountExact?: string | null;
   amountMinor?: number | null;
+  amountMinorExact?: string | null;
   currency: string;
   currencyProvenance?: CurrencyProvenance;
   currencyStatus?: CurrencyStatus;
@@ -344,12 +346,17 @@ export interface CommitmentRecord {
   expectedAmountMinor?: number | null;
   latestAmount: number;
   latestAmountMinor?: number | null;
+  latestAmountMinorExact?: string | null;
   previousAmount: number | null;
+  previousAmountMinorExact?: string | null;
   currency: string;
   currencyStatus?: 'SUPPORTED' | 'UNKNOWN' | 'UNSUPPORTED';
   annualisedAmount: number;
+  annualisedAmountExact?: string | null;
   monthlyEquivalent: number;
+  monthlyEquivalentExact?: string | null;
   totalHistoricalSpend: number;
+  totalHistoricalSpendExact?: string | null;
   firstObservedDate?: string;
   nextExpectedDate: string | null;
   lastPaymentDate: string;
@@ -367,6 +374,7 @@ export interface CommitmentRecord {
   evidenceReferences?: string[];
   priceChangeDetected: boolean;
   priceChangeAmount: number | null;
+  priceChangeAmountExact?: string | null;
   priceChangePercent: number | null;
   annualPriceIncreaseImpact: number | null;
   trialConverted: boolean;
@@ -486,12 +494,15 @@ export interface ReconciliationFindingRecord {
   mandateCurrency?: string | null;
   discrepancyReason?: string | null;
   expectedServiceAmountMinor: number | null;
+  expectedServiceAmountMinorExact?: string | null;
   expectedServiceAmount: number | null;
   actualTransactionAmountMinor: number | null;
+  actualTransactionAmountMinorExact?: string | null;
   actualTransactionAmount: number | null;
   mandateMaxAmountMinor: number | null;
   mandateMaxAmount: number | null;
   discrepancyAmountMinor: number | null;
+  discrepancyAmountMinorExact?: string | null;
   discrepancyAmount: number | null;
   discrepancyPercent: number | null;
   withinMandateLimit: boolean | null;
@@ -531,6 +542,7 @@ export interface EvidenceCasebookEntry {
   description: string;
   sourceReference: string;
   amountMinor: number | null;
+  amountMinorExact?: string | null;
   currency?: string;
   verificationStatus: RelationshipConfidenceStatus;
   evidenceRecordLifecycle?: EvidenceRecordLifecycleStatus;
@@ -1043,6 +1055,8 @@ export interface UnrecognizedDebitCase {
   transactionId: string;
   originalDescriptor: string;
   amount: number;
+  amountExact?: string | null;
+  amountMinorExact?: string | null;
   amountMinor: number | null;
   transactionDate: string;
   currency: string;
@@ -1186,10 +1200,12 @@ export interface CommitmentPassport {
   sectionD_History: {
     totalDebitsCount: number;
     totalSpent: number;
+    totalSpentExact?: string | null;
     currency?: string;
     firstDebitDate?: string | null;
     latestDebitDate?: string | null;
     averageDebitAmount?: number | null;
+    averageDebitAmountExact?: string | null;
     cadence?: string;
   };
   sectionE_Reconciliation: {
@@ -1201,7 +1217,9 @@ export interface CommitmentPassport {
     explanation?: string;
     outcome?: ReconciliationOutcomeStatus;
     expectedPrice?: number | null;
+    expectedPriceExact?: string | null;
     actualAmount?: number | null;
+    actualAmountExact?: string | null;
     mandateCap?: number | null;
     discrepancyAmount?: number | null;
     discrepancyPercent?: number | null;
@@ -1299,6 +1317,8 @@ export interface EvidencePackData {
     date: string;
     description: string;
     amount: number;
+    amountExact?: string | null;
+    amountMinorExact?: string | null;
     direction: string;
     currency: string;
     reference: string | null;
@@ -1443,4 +1463,3 @@ export interface CsvMappingPreviewResult {
   unmappedHeaders: string[];
   validationErrors: { row: number; reason: string }[];
 }
-

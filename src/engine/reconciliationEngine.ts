@@ -969,11 +969,19 @@ export function reconcileCommitment(params: {
   const txnCurrency = normalizeCurrencyCode(rawTxnCurrency);
   const effectiveCurrency = txnCurrency || rawTxnCurrency || cmtCurrency || UNKNOWN_CURRENCY;
 
-  const actualTransactionAmountMinor =
+  const actualTransactionAmountMinorExact =
     txnCurrency
-      ? latestTxn.amountMinor !== undefined && latestTxn.amountMinor !== null
-        ? latestTxn.amountMinor
-        : toMinorUnitsStrict(latestTxn.amount, txnCurrency)
+      ? latestTxn.amountMinorExact !== null && latestTxn.amountMinorExact !== undefined
+        ? BigInt(latestTxn.amountMinorExact)
+        : toMinorUnitsStrict(latestTxn.amount, txnCurrency) === null
+        ? null
+        : BigInt(toMinorUnitsStrict(latestTxn.amount, txnCurrency)!)
+      : null;
+  const actualTransactionAmountMinor =
+    actualTransactionAmountMinorExact !== null &&
+    actualTransactionAmountMinorExact <= BigInt(Number.MAX_SAFE_INTEGER) &&
+    actualTransactionAmountMinorExact >= BigInt(Number.MIN_SAFE_INTEGER)
+      ? Number(actualTransactionAmountMinorExact)
       : null;
   const actualTransactionAmount =
     actualTransactionAmountMinor !== null && txnCurrency
@@ -997,13 +1005,21 @@ export function reconcileCommitment(params: {
       ? actualTransactionAmountMinor <= mandateMaxAmountMinor
       : null;
 
+  const discrepancyAmountMinorExact =
+    !hasCurrencyMismatch && !hasInvalidTxnCurrency && expectedServiceAmountMinor !== null && actualTransactionAmountMinorExact !== null
+      ? actualTransactionAmountMinorExact - BigInt(expectedServiceAmountMinor)
+      : null;
   const discrepancyAmountMinor =
-    !hasCurrencyMismatch && !hasInvalidTxnCurrency && expectedServiceAmountMinor !== null && actualTransactionAmountMinor !== null
-      ? actualTransactionAmountMinor - expectedServiceAmountMinor
+    discrepancyAmountMinorExact !== null &&
+    discrepancyAmountMinorExact <= BigInt(Number.MAX_SAFE_INTEGER) &&
+    discrepancyAmountMinorExact >= BigInt(Number.MIN_SAFE_INTEGER)
+      ? Number(discrepancyAmountMinorExact)
       : null;
   const discrepancyAmount =
     discrepancyAmountMinor !== null && txnCurrency
-      ? fromMinorUnitsStrict(discrepancyAmountMinor, txnCurrency)
+      ? discrepancyAmountMinor !== null
+        ? fromMinorUnitsStrict(discrepancyAmountMinor, txnCurrency)
+        : null
       : null;
 
   const discrepancyPercent =
@@ -1034,19 +1050,30 @@ export function reconcileCommitment(params: {
     const prevCcy = normalizeCurrencyCode(prev.currency);
     const currCcy = normalizeCurrencyCode(curr.currency);
     if (!prevCcy || !currCcy || prevCcy !== currCcy) continue;
-    const prevMinor = toMinorUnitsStrict(prev.amount, prevCcy);
-    const currMinor = toMinorUnitsStrict(curr.amount, currCcy);
-    if (prevMinor === null || currMinor === null) continue;
+    const prevMinorExact = prev.amountMinorExact !== null && prev.amountMinorExact !== undefined
+      ? BigInt(prev.amountMinorExact)
+      : toMinorUnitsStrict(prev.amount, prevCcy) === null
+      ? null
+      : BigInt(toMinorUnitsStrict(prev.amount, prevCcy)!);
+    const currMinorExact = curr.amountMinorExact !== null && curr.amountMinorExact !== undefined
+      ? BigInt(curr.amountMinorExact)
+      : toMinorUnitsStrict(curr.amount, currCcy) === null
+      ? null
+      : BigInt(toMinorUnitsStrict(curr.amount, currCcy)!);
+    if (prevMinorExact === null || currMinorExact === null) continue;
     const daysApart = Math.round(
       Math.abs(Date.parse(curr.transactionDate) - Date.parse(prev.transactionDate)) /
         (1000 * 60 * 60 * 24)
     );
-    if (daysApart <= 2 && prevMinor === currMinor) {
+    if (daysApart <= 2 && prevMinorExact === currMinorExact) {
       const matchingReversal = cmtCreditTxns.find((cred) => {
         if (consumedCreditIds.has(cred.id)) return false;
         const credCcy = normalizeCurrencyCode(cred.currency);
         if (!credCcy || credCcy !== currCcy) return false;
-        if (toMinorUnitsStrict(cred.amount, credCcy) !== currMinor) return false;
+        const creditMinorExact = cred.amountMinorExact !== null && cred.amountMinorExact !== undefined
+          ? BigInt(cred.amountMinorExact)
+          : toMinorUnitsStrict(cred.amount, credCcy);
+        if (creditMinorExact === null || BigInt(creditMinorExact) !== currMinorExact) return false;
         const credTime = Date.parse(cred.transactionDate);
         const prevTime = Date.parse(prev.transactionDate);
         const daysSinceFirstDebit = (credTime - prevTime) / (1000 * 60 * 60 * 24);
@@ -1404,12 +1431,16 @@ export function reconcileCommitment(params: {
     mandateCurrency,
     discrepancyReason: discrepancyReasonOverride || (hasCurrencyMismatch ? 'CURRENCY_MISMATCH' : null),
     expectedServiceAmountMinor,
+    expectedServiceAmountMinorExact:
+      expectedServiceAmountMinor === null ? null : expectedServiceAmountMinor.toString(),
     expectedServiceAmount,
     actualTransactionAmountMinor,
+    actualTransactionAmountMinorExact: actualTransactionAmountMinorExact?.toString() ?? null,
     actualTransactionAmount,
     mandateMaxAmountMinor,
     mandateMaxAmount,
     discrepancyAmountMinor,
+    discrepancyAmountMinorExact: discrepancyAmountMinorExact?.toString() ?? null,
     discrepancyAmount,
     discrepancyPercent,
     withinMandateLimit,
@@ -1532,7 +1563,15 @@ export function runFullReconciliation(params: {
   const unresolvedTxns = transactions.filter((t) => t.resolutionStatus === 'UNRESOLVED');
   if (unresolvedTxns.length > 0) {
     const latestUnres = unresolvedTxns[unresolvedTxns.length - 1];
-    const amtMinor = toMinorUnitsStrict(latestUnres.amount, latestUnres.currency);
+    const amtMinor = latestUnres.amountMinorExact !== null && latestUnres.amountMinorExact !== undefined
+      ? (() => {
+          const exactMinor = BigInt(latestUnres.amountMinorExact);
+          return exactMinor <= BigInt(Number.MAX_SAFE_INTEGER) &&
+            exactMinor >= BigInt(Number.MIN_SAFE_INTEGER)
+            ? Number(exactMinor)
+            : null;
+        })()
+      : toMinorUnitsStrict(latestUnres.amount, latestUnres.currency);
     findings.push({
       id: 'REC-UNRESOLVED-POOL',
       commitmentId: 'UNRESOLVED-POOL',
@@ -1658,7 +1697,15 @@ export function buildCommitmentEvidenceCasebook(params: {
   // 3. Supporting transactions
   for (const txn of cmtTxns) {
     const txnCcy = txn.currency || commitment.currency || UNKNOWN_CURRENCY;
-    const amtMinor = txn.amountMinor ?? toMinorUnitsStrict(txn.amount, txnCcy);
+    const amtMinor = txn.amountMinorExact !== null && txn.amountMinorExact !== undefined
+      ? (() => {
+          const exactMinor = BigInt(txn.amountMinorExact);
+          return exactMinor <= BigInt(Number.MAX_SAFE_INTEGER) &&
+            exactMinor >= BigInt(Number.MIN_SAFE_INTEGER)
+            ? Number(exactMinor)
+            : null;
+        })()
+      : txn.amountMinor ?? toMinorUnitsStrict(txn.amount, txnCcy);
     entries.push({
       id: `CB-TXN-${txn.id}`,
       commitmentId: commitment.id,
@@ -1672,6 +1719,7 @@ export function buildCommitmentEvidenceCasebook(params: {
       }`,
       sourceReference: txn.id,
       amountMinor: amtMinor,
+      amountMinorExact: txn.amountMinorExact ?? (amtMinor === null ? null : amtMinor.toString()),
       currency: txnCcy,
       verificationStatus: txn.resolutionStatus,
       actor: 'STATEMENT_IMPORT_ENGINE',
@@ -1715,6 +1763,10 @@ export function buildCommitmentEvidenceCasebook(params: {
       description: `${reconciliation.explanation} | Caveat: ${reconciliation.epistemicCaveat}`,
       sourceReference: reconciliation.id,
       amountMinor: reconciliation.discrepancyAmountMinor ?? reconciliation.actualTransactionAmountMinor,
+      amountMinorExact:
+        reconciliation.discrepancyAmountMinorExact ??
+        reconciliation.actualTransactionAmountMinorExact ??
+        null,
       verificationStatus: 'SYSTEM_GENERATED',
       actor: 'RECONCILIATION_ENGINE',
     });

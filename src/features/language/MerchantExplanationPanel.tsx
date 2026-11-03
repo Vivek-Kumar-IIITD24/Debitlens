@@ -5,7 +5,7 @@ import {
   TransactionRecord,
 } from '../../types/debitlens';
 import { sarvamService } from '../../services/sarvamService';
-import { formatINR } from '../../utils/currency';
+import { formatINR, formatExactCurrency } from '../../utils/currency';
 import { TranslationComparison } from './TranslationComparison';
 import { ShieldCheck, AlertTriangle, Lock } from 'lucide-react';
 
@@ -72,7 +72,7 @@ export const MerchantExplanationPanel: React.FC<MerchantExplanationPanelProps> =
                 .filter((t) => t.direction === 'DEBIT')
                 .map((t) => (
                   <option key={t.id} value={t.id}>
-                    {t.id} · {t.rawDescription} · {formatINR(t.amount, t.currency)} (
+                    {t.id} · {t.rawDescription} · {formatExactCurrency(t.amountExact, t.currency)} (
                     {t.merchantName || 'UNRESOLVED PROCESSOR-ONLY'})
                   </option>
                 ))}

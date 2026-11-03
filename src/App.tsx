@@ -53,7 +53,7 @@ import {
   ServiceTermsRecord,
   ReconciliationFindingRecord,
 } from './types/debitlens';
-import { formatINR, formatDateIN } from './utils/currency';
+import { formatINR, formatDateIN, formatExactCurrency } from './utils/currency';
 import {
   SearchHistoryEntry,
   DEFAULT_DESCRIPTOR_SEARCH_HISTORY,
@@ -1596,7 +1596,7 @@ export default function App() {
                                 }
                               >
                                 {t.direction === 'CREDIT' ? '+' : ''}
-                                {formatINR(t.amount, t.currency)}
+                                {formatExactCurrency(t.amountExact, t.currency)}
                               </span>
                               <div className="text-[10px] text-slate-500">
                                 {t.direction} · {t.currency}

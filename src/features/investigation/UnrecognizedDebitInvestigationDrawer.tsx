@@ -23,7 +23,7 @@ import {
   LanguageCode,
 } from '../../types/debitlens';
 import { apiClient } from '../../services/apiClient';
-import { formatINR, formatDateIN, formatDateTimeIN } from '../../utils/currency';
+import { formatINR, formatDateIN, formatDateTimeIN, formatExactCurrency } from '../../utils/currency';
 
 interface UnrecognizedDebitInvestigationDrawerProps {
   transaction: TransactionRecord | null;
@@ -186,7 +186,7 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
               <div>
                 <span className="text-xs text-slate-400 block">Amount</span>
                 <span className="text-lg font-bold text-slate-900">
-                  {formatINR(transaction.amount, transaction.currency)}
+                  {formatExactCurrency(transaction.amountExact, transaction.currency)}
                 </span>
               </div>
               <div>
@@ -366,7 +366,7 @@ export const UnrecognizedDebitInvestigationDrawer: React.FC<
                 </span>
                 <p>
                   <strong>Search receipts:</strong> Check Gmail/SMS for payments of{' '}
-                  {formatINR(transaction.amount, transaction.currency)} on or around{' '}
+                  {formatExactCurrency(transaction.amountExact, transaction.currency)} on or around{' '}
                   {formatDateIN(transaction.transactionDate)}.
                 </p>
               </div>

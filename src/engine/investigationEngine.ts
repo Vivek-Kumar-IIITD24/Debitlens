@@ -32,15 +32,26 @@ import {
   formatINR,
   formatMinorINR,
   formatCurrency,
+  formatExactCurrency,
+  formatMinorUnitsExact,
+  roundDivideBigInt,
   normalizeCurrencyCode,
   toMinorUnits,
   toMinorUnitsStrict,
   fromMinorUnits,
+  fromMinorUnitsStrict,
   resolveTransactionCurrency,
   isUnknownCurrency,
   UNKNOWN_CURRENCY,
 } from '../utils/currency';
-import { normaliseDescriptor, detectProcessor, parseStrictAmount, parseStrictSignedAmount, RawCsvRow } from './debitlensEngine';
+import {
+  normaliseDescriptor,
+  detectProcessor,
+  parseStrictAmount,
+  parseStrictSignedAmount,
+  parseStrictSignedAmountText,
+  RawCsvRow,
+} from './debitlensEngine';
 import { getEffectiveMandateStatus, getMissingMandateFields } from './reconciliationEngine';
 
 // ============================================================================
@@ -232,6 +243,7 @@ export function buildUnrecognizedDebitCase(params: {
     transactionId: transaction.id,
     originalDescriptor: transaction.rawDescription,
     amount: transaction.amount,
+    amountExact: transaction.amountExact ?? null,
     amountMinor: transaction.amountMinor ?? toMinorUnitsStrict(transaction.amount, transaction.currency),
     transactionDate: transaction.transactionDate,
     currency: transaction.currency,
@@ -254,7 +266,7 @@ export function buildUnrecognizedDebitCase(params: {
     evidenceIds: existingCase.evidenceIds || [transaction.id],
     recommendedNextAction,
     guidanceChecklist: [
-      `Search Gmail/SMS for payments of ${formatCurrency(transaction.amount, transaction.currency || UNKNOWN_CURRENCY)} around ${transaction.transactionDate}.`,
+      `Search Gmail/SMS for payments of ${formatExactCurrency(transaction.amountExact ?? transaction.amount, transaction.currency || UNKNOWN_CURRENCY)} around ${transaction.transactionDate}.`,
       'Check banking/UPI app for active e-mandate or UPI AutoPay with matching ceiling amounts.',
       'Report any suspected unauthorised transaction to your bank immediately through its official channels. Customer liability and reporting timelines depend on the cause of the transaction and the applicable RBI directions and bank policy. Keep your complaint acknowledgement or reference number.',
     ],
@@ -602,9 +614,54 @@ export function generateCommitmentPassport(params: {
   }
 
   const totalDebitsCount = cmtTxns.length;
+  const normalizedHistoryCurrencies = cmtTxns.map((txn) =>
+    isUnknownCurrency(txn.currency) ? UNKNOWN_CURRENCY : txn.currency.trim().toUpperCase()
+  );
+  const exactMinorValues = cmtTxns
+    .filter((t) => t.amountMinorExact !== null && t.amountMinorExact !== undefined)
+    .map((t) => BigInt(t.amountMinorExact!));
+  const historyCurrency = isUnknownCurrency(commitment.currency || cmtTxns[0]?.currency)
+    ? UNKNOWN_CURRENCY
+    : (commitment.currency || cmtTxns[0]?.currency || UNKNOWN_CURRENCY).trim().toUpperCase();
+  const sameSupportedHistoryCurrency =
+    historyCurrency !== UNKNOWN_CURRENCY &&
+    normalizedHistoryCurrencies.every((currency) => currency === historyCurrency);
+  const exactTotalMinor =
+    exactMinorValues.length === cmtTxns.length && sameSupportedHistoryCurrency
+      ? exactMinorValues.reduce((sum, value) => sum + value, 0n)
+      : null;
+  const exactHistoryValues = sameSupportedHistoryCurrency
+    ? cmtTxns
+        .map((transaction) =>
+          transaction.amountMinorExact !== null && transaction.amountMinorExact !== undefined
+            ? BigInt(transaction.amountMinorExact)
+            : null
+        )
+        .filter((value): value is bigint => value !== null)
+    : [];
+  const exactMinimumMinor =
+    exactHistoryValues.length === cmtTxns.length && exactHistoryValues.length > 0
+      ? exactHistoryValues.reduce((minimum, value) => (value < minimum ? value : minimum))
+      : null;
+  const exactMaximumMinor =
+    exactHistoryValues.length === cmtTxns.length && exactHistoryValues.length > 0
+      ? exactHistoryValues.reduce((maximum, value) => (value > maximum ? value : maximum))
+      : null;
   const totalSpent = amounts.reduce((acc, a) => acc + a, 0);
   const firstDebitDate = cmtTxns[0]?.transactionDate || commitment.firstObservedDate || (commitment as any).firstSeenDate || null;
   const latestDebitDate = cmtTxns[cmtTxns.length - 1]?.transactionDate || null;
+  const exactAverageMinor =
+    exactTotalMinor !== null && totalDebitsCount > 0
+      ? roundDivideBigInt(exactTotalMinor, BigInt(totalDebitsCount))
+      : null;
+  const legacyAverageDebitAmount =
+    exactAverageMinor !== null &&
+    exactAverageMinor <= BigInt(Number.MAX_SAFE_INTEGER) &&
+    exactAverageMinor >= BigInt(Number.MIN_SAFE_INTEGER)
+      ? fromMinorUnitsStrict(Number(exactAverageMinor), historyCurrency)
+      : exactTotalMinor === null && totalDebitsCount > 0
+      ? Math.round(totalSpent / totalDebitsCount)
+      : null;
 
   const verifiedElementsCount = coverageItems.filter((c) => c.present).length;
 
@@ -707,14 +764,24 @@ export function generateCommitmentPassport(params: {
   const sectionD_History = {
     totalDebitsCount,
     totalSpent,
+    totalSpentExact: exactTotalMinor?.toString() ?? null,
     currency: cmtCurrency,
     firstDebitDate,
     latestDebitDate,
-    averageDebitAmount: totalDebitsCount > 0 ? Math.round(totalSpent / totalDebitsCount) : null,
+    averageDebitAmount: legacyAverageDebitAmount,
+    averageDebitAmountExact:
+      exactTotalMinor !== null && totalDebitsCount > 0
+        ? formatMinorUnitsExact(
+            exactAverageMinor!,
+            historyCurrency
+          )
+        : null,
     cadence: commitment.recurrenceType,
   };
 
   const latestActualTxnAmount = cmtTxns.length > 0 ? cmtTxns[cmtTxns.length - 1].amount : null;
+  const latestActualTxnAmountExact =
+    cmtTxns.length > 0 ? cmtTxns[cmtTxns.length - 1].amountMinorExact ?? null : null;
   const reconciledActualTxnAmount =
     reconciliationFinding?.latestTransactionId && reconciliationFinding.actualTransactionAmount !== null
       ? reconciliationFinding.actualTransactionAmount
@@ -746,6 +813,8 @@ export function generateCommitmentPassport(params: {
     mandateMaxAmount: reconciliationFinding?.mandateMaxAmount ?? mandate?.maxAmount ?? null,
     expectedPrice: reconciliationFinding?.expectedServiceAmount ?? null,
     actualAmount: reconciledActualTxnAmount,
+    actualAmountExact:
+      reconciliationFinding?.actualTransactionAmountMinorExact ?? latestActualTxnAmountExact,
     mandateCap: reconciliationFinding?.mandateMaxAmount ?? null,
     discrepancyAmount: reconciliationFinding?.discrepancyAmount ?? null,
     discrepancyPercent: reconciliationFinding?.discrepancyPercent ?? null,
@@ -932,7 +1001,12 @@ export function generateCommitmentPassport(params: {
       firstObservedDate: cmtTxns[0]?.transactionDate || commitment.firstObservedDate || null,
       latestTransactionDate: cmtTxns[cmtTxns.length - 1]?.transactionDate || null,
       typicalAmount: commitment.typicalAmount,
-      amountRange: { min: minAmount, max: maxAmount },
+      amountRange: {
+        min: minAmount,
+        max: maxAmount,
+        minExact: exactMinimumMinor?.toString() ?? null,
+        maxExact: exactMaximumMinor?.toString() ?? null,
+      },
       priceChangesDetected: commitment.priceChangeDetected,
       annualisedAmount: commitment.annualisedAmount,
     },
@@ -1200,6 +1274,8 @@ export function generateEvidencePackData(params: {
       date: t.transactionDate,
       description: t.rawDescription,
       amount: t.amount,
+      amountExact: t.amountExact ?? null,
+      amountMinorExact: t.amountMinorExact ?? null,
       direction: t.direction,
       currency: t.currency,
       reference: (t as any).externalReference ?? null,
@@ -1429,7 +1505,7 @@ export function generatePrintableEvidencePackHtml(pack: EvidencePackData): strin
           <td>${escapeHtml(t.date)}</td>
           <td><code>${escapeHtml(t.description)}</code></td>
           <td>${escapeHtml(t.direction)}</td>
-          <td>${escapeHtml(formatCurrency(t.amount, t.currency))}</td>
+          <td>${escapeHtml(formatExactCurrency(t.amountExact ?? t.amount, t.currency))}</td>
           <td><small>${escapeHtml(t.id)}</small></td>
         </tr>`
         )
@@ -1911,6 +1987,7 @@ export function parseAllMappedCsvRows(
     const currency = resolvedCurr.currency;
 
     let amount: number | null = null;
+    let amountSourceText: string | null = null;
     let direction: 'DEBIT' | 'CREDIT' = 'DEBIT';
 
     if (isSeparate) {
@@ -1925,16 +2002,19 @@ export function parseAllMappedCsvRows(
         return;
       } else if (drAmt !== null && drAmt > 0) {
         amount = drAmt;
+        amountSourceText = drStr.trim();
         direction = 'DEBIT';
       } else if (crAmt !== null && crAmt > 0) {
         amount = crAmt;
+        amountSourceText = crStr.trim();
         direction = 'CREDIT';
       }
     } else {
       const str = signedIdx >= 0 ? cells[signedIdx] || '' : '';
-      const parsedSigned = parseStrictSignedAmount(str);
-      if (parsedSigned !== null && parsedSigned.amount > 0) {
-        amount = parsedSigned.amount;
+      const parsedSigned = parseStrictSignedAmountText(str);
+      if (parsedSigned !== null && Number(parsedSigned.amountText) > 0) {
+        amount = Number(parsedSigned.amountText);
+        amountSourceText = `${parsedSigned.isNegative ? '-' : ''}${parsedSigned.amountText}`;
         direction = parsedSigned.isNegative ? 'CREDIT' : 'DEBIT';
       }
     }
@@ -1993,11 +2073,16 @@ export function parseAllMappedCsvRows(
     const cleanHash = Math.abs(hash).toString(36);
     const txnId = `TXN-MAP-${cleanHash}-${rowNum}`;
 
+    const canonicalAmountText = (amountSourceText || String(amount))
+      .trim()
+      .replace(/(\.\d*?[1-9])0+$/, '$1')
+      .replace(/\.0+$/, '');
+
     validRows.push({
       transaction_id: txnId,
       transaction_date: parsedDate,
       raw_description: rawDesc,
-      amount: String(amount),
+      amount: canonicalAmountText,
       currency,
       currency_provenance: resolvedCurr.currencyProvenance,
       currency_status: resolvedCurr.currencyStatus,
@@ -2023,7 +2108,7 @@ export function computeCanonicalCsvRowFingerprint(params: {
   currency: string;
   parsedDate: string;
   direction: string;
-  amount: number;
+  amount: number | string;
   rawDescription: string;
   externalReference?: string | null;
 }): string {
@@ -2033,8 +2118,8 @@ export function computeCanonicalCsvRowFingerprint(params: {
     : params.currency.trim().toUpperCase();
   const dt = (params.parsedDate || '').trim();
   const dir = (params.direction || 'DEBIT').trim().toUpperCase();
-  const amtMinor = toMinorUnitsStrict(Number(params.amount), curr);
-  const amtToken = amtMinor !== null ? String(amtMinor) : `MAJOR:${Number(params.amount)}`;
+  const amtMinor = toMinorUnitsStrict(params.amount, curr);
+  const amtToken = amtMinor !== null ? String(amtMinor) : `MAJOR:${String(params.amount)}`;
   const desc = (params.rawDescription || '').trim().toUpperCase().replace(/\s+/g, ' ');
   const ref = (params.externalReference || '').trim().toUpperCase();
   return `${acct}|${curr}|${dt}|${dir}|${amtToken}|${desc}|${ref}`;

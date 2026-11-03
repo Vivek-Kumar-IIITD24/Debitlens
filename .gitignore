@@ -4,6 +4,10 @@ dist/
 .env.local
 .env.*.local
 .playwright-cli/
+.aistudio/
 data/persistent-store.json
+data/uploads/*
+!data/uploads/.gitkeep
+server.log
 *.log
 .DS_Store

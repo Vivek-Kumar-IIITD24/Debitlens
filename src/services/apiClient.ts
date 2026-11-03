@@ -46,21 +46,33 @@ export interface CurrencyCommitmentSummary {
   currency: string;
   currencyStatus?: 'SUPPORTED' | 'UNSUPPORTED' | 'UNKNOWN';
   monthlyRecurringSpend: number;
+  monthlyRecurringSpendExact?: string | null;
   annualCommitmentTotal: number;
+  annualCommitmentTotalExact?: string | null;
   discretionaryAnnual: number;
+  discretionaryAnnualExact?: string | null;
   obligationAnnual: number;
+  obligationAnnualExact?: string | null;
   activeCommitmentsCount: number;
 }
 
 export interface DashboardSummaryData {
   primaryCurrency?: string;
   monthlyRecurringSpend: number;
+  monthlyRecurringSpendExact?: string | null;
   annualCommitmentTotal: number;
+  annualCommitmentTotalExact?: string | null;
   discretionaryAnnual: number;
+  discretionaryAnnualExact?: string | null;
   obligationAnnual: number;
+  obligationAnnualExact?: string | null;
   totalsByCurrency?: Record<string, CurrencyCommitmentSummary>;
   currencySummaries?: CurrencyCommitmentSummary[];
   unknownCurrencyCommitmentsCount?: number;
+  totalDebitAmount?: number | null;
+  totalDebitAmountExact?: string | null;
+  unresolvedDebitAmount?: number | null;
+  unresolvedDebitAmountExact?: string | null;
   unknownCurrencyTransactionsCount?: number;
   excludedUnknownCurrencyCount?: number;
   unsupportedCurrenciesCount?: number;
@@ -244,8 +256,6 @@ export const apiClient = {
       referenceNumber: string;
       evidenceDate?: string | null;
       effectiveDate?: string | null;
-      documentUploaded?: boolean;
-      documentName?: string | null;
       documentMimeType?: string | null;
       fileBase64?: string | null;
     }
@@ -268,8 +278,6 @@ export const apiClient = {
       evidenceDate?: string | null;
       requestDate?: string | null;
       acknowledgementDate?: string | null;
-      documentUploaded?: boolean;
-      documentName?: string | null;
       verifiedConfirmation?: boolean;
     }
   ) =>
@@ -292,8 +300,6 @@ export const apiClient = {
       evidenceDate?: string | null;
       requestDate?: string | null;
       acknowledgementDate?: string | null;
-      documentUploaded?: boolean;
-      documentName?: string | null;
       verifiedConfirmation?: boolean;
     }
   ) =>

@@ -40,7 +40,6 @@ interface CancellationCentreViewProps {
       referenceNumber: string;
       evidenceDate?: string | null;
       effectiveDate?: string | null;
-      documentUploaded?: boolean;
       documentName?: string | null;
       documentMimeType?: string | null;
       fileBase64?: string | null;
@@ -193,7 +192,6 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
         description: description.trim(),
         evidenceDate: evidenceDate.trim() || null,
         effectiveDate: evidenceEffectiveDate.trim() || null,
-        documentUploaded: evidenceMode === 'FILE_UPLOAD',
         documentName: selectedFile?.name || null,
         documentMimeType: selectedFile?.mimeType || null,
         fileBase64: selectedFile?.base64 || null,
@@ -206,7 +204,7 @@ export const CancellationCentreView: React.FC<CancellationCentreViewProps> = ({
       setFileInputKey((k) => k + 1);
       setStatusMessage(
         evidenceMode === 'FILE_UPLOAD'
-          ? `Verified document "${selectedFile?.name}" uploaded and saved (DOCUMENT_UPLOADED · USER_UPLOADED).`
+          ? `File "${selectedFile?.name}" uploaded and stored successfully. File integrity checks were performed; document authenticity has not been independently verified.`
           : 'Cancellation evidence reference saved to canonical store (EVIDENCE_REFERENCE_RECORDED · USER_ENTERED).'
       );
     } catch (err: any) {

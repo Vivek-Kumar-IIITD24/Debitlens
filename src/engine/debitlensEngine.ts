@@ -38,14 +38,28 @@ import {
 import {
   toMinorUnits,
   toMinorUnitsStrict,
+  convertMajorToMinorExact,
   fromMinorUnits,
   formatCurrency,
+  formatExactCurrency,
+  formatMinorUnitsExact,
+  roundDivideBigInt,
   isValidCurrencyCode,
   normalizeCurrencyCode,
   resolveTransactionCurrency,
   isUnknownCurrency,
   UNKNOWN_CURRENCY,
 } from '../utils/currency';
+
+function formatTransactionAmount(
+  transaction: Pick<TransactionRecord, 'amount' | 'amountExact' | 'currency'>,
+  fallbackCurrency?: string | null
+): string {
+  return formatExactCurrency(
+    transaction.amountExact ?? transaction.amount,
+    transaction.currency || fallbackCurrency || UNKNOWN_CURRENCY
+  );
+}
 import {
   isStrictValidIsoDate,
   getRuntimeDateISO,
@@ -399,10 +413,20 @@ export function resolveTransactionDescriptor(
 }
 
 export function parseStrictSignedAmount(value: unknown): { amount: number; isNegative: boolean } | null {
+  const parsed = parseStrictSignedAmountText(value);
+  if (!parsed) return null;
+  const amount = Number(parsed.amountText);
+  if (!Number.isFinite(amount)) return null;
+  return { amount, isNegative: parsed.isNegative };
+}
+
+export function parseStrictSignedAmountText(
+  value: unknown
+): { amountText: string; isNegative: boolean } | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return null;
-    return { amount: Math.abs(value), isNegative: value < 0 };
+    return { amountText: String(Math.abs(value)), isNegative: value < 0 };
   }
   let str = String(value).trim();
   if (!str) return null;
@@ -441,9 +465,7 @@ export function parseStrictSignedAmount(value: unknown): { amount: number; isNeg
   if (!/^\d+(?:\.\d+)?$/.test(str)) {
     return null;
   }
-  const num = Number(str);
-  if (Number.isNaN(num)) return null;
-  return { amount: num, isNegative };
+  return { amountText: str, isNegative };
 }
 
 export function parseStrictAmount(value: unknown): number | null {
@@ -486,8 +508,11 @@ export function parseAndNormaliseTransactions(
       return;
     }
 
-    const parsedSigned = parseStrictSignedAmount(row.amount);
-    if (parsedSigned === null) {
+    const parsedSignedText = parseStrictSignedAmountText(row.amount);
+    const parsedSigned = parsedSignedText
+      ? { amount: Number(parsedSignedText.amountText), isNegative: parsedSignedText.isNegative }
+      : null;
+    if (parsedSigned === null || !Number.isFinite(parsedSigned.amount)) {
       invalidRows.push({
         rowNumber: rowNum,
         raw: row,
@@ -495,6 +520,7 @@ export function parseAndNormaliseTransactions(
       });
       return;
     }
+    if (!parsedSignedText) return;
 
     if (parsedSigned.amount === 0) {
       invalidRows.push({
@@ -548,6 +574,31 @@ export function parseAndNormaliseTransactions(
     seenIds.add(txnId);
 
     const validCurrency = resolvedCurrency.currency;
+    const signedAmountText = parsedSignedText.isNegative
+      ? `-${parsedSignedText.amountText}`
+      : parsedSignedText.amountText;
+    const exactMinorResult = convertMajorToMinorExact(signedAmountText, validCurrency);
+    if (!isUnknownCurrency(validCurrency) && exactMinorResult.success === false) {
+      invalidRows.push({
+        rowNumber: rowNum,
+        raw: row,
+        reason: `Amount "${row.amount}" cannot be represented exactly in ${validCurrency}: ${exactMinorResult.error}.`,
+      });
+      return;
+    }
+    if (
+      !isUnknownCurrency(validCurrency) &&
+      exactMinorResult.success === true &&
+      (exactMinorResult.minorUnits > BigInt(Number.MAX_SAFE_INTEGER) ||
+        exactMinorResult.minorUnits < BigInt(Number.MIN_SAFE_INTEGER))
+    ) {
+      invalidRows.push({
+        rowNumber: rowNum,
+        raw: row,
+        reason: `Amount "${row.amount}" cannot be represented exactly in ${validCurrency}: minor-unit range exceeds safe integer limits.`,
+      });
+      return;
+    }
     const explicitRail = (row.payment_rail as PaymentRailType) || 'UNKNOWN';
     const resolved = resolveTransactionDescriptor(
       rawDesc,
@@ -563,7 +614,9 @@ export function parseAndNormaliseTransactions(
       rawDescription: rawDesc,
       normalisedDescription: resolved.normalisedDescription,
       amount: amt,
-      amountMinor: toMinorUnitsStrict(amt, validCurrency),
+      amountExact: parsedSignedText.amountText,
+      amountMinor: exactMinorResult.success ? Number(exactMinorResult.minorUnits) : null,
+      amountMinorExact: exactMinorResult.success ? exactMinorResult.minorUnits.toString() : null,
       currency: validCurrency,
       currencyProvenance: resolvedCurrency.currencyProvenance,
       currencyStatus: resolvedCurrency.currencyStatus,
@@ -919,27 +972,84 @@ export function detectCommitmentsAndAlerts(
       t.commitmentId = commitmentId;
     }
 
-    const amounts = sorted.map((t) => t.amount);
+    const exactMinorAmounts = sorted.map((t) =>
+      t.amountMinorExact !== null && t.amountMinorExact !== undefined
+        ? BigInt(t.amountMinorExact)
+        : null
+    );
+    const exactAnalysisAvailable =
+      exactMinorAmounts.every((value): value is bigint => value !== null) &&
+      sorted.every((t) => t.currency === groupCurrency);
+    const minorFactor = exactAnalysisAvailable ? toMinorUnitsStrict(1, groupCurrency) || 1 : 1;
+    const analysisAmounts = exactAnalysisAvailable
+      ? exactMinorAmounts.map((value) => Number(value))
+      : sorted.map((t) => t.amount);
+    const exactAnalysisValues = exactAnalysisAvailable
+      ? exactMinorAmounts.filter((value): value is bigint => value !== null)
+      : [];
+    const exactBaselineValues = [
+      ...(sorted.length >= 2 ? exactAnalysisValues.slice(0, -1) : exactAnalysisValues),
+    ].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     const latestTxn = sorted[sorted.length - 1];
     const previousTxn = sorted.length >= 2 ? sorted[sorted.length - 2] : null;
-    const baselineAmounts = sorted.length >= 2 ? amounts.slice(0, -1) : amounts;
-    const typicalAmount = median(baselineAmounts);
-    const latestAmount = latestTxn.amount;
-    const previousAmount = previousTxn ? previousTxn.amount : null;
+    const baselineAmounts = sorted.length >= 2 ? analysisAmounts.slice(0, -1) : analysisAmounts;
+    const typicalAnalysisAmount = median(baselineAmounts);
+    const typicalExactMinor =
+      exactAnalysisAvailable
+        ? (baselineAmounts.length % 2 === 1
+            ? exactBaselineValues[Math.floor(exactBaselineValues.length / 2)]
+            : roundDivideBigInt(
+                exactBaselineValues[Math.floor(exactBaselineValues.length / 2) - 1] +
+                  exactBaselineValues[Math.floor(exactBaselineValues.length / 2)],
+                2n
+              ))
+        : null;
+    const latestExactMinor = exactAnalysisAvailable
+      ? exactAnalysisValues[exactAnalysisValues.length - 1]
+      : null;
+    const previousExactMinor =
+      exactAnalysisAvailable && exactAnalysisValues.length >= 2
+        ? exactAnalysisValues[exactAnalysisValues.length - 2]
+        : null;
+    const latestAnalysisAmount = exactAnalysisAvailable ? Number(latestExactMinor) : latestTxn.amountMinor ?? latestTxn.amount;
+    const previousAnalysisAmount = previousTxn
+      ? exactAnalysisAvailable
+        ? Number(previousExactMinor)
+        : previousTxn.amountMinor ?? previousTxn.amount
+      : null;
+    const typicalAmount = typicalAnalysisAmount / minorFactor;
+    const latestAmount = latestAnalysisAmount / minorFactor;
+    const previousAmount = previousAnalysisAmount === null ? null : previousAnalysisAmount / minorFactor;
 
-    const uniqueAmounts = new Set(amounts);
+    const uniqueAmounts = new Set(analysisAmounts);
     const isUtilityVariable = merchant.category === 'UTILITY_ESSENTIAL' && uniqueAmounts.size >= 3;
     const variableAmount = isUtilityVariable;
 
     let priceChangeDetected = false;
     let priceChangeAmount: number | null = null;
+    let priceChangeAmountExact: string | null = null;
     let priceChangePercent: number | null = null;
     let annualPriceIncreaseImpact: number | null = null;
 
-    if (!isUtilityVariable && sorted.length >= 2 && latestAmount > typicalAmount) {
+    const priceChangeMinor =
+      exactAnalysisAvailable && latestExactMinor !== null && typicalExactMinor !== null
+        ? latestExactMinor - typicalExactMinor
+        : null;
+    if (
+      !isUtilityVariable &&
+      sorted.length >= 2 &&
+      (priceChangeMinor !== null ? priceChangeMinor > 0n : latestAnalysisAmount > typicalAnalysisAmount)
+    ) {
       priceChangeDetected = true;
-      priceChangeAmount = Number((latestAmount - typicalAmount).toFixed(2));
-      priceChangePercent = Number((((latestAmount - typicalAmount) / typicalAmount) * 100).toFixed(2));
+      priceChangeAmountExact = priceChangeMinor?.toString() ?? null;
+      priceChangeAmount = Number(
+        ((priceChangeMinor !== null ? Number(priceChangeMinor) : latestAnalysisAmount - typicalAnalysisAmount) / minorFactor).toFixed(2)
+      );
+      priceChangePercent = Number(
+        (((priceChangeMinor !== null ? Number(priceChangeMinor) : latestAnalysisAmount - typicalAnalysisAmount) /
+          (typicalExactMinor !== null ? Number(typicalExactMinor) : typicalAnalysisAmount)) *
+          100).toFixed(2)
+      );
       const multiplier =
         recurrenceType === 'MONTHLY' || recurrenceType === 'RESUMED'
           ? 12
@@ -963,12 +1073,36 @@ export function detectCommitmentsAndAlerts(
       annualisedAmount = Number((latestAmount * 3).toFixed(2));
       monthlyEquivalent = Number((annualisedAmount / 12).toFixed(2));
     } else if (variableAmount) {
-      const avgAmt = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+      const avgAmt = analysisAmounts.reduce((a, b) => a + b, 0) / analysisAmounts.length / minorFactor;
       monthlyEquivalent = Number(avgAmt.toFixed(2));
       annualisedAmount = Number((avgAmt * 12).toFixed(2));
     }
 
-    const totalHistoricalSpend = Number(amounts.reduce((a, b) => a + b, 0).toFixed(2));
+    const totalHistoricalSpendMinor = exactAnalysisAvailable
+      ? exactAnalysisValues.reduce((sum, value) => sum + value, 0n)
+      : null;
+    const totalHistoricalSpend = Number(
+      (exactAnalysisAvailable
+        ? Number(totalHistoricalSpendMinor) / minorFactor
+        : analysisAmounts.reduce((a, b) => a + b, 0) / minorFactor
+      ).toFixed(2)
+    );
+    const annualisedAmountMinor =
+      exactAnalysisAvailable && latestExactMinor !== null
+        ? recurrenceType === 'YEARLY'
+          ? latestExactMinor
+          : recurrenceType === 'QUARTERLY'
+          ? latestExactMinor * 4n
+          : latestExactMinor * 12n
+        : null;
+    const monthlyEquivalentMinor =
+      exactAnalysisAvailable && latestExactMinor !== null
+        ? recurrenceType === 'YEARLY'
+          ? roundDivideBigInt(latestExactMinor, 12n)
+          : recurrenceType === 'QUARTERLY'
+          ? roundDivideBigInt(latestExactMinor, 3n)
+          : latestExactMinor
+        : null;
     const nextExpectedDate =
       recurrenceType === 'IRREGULAR'
         ? null
@@ -983,7 +1117,7 @@ export function detectCommitmentsAndAlerts(
         sorted.reduce((acc, t) => acc + t.confidenceScore, 0) / sorted.length
       ),
       occurrencesCount: sorted.length,
-      amounts,
+      amounts: sorted.map((t) => t.amount),
       hasMandateOrNotification: matchingNotifs.length > 0 || sorted.some((t) => Boolean(t.externalReference)),
     });
 
@@ -1111,10 +1245,17 @@ export function detectCommitmentsAndAlerts(
           ? override.expectedAmountMinorOverride
           : toMinorUnitsStrict(effectiveTypicalAmount, groupCurrency),
       latestAmountMinor: toMinorUnitsStrict(latestAmount, groupCurrency),
+      latestAmountMinorExact: latestExactMinor?.toString() ?? null,
+      previousAmountMinorExact: previousExactMinor?.toString() ?? null,
       currency: groupCurrency,
       annualisedAmount,
+      annualisedAmountExact: annualisedAmountMinor?.toString() ?? null,
       monthlyEquivalent,
+      monthlyEquivalentExact: monthlyEquivalentMinor?.toString() ?? null,
       totalHistoricalSpend,
+      totalHistoricalSpendExact: exactAnalysisAvailable
+        ? exactMinorAmounts.reduce((sum, value) => sum + BigInt(value), 0n).toString()
+        : null,
       nextExpectedDate:
         override.nextExpectedDateOverride !== undefined
           ? override.nextExpectedDateOverride
@@ -1134,6 +1275,7 @@ export function detectCommitmentsAndAlerts(
       connectedDescriptors: descriptors,
       priceChangeDetected,
       priceChangeAmount,
+      priceChangeAmountExact,
       priceChangePercent,
       annualPriceIncreaseImpact,
       trialConverted: Boolean(trialNotif),
@@ -1275,13 +1417,13 @@ export function detectCommitmentsAndAlerts(
         Boolean(mandateDate && postTxn.transactionDate > mandateDate) &&
         (!serviceDate || postTxn.transactionDate <= serviceDate);
 
-      let postCancelDescription = `A debit of ${formatCurrency(postTxn.amount, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, which is AFTER your recorded service & mandate cancellation on ${effectiveCancelDate}.`;
+      let postCancelDescription = `A debit of ${formatTransactionAmount(postTxn, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, which is AFTER your recorded service & mandate cancellation on ${effectiveCancelDate}.`;
       if (isAfterServiceBeforeMandate) {
-        postCancelDescription = `A debit of ${formatCurrency(postTxn.amount, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, AFTER your Layer A service cancellation effective date (${serviceDate}) while Layer B payment mandate remained active${mandateDate ? ` until ${mandateDate}` : ''}.`;
+        postCancelDescription = `A debit of ${formatTransactionAmount(postTxn, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, AFTER your Layer A service cancellation effective date (${serviceDate}) while Layer B payment mandate remained active${mandateDate ? ` until ${mandateDate}` : ''}.`;
       } else if (isAfterMandateBeforeService) {
-        postCancelDescription = `A debit of ${formatCurrency(postTxn.amount, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, AFTER your Layer B payment mandate revocation effective date (${mandateDate}) while Layer A service cancellation was not yet effective.`;
+        postCancelDescription = `A debit of ${formatTransactionAmount(postTxn, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, AFTER your Layer B payment mandate revocation effective date (${mandateDate}) while Layer A service cancellation was not yet effective.`;
       } else if (isAfterBothLayers) {
-        postCancelDescription = `A debit of ${formatCurrency(postTxn.amount, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, which is AFTER BOTH your Layer A service cancellation (${serviceDate}) and Layer B mandate revocation (${mandateDate}).`;
+        postCancelDescription = `A debit of ${formatTransactionAmount(postTxn, groupCurrency)} (${postTxn.rawDescription}) occurred on ${postTxn.transactionDate}, which is AFTER BOTH your Layer A service cancellation (${serviceDate}) and Layer B mandate revocation (${mandateDate}).`;
       }
 
       alerts.push({
@@ -1292,7 +1434,7 @@ export function detectCommitmentsAndAlerts(
         title: `Possible Post-Cancellation Debit — Review Required: ${merchant.serviceName}`,
         description: postCancelDescription,
         severity: 'HIGH',
-        detectedValue: `${formatCurrency(postTxn.amount, groupCurrency)} on ${postTxn.transactionDate}`,
+        detectedValue: `${formatTransactionAmount(postTxn, groupCurrency)} on ${postTxn.transactionDate}`,
         previousValue: `Cancelled on ${effectiveCancelDate}`,
         percentageChange: null,
         annualImpact: annualisedAmount,
@@ -1322,10 +1464,10 @@ export function detectCommitmentsAndAlerts(
       alertType: 'UNIDENTIFIED_MERCHANT',
       title: `Unresolved Descriptor: ${uTxn.rawDescription}`,
       description: uTxn.processorName
-        ? `Transaction ${uTxn.id} (${formatCurrency(uTxn.amount, uCurr)} on ${uTxn.transactionDate}) identifies ${uTxn.processorName} as the payment processor, but lacks sufficient alias evidence to establish the underlying merchant. Kept isolated to prevent false subscription merging.`
-        : `Transaction ${uTxn.id} (${formatCurrency(uTxn.amount, uCurr)} on ${uTxn.transactionDate}) contains only a generic ${uTxn.paymentMechanism} payment marker without processor or merchant evidence. Kept isolated for manual review.`,
+        ? `Transaction ${uTxn.id} (${formatTransactionAmount(uTxn, uCurr)} on ${uTxn.transactionDate}) identifies ${uTxn.processorName} as the payment processor, but lacks sufficient alias evidence to establish the underlying merchant. Kept isolated to prevent false subscription merging.`
+        : `Transaction ${uTxn.id} (${formatTransactionAmount(uTxn, uCurr)} on ${uTxn.transactionDate}) contains only a generic ${uTxn.paymentMechanism} payment marker without processor or merchant evidence. Kept isolated for manual review.`,
       severity: 'MEDIUM',
-      detectedValue: `${formatCurrency(uTxn.amount, uCurr)} (${uTxn.rawDescription})`,
+      detectedValue: `${formatTransactionAmount(uTxn, uCurr)} (${uTxn.rawDescription})`,
       previousValue: null,
       percentageChange: null,
       annualImpact: null,
@@ -2059,7 +2201,7 @@ export function buildCommitmentGraphResponse(params: {
       addNode({
         id: txn.id,
         label: 'Transaction',
-        title: `${txn.id} · ${formatCurrency(txn.amount, txnCcy)}`,
+        title: `${txn.id} · ${formatTransactionAmount(txn, txnCcy)}`,
         subtitle: `${txn.transactionDate} · ${txn.rawDescription}`,
         status: txn.isPostCancellationDebit ? 'UNRESOLVED' : txn.resolutionStatus,
         confidence: txn.confidenceScore,
@@ -2069,6 +2211,9 @@ export function buildCommitmentGraphResponse(params: {
           date: txn.transactionDate,
           transactionDate: txn.transactionDate,
           amount: txn.amount,
+          amountExact: txn.amountExact ?? null,
+          amountMinor: txn.amountMinor ?? null,
+          amountMinorExact: txn.amountMinorExact ?? null,
           currency: txnCcy,
           rawDescription: txn.rawDescription,
           accountAlias: txn.accountAlias,
@@ -2421,7 +2566,7 @@ export function buildCommitmentGraphResponse(params: {
       addNode({
         id: uTxn.id,
         label: 'Transaction',
-        title: `${uTxn.id} · ${formatCurrency(uTxn.amount, uTxnCcy)} (UNRESOLVED)`,
+        title: `${uTxn.id} · ${formatTransactionAmount(uTxn, uTxnCcy)} (UNRESOLVED)`,
         subtitle: `${uTxn.transactionDate} · ${uTxn.rawDescription}`,
         status: 'UNRESOLVED',
         confidence: uTxn.confidenceScore,
@@ -2794,7 +2939,7 @@ export function buildGroundedMerchantExplanation(
   const isResolved = Boolean(txn.merchantId && txn.merchantName && txn.serviceName);
   const procName = txn.processorName || txn.paymentMechanism.replace(/_/g, ' ');
   const freq = commitment?.recurrenceType || 'RECURRING';
-  const formattedAmt = formatCurrency(txn.amount, txn.currency || commitment?.currency || UNKNOWN_CURRENCY);
+  const formattedAmt = formatTransactionAmount(txn, commitment?.currency);
 
   const enBuilder = STATIC_MERCHANT_TRANSLATIONS['en-IN'];
   const targetBuilder = STATIC_MERCHANT_TRANSLATIONS[language] || enBuilder;

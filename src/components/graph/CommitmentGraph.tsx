@@ -501,7 +501,7 @@ export const CommitmentGraph: React.FC<CommitmentGraphProps> = ({
                       <td className="py-2 px-3 font-mono text-slate-800">{rec.rawDescriptor}</td>
                       <td className="py-2 px-3 font-mono text-slate-600">{rec.accountAlias}</td>
                       <td className="py-2 px-3 font-mono tabular-nums font-semibold text-slate-900 text-right">
-                        {formatINR(rec.amount, rec.currency || 'INR')}
+                        {formatINR(rec.amount, rec.currency)}
                       </td>
                       <td className="py-2 px-3 text-right">
                         <button
